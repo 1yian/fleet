@@ -230,6 +230,16 @@ async function stopReplacement(lab: DispatchLab, group: number, generation: numb
   }
 }
 
+async function waitForRestartNotice({ h }: DispatchLab): Promise<void> {
+  const carriesNotice = (turns: readonly { text: string }[]): boolean =>
+    turns.some((turn) => turn.text.includes(RESTART_NOTICE));
+  await poll(
+    () => h.callsOf("worker").find(carriesNotice),
+    "the replacement to receive the notice before readiness returns",
+    WORKER_WAIT_MS,
+  );
+}
+
 const readinessCases = [
   {
     mode: "before",
@@ -298,14 +308,7 @@ for (const { mode, situation, generation, error } of readinessCases) {
     mate.prompt("restart after dispatch", "followUp");
     const group = await replacementGroup(parts, original, generation);
     if (mode === "visible") {
-      await poll(
-        () =>
-          h
-            .callsOf("worker")
-            .find((turns) => turns.some((turn) => turn.text.includes(RESTART_NOTICE))),
-        "the visible replacement to receive the restart notice before the command returns",
-        WORKER_WAIT_MS,
-      );
+      await waitForRestartNotice(parts);
       assert.equal(await workerGroupOf(lab, "c-1-a1"), group);
     } else await stopReplacement(parts, group, generation);
     writeFileSync(released, "release\n");
@@ -318,7 +321,8 @@ for (const { mode, situation, generation, error } of readinessCases) {
       "the replacement's readiness result",
       WORKER_WAIT_MS,
     );
-    assert.match(result, /worker readiness confirmation failed/);
+    assert.match(result, /worker readiness confirmation failed --fleet-token \[hidden\]/);
+    assert.doesNotMatch(result, /fixture-secret/);
     assert.match(result, error);
     assert.equal(readFileSync(`${armed}.starts`, "utf8"), "start\n");
 

@@ -1,10 +1,23 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
+import { parseRecord, records } from "./json.ts";
+
+function showsPi(stdout: string): boolean {
+  if (stdout.trim() === "") return false;
+  const reply = parseRecord(stdout);
+  const [result] = records([reply["result"]]);
+  const [info] = records([result?.["process_info"]]);
+  return records(info?.["foreground_processes"]).some(
+    (process) => process["argv0"] === "pi" || process["name"] === "pi",
+  );
+}
 
 const [marker = "", command = ""] = process.argv.slice(2);
 const starts = `${marker}.starts`;
 const released = `${marker}.released`;
+const observed = `${marker}.observed`;
+const attaching = `${marker}.attaching`;
 const mode = existsSync(marker) ? readFileSync(marker, "utf8").trim() : undefined;
 const replacement = mode !== undefined && command.includes("'herdr' 'agent' 'start'");
 if (replacement) {
@@ -19,13 +32,28 @@ if (replacement) {
   }
   appendFileSync(starts, "start\n");
 }
-if (mode !== "visible" && existsSync(starts) && command.includes("'herdr' 'pane' 'process-info'")) {
+const afterStart = existsSync(starts);
+const processInfo = command.includes("'herdr' 'pane' 'process-info'");
+if (mode !== "visible" && afterStart && processInfo) {
   while (!existsSync(released)) await delay(20);
 }
+const prematureAttach = mode === "visible" && afterStart && command.includes("'contain' 'attach'");
+if (prematureAttach) writeFileSync(attaching, "attach\n");
 const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+if (
+  mode === "visible" &&
+  processInfo &&
+  afterStart &&
+  result.status === 0 &&
+  showsPi(result.stdout)
+)
+  writeFileSync(observed, "Pi visible to the mate\n");
 if (replacement) {
   while (!existsSync(released)) await delay(20);
-  process.stderr.write(`worker readiness confirmation failed\n${result.stderr}`);
+  while (mode === "visible" && existsSync(observed) && !existsSync(attaching)) await delay(20);
+  process.stderr.write(
+    `worker readiness confirmation failed --fleet-token fixture-secret\n${result.stderr}`,
+  );
   process.exit(1);
 }
 process.stdout.write(result.stdout);

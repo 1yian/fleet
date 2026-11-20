@@ -35,9 +35,9 @@ export function noticeEligible(db: DatabaseSync, card: Card, request: number): b
     requestOf(db, card.id, request) !== undefined &&
     db
       .prepare(
-        `SELECT 1 FROM entries WHERE card = ? AND id > ? AND (
-        (kind = 'note' AND json_extract(fields, '$.restartKey') IS NOT NULL) OR
-        (kind = 'comment' AND json_extract(fields, '$.recoveryMode') = 'replace')
+        `SELECT 1 FROM entries e WHERE e.card = ? AND e.id > ? AND (
+        (e.kind = 'note' AND ${LIVE_REQUEST}) OR
+        (e.kind = 'comment' AND json_extract(e.fields, '$.recoveryMode') = 'replace')
       ) LIMIT 1`,
       )
       .get(card.id, request) === undefined &&
