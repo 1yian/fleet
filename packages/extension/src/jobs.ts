@@ -216,7 +216,7 @@ export class Jobs {
     label: string,
     command: string,
     options: JobOptions,
-  ): Promise<{ job: number; tab: string }> {
+  ): Promise<{ job: number; tab: string; started: boolean }> {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error(`${label} needs a worker inside a herdr pane`);
     const id = randomUUID();
@@ -311,7 +311,7 @@ export class Jobs {
     } finally {
       if (this.launching.get(job) === launching) this.launching.delete(job);
     }
-    return { job, tab };
+    return { job, tab, started: registeredLaunch && !this.pending.has(job) };
   }
 
   async stop(job: number): Promise<string> {
@@ -365,8 +365,10 @@ export class Jobs {
       execute: async (_id, params) => {
         const { label, command } = params;
         const timeoutMs = (params.timeout_minutes ?? DEFAULT_TIMEOUT_MINUTES) * 60_000;
-        const { job, tab } = await this.launch(label, command, { timeoutMs });
-        const text = `Started job ${String(job)} (${label}) in tab ${tab}. Its result arrives as a [fleet] message; you may end this run.`;
+        const { job, tab, started } = await this.launch(label, command, { timeoutMs });
+        const text = started
+          ? `Started job ${String(job)} (${label}) in tab ${tab}. Its result arrives as a [fleet] message; you may end this run.`
+          : `Dispatched job ${String(job)} (${label}) in tab ${tab}; its startup is not yet confirmed. Its result, or a failure to start, arrives as a [fleet] message; you may end this run.`;
         return { content: [{ type: "text", text }], details: {} };
       },
     });

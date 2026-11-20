@@ -146,12 +146,9 @@ class Hub {
     const started = performance.now();
     this.fillRepos();
     const filled = performance.now();
-    let startup: readonly string[] = [];
-    try {
-      startup = transaction(this.db, () => expireJobStarts(this.db, now));
-    } catch (error) {
+    const startup = expireJobStarts(this.db, now, (error) => {
       console.warn(`Could not expire job startups: ${reason(error)}`);
-    }
+    });
     const notify = new Set([
       ...startup,
       ...transaction(this.db, () => runCheck(this.db, now, this.timing, this.jobLossGrace)),

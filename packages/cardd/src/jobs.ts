@@ -9,7 +9,7 @@ import {
   type JobLife,
   type JobState,
 } from "@fleet/protocol";
-import { addEntry } from "./store.ts";
+import { addEntry, transaction } from "./store.ts";
 
 const STARTUP_MS = 30_000;
 const STARTUP_EXPIRED = {
@@ -237,7 +237,11 @@ export function recordJobResult(
   return [target.id];
 }
 
-export function expireJobStarts(db: DatabaseSync, now: number): string[] {
+export function expireJobStarts(
+  db: DatabaseSync,
+  now: number,
+  failed: (error: unknown) => void,
+): string[] {
   const expired = db
     .prepare(
       `SELECT j.id AS job, s.id AS session, a.card FROM jobs j
@@ -247,13 +251,23 @@ export function expireJobStarts(db: DatabaseSync, now: number): string[] {
     )
     .all(now - STARTUP_MS);
   return expired.flatMap((row) => {
-    const job = numberOf(row["job"], "job");
-    const owned = readJob(db, job);
-    if (owned === undefined) return [];
-    const moved = transitionJob(db, owned, { name: "finish", ...STARTUP_EXPIRED }, now);
-    if (moved === undefined) return [];
-    const target = { id: textOf(row["session"], "session"), card: numberOf(row["card"], "card") };
-    return recordJobResult(db, target, job, moved.label, STARTUP_EXPIRED, owned.launch);
+    try {
+      return transaction(db, () => {
+        const job = numberOf(row["job"], "job");
+        const owned = readJob(db, job);
+        if (owned === undefined) return [];
+        const moved = transitionJob(db, owned, { name: "finish", ...STARTUP_EXPIRED }, now);
+        if (moved === undefined) return [];
+        const target = {
+          id: textOf(row["session"], "session"),
+          card: numberOf(row["card"], "card"),
+        };
+        return recordJobResult(db, target, job, moved.label, STARTUP_EXPIRED, owned.launch);
+      });
+    } catch (error) {
+      failed(error);
+      return [];
+    }
   });
 }
 

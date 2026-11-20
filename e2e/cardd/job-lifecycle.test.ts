@@ -5,6 +5,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { until } from "../support/live-fleet.ts";
 
 let fleet: Fleet;
 let beats: NodeJS.Timeout[] = [];
@@ -236,4 +237,52 @@ test("a dropped lost job can still finish, and the drop mark does not survive fi
   assert.equal(row["exit_code"], 0);
   const again = check(OPS["job.drop"].result, await worker.call("job.drop", { job }));
   assert.deepEqual(again, { label: "server", state: "finished", dropped: false });
+});
+
+test("an expired startup that cannot be recorded does not hold back another card's fence, and recovers", async () => {
+  const poisoned = await newCard(fleet.main, "A startup result cannot be written");
+  const healthy = await newCard(fleet.main, "A startup result can be written");
+  const first = await fleet.cardd.connect(await begin(fleet.main, poisoned));
+  const second = await fleet.cardd.connect(await begin(fleet.main, healthy));
+  const reserve = async (worker: Session, label: string): Promise<number> =>
+    check(
+      OPS["job.prepare"].result,
+      await worker.call("job.prepare", { launch: randomUUID(), label, command: `run ${label}` }),
+    ).job;
+  const refused = await reserve(first, "refused");
+  const fenced = await reserve(second, "fenced");
+  const results = async (card: Card): Promise<Entry[]> =>
+    check(CardViewSchema, await fleet.main.call("card", { card: card.id })).entries.filter(
+      (entry) => entry.kind === "job-result",
+    );
+  const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+  try {
+    db.exec(`CREATE TRIGGER refuse_expiry BEFORE UPDATE OF state ON jobs
+      WHEN OLD.label = 'refused' AND NEW.state = 'finished'
+      BEGIN SELECT RAISE(ABORT, 'injected startup write failure'); END;
+      UPDATE jobs SET created_at = created_at - 60000;`);
+    const fence = await until(
+      async () => (await results(healthy)).find((entry) => entry.fields["startupFenced"] === true),
+      "the other card's startup fence despite the failing reservation",
+    );
+    assert.equal(fence.fields["job"], fenced);
+    assert.equal(fence.fields["exitCode"], 127);
+    await until(
+      () => (fleet.cardd.errors.includes("injected startup write failure") ? true : undefined),
+      "cardd to report the failed startup write",
+    );
+    assert.equal(jobRow(refused)["state"], "running");
+    assert.equal(jobRow(fenced)["state"], "finished");
+    assert.deepEqual(await results(poisoned), []);
+    db.exec("DROP TRIGGER refuse_expiry");
+    const recovered = await until(
+      async () => (await results(poisoned)).find((entry) => entry.fields["startupFenced"] === true),
+      "the failing reservation's fence once writes recover",
+    );
+    assert.equal(recovered.fields["job"], refused);
+    assert.equal(jobRow(refused)["state"], "finished");
+    assert.equal((await results(healthy)).length, 1);
+  } finally {
+    db.close();
+  }
 });

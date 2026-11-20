@@ -77,7 +77,7 @@ test("a failed pipeline wakes the worker with failure, and the wait is not a sta
     lastUser(await h.waitForCall(2)),
     "[fleet] c-1 users-see-one-scrollbar job 1 (tests) exited 3: one\ntwo",
   );
-  assert.ok(said("Started job 1 (tests) in tab job-1-tests."));
+  assert.ok(said("job 1 (tests) in tab job-1-tests"));
   assert.equal(said("Your run is ending without a handoff"), false);
   assert.deepEqual(
     fleet.main.entries.map(({ entry }) => [entry.fields["status"], entry.body]),
@@ -252,7 +252,7 @@ test("run_long recovers a committed reservation after torn prepare replies and r
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "result received" } }));
   worker();
   await h.waitForCall(2);
-  assert.ok(said("Started job 1 (recover) in tab job-1-recover."));
+  assert.ok(said("job 1 (recover) in tab job-1-recover"));
   await fleet.main.waitForEntry((entry) => entry.body === "result received", "the worker handoff");
   assert.deepEqual(receipts, [1, 1, 1]);
   assert.equal(readFileSync(marker, "utf8"), "executed\n");
@@ -298,7 +298,7 @@ test("run_long retries transient HTTP 400 writes with the same prepare and regis
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "Write retries verified" } }));
   worker();
   await h.waitForCall(2);
-  assert.ok(said("Started job 1 (recover-writes)"));
+  assert.ok(said("job 1 (recover-writes) in tab"));
   await h.waitForNth((event) => event["type"] === "fleet_delivered", 2, "the recovered job result");
   assert.deepEqual(refusals, [
     { op: "job.prepare", status: 400 },
@@ -931,6 +931,37 @@ exec ${quote(herdr)} "$@"
     "the successful result in the model's context",
   );
   assert.deepEqual(await jobResults(), [[1, 0, "finished-before-ack"]]);
+});
+
+test("run_long reports a dispatch as awaiting startup confirmation while registration is held, then delivers the result", async (t) => {
+  const registration = Promise.withResolvers<void>();
+  let registering = false;
+  t.after(() => {
+    registration.resolve();
+  });
+  await jobProxy(t, async (op, args) => {
+    if (op === "job.register") {
+      registering = true;
+      await registration.promise;
+    }
+    return callCardd(op, args);
+  });
+  h.onModel(() => ({ tool: "run_long", args: { label: "held", command: "echo held-ok" } }));
+  h.onModel(() => ({ text: "Waiting for the command" }));
+  h.onModel(() => ({ tool: "report", args: { status: "done", text: "The held job ran" } }));
+  worker();
+  await h.waitForCall(1);
+  assert.ok(
+    said(
+      "Dispatched job 1 (held) in tab job-1-held; its startup is not yet confirmed. Its result, or a failure to start, arrives as a [fleet] message",
+    ),
+  );
+  assert.equal(said("Started job 1"), false);
+  await until(() => (registering ? true : undefined), "the wrapper to request registration");
+  assert.deepEqual(await jobResults(), []);
+  registration.resolve();
+  await fleet.main.waitForEntry((entry) => entry.body === "The held job ran", "the worker handoff");
+  assert.deepEqual(await jobResults(), [[1, 0, "held-ok"]]);
 });
 
 test("an unknown idle verdict skips the nudge and the automatic stop, and a later confirmed idle run gets both", async (t) => {
