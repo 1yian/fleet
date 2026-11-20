@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { rmSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -86,7 +86,6 @@ export class Jobs {
     number,
     { unstarted: boolean; ran: boolean; legacy: boolean }
   >();
-  private readonly legacyFiles = new Map<number, string>();
   private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
   private readonly endpoint: { url: string; token: string };
@@ -144,11 +143,24 @@ export class Jobs {
     if (typeof exitCode === "number") this.forgetTab(job);
   }
 
+  private legacyLaunchFile(job: number): string {
+    const owner = createHash("sha256")
+      .update(`${this.endpoint.token}:${String(job)}`)
+      .digest("hex");
+    return join(tmpdir(), `fleet-job-${String(job)}-${owner.slice(0, 32)}.json`);
+  }
+
   private dropLegacyFile(job: number): void {
-    const file = this.legacyFiles.get(job);
-    if (file === undefined) return;
-    this.legacyFiles.delete(job);
-    void rm(file, { force: true }).catch(() => undefined);
+    void this.removeFile(job, this.legacyLaunchFile(job));
+  }
+
+  private async removeFile(job: number, file: string): Promise<void> {
+    try {
+      await rm(file, { force: true });
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      this.warn(`Job ${String(job)}'s launch file ${file} could not be removed: ${why}`);
+    }
   }
 
   private forgetTab(job: number): void {
@@ -177,7 +189,7 @@ export class Jobs {
     const pending = this.pending.get(job);
     if (pending === undefined) return;
     this.pending.delete(job);
-    void rm(pending.file, { force: true }).catch(() => undefined);
+    void this.removeFile(job, pending.file);
   }
 
   private async closeStartupTab(job: number, tab: string): Promise<void> {
@@ -249,7 +261,9 @@ export class Jobs {
     this.preparing.delete(id);
     if (registeredLaunch && preparing.fence?.job === job)
       throw new Error(`Job ${String(job)} cannot start: ${preparing.fence.detail}`);
-    const file = join(tmpdir(), `fleet-job-${String(job)}-${id}.json`);
+    const file = registeredLaunch
+      ? join(tmpdir(), `fleet-job-${String(job)}-${id}.json`)
+      : this.legacyLaunchFile(job);
     const tab = tabName(job, label);
     const pending: PendingDispatch | undefined = registeredLaunch
       ? { launch: id, file, dispatched: false, fenced: false }
@@ -269,7 +283,6 @@ export class Jobs {
         lineChars,
       };
       writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
-      if (!registeredLaunch) this.legacyFiles.set(job, file);
       if (pending !== undefined) this.pending.set(job, pending);
       const created = await herdr("local", [
         "tab",
@@ -322,8 +335,7 @@ export class Jobs {
           `Could not confirm dispatch for job ${String(job)}; its result, loss, or failed startup arrives as a [fleet] message: ${why}`,
           { cause: error },
         );
-      rmSync(file, { force: true });
-      this.legacyFiles.delete(job);
+      await this.removeFile(job, file);
       const outputTail = `could not start: ${why}`;
       this.running.delete(job);
       const finished = await this.link

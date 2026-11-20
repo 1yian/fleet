@@ -168,7 +168,11 @@ async function jobProxy(
     upstream.on("message", (raw) => {
       const text = rawText(raw);
       const message = parseServerMessage(text);
-      if (dropFence && message.t === "entry" && message.entry.fields["startupFenced"] === true) {
+      if (
+        dropFence &&
+        message.t === "entry" &&
+        (message.entry.fields["startupFenced"] === true || message.entry.fields["lost"] === true)
+      ) {
         const fence = dropFence;
         dropFence = false;
         if (fence === true) client.terminate();
@@ -573,7 +577,7 @@ for (const fault of ["failed", "hanging"] as const) {
     const slow = commandAwaitingGo(81);
     h.onModel(() => ({ tool: "run_long", args: { label: "partial", command: slow.command } }));
     h.onModel(() => ({ text: "Waiting for the command" }));
-    worker();
+    const pi = worker();
     await until(() => (existsSync(slow.ready) ? true : undefined), "the registered command to run");
     await settled(1);
     disconnect();
@@ -589,15 +593,23 @@ for (const fault of ["failed", "hanging"] as const) {
       "the partial reconnect list",
     );
     assert.deepEqual(lists.at(-1), [1]);
+    h.onModel(() => ({ text: "Snapshot acknowledged" }));
     h.onModel(() => ({ text: "Still waiting for the running job" }));
-    h.onModel(() => ({ text: "No work to report yet" }));
-    const sentBefore = activities.length;
+    const deliveredBefore = h.events.filter((event) => event["type"] === "fleet_delivered").length;
     await fleet.main.call("comment", {
       card: card.id,
-      text: "Check whether the job is still being waited on",
+      text: "Acknowledge the snapshot",
       later: false,
     });
+    await h.waitForNth(
+      (event) => event["type"] === "fleet_delivered",
+      deliveredBefore + 1,
+      "a push that the worker can only receive after applying the partial snapshot",
+    );
     await settled(2);
+    const sentBefore = activities.length;
+    pi.prompt("Check whether the job is still being waited on");
+    await settled(3);
     assert.equal(said("Your run is ending without a handoff"), false);
     const sent = await until(() => {
       const after = activities.slice(sentBefore);
@@ -1046,10 +1058,21 @@ exec ${quote(herdr)} "$@"
     });
 
 test("a legacy dispatch whose pane reply fails while the command runs keeps its wait and records only the real result", async (t) => {
-  await jobProxy(t, async (op, args) =>
-    op === "job.prepare"
-      ? { status: 400, body: { ok: false, error: "unknown operation job.prepare" } }
-      : callCardd(op, args),
+  const activities: string[] = [];
+  await jobProxy(
+    t,
+    async (op, args) =>
+      op === "job.prepare"
+        ? { status: 400, body: { ok: false, error: "unknown operation job.prepare" } }
+        : callCardd(op, args),
+    false,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (message) => {
+      if (message.t === "activity") activities.push(message.state);
+    },
   );
   const bin = join(jobDir, "bin");
   mkdirSync(bin);
@@ -1079,6 +1102,10 @@ exec ${quote(herdr)} "$@"
   worker();
   await until(() => (existsSync(slow.ready) ? true : undefined), "the legacy command to run");
   await settled(1);
+  await until(
+    () => (activities.at(-1) === "waiting" ? true : undefined),
+    "the worker to publish that it is waiting",
+  );
   assert.ok(said("Could not confirm dispatch for job 1"));
   assert.equal(said("Started job 1"), false);
   assert.equal(said("Your run is ending without a handoff"), false);
@@ -1091,20 +1118,34 @@ exec ${quote(herdr)} "$@"
   assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
 });
 
-test("a legacy dispatch that Herdr never accepted keeps its wait and tab, and its token-bearing file is removed once cardd reports the job lost", async (t) => {
-  await jobProxy(t, async (op, args) =>
-    op === "job.prepare"
-      ? { status: 400, body: { ok: false, error: "unknown operation job.prepare" } }
-      : callCardd(op, args),
-  );
-  const bin = join(jobDir, "bin");
-  mkdirSync(bin);
-  const dispatches = join(jobDir, "dispatches");
-  const marker = join(jobDir, "unexpected-execution");
-  const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
-  writeFileSync(
-    join(bin, "herdr"),
-    `#!/bin/sh
+for (const fault of ["worker reload", "unlink failure"] as const)
+  test(`a legacy dispatch that Herdr never accepted keeps its wait and tab until cardd reports it lost, then removes its launch file across ${fault}`, async (t) => {
+    const lossDelivery = Promise.withResolvers<void>();
+    t.after(() => lossDelivery.resolve());
+    const activities: string[] = [];
+    await jobProxy(
+      t,
+      async (op, args) =>
+        op === "job.prepare"
+          ? { status: 400, body: { ok: false, error: "unknown operation job.prepare" } }
+          : callCardd(op, args),
+      lossDelivery.promise,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (message) => {
+        if (message.t === "activity") activities.push(message.state);
+      },
+    );
+    const bin = join(jobDir, "bin");
+    mkdirSync(bin);
+    const dispatches = join(jobDir, "dispatches");
+    const marker = join(jobDir, "unexpected-execution");
+    const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
+    writeFileSync(
+      join(bin, "herdr"),
+      `#!/bin/sh
 if [ "$1 $2" = 'pane run' ]; then
   echo dispatch >> ${quote(dispatches)}
   echo 'pane reply unavailable' >&2
@@ -1112,45 +1153,77 @@ if [ "$1 $2" = 'pane run' ]; then
 fi
 exec ${quote(herdr)} "$@"
 `,
-    { mode: 0o755 },
-  );
-  env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
-  const launchFiles = (): string[] =>
-    readdirSync(jobDir).filter((name) => /^fleet-job-1-.*\.json$/.test(name));
-  h.onModel(() => ({
-    tool: "run_long",
-    args: { label: "refused", command: `touch ${quote(marker)}` },
-  }));
-  h.onModel(() => ({ text: "Waiting for the command" }));
-  h.onModel(() => ({ tool: "report", args: { status: "failed", text: "The job is lost" } }));
-  worker();
-  await settled(1);
-  assert.ok(said("Could not confirm dispatch for job 1"));
-  assert.equal(launchFiles().length, 1);
-  assert.deepEqual(await jobResults(), []);
-  const tab = (await tabsInWorkspace()).find((each) => each["label"] === "job-1-refused");
-  assert.equal(typeof tab?.["tab_id"], "string");
-  await until(
-    () =>
-      said("[fleet] c-1 users-see-one-scrollbar job 1 (refused) lost: no heartbeat arrived")
-        ? true
-        : undefined,
-    "cardd to report the job lost",
-  );
-  await until(
-    () => (launchFiles().length === 0 ? true : undefined),
-    "the launch file to be removed",
-  );
-  assert.deepEqual(
-    (await cardView()).entries
-      .filter((entry) => entry.kind === "job-result")
-      .map((entry) => [entry.fields["lost"], entry.fields["exitCode"]]),
-    [[true, undefined]],
-  );
-  assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === tab?.["tab_id"]));
-  assert.equal(existsSync(marker), false);
-  assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
-});
+      { mode: 0o755 },
+    );
+    env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
+    const launchFiles = (): string[] =>
+      readdirSync(jobDir).filter((name) => /^fleet-job-1-.*\.json$/.test(name));
+    const lostMessage =
+      "[fleet] c-1 users-see-one-scrollbar job 1 (refused) lost: no heartbeat arrived";
+    h.onModel(() => ({
+      tool: "run_long",
+      args: { label: "refused", command: `touch ${quote(marker)}` },
+    }));
+    h.onModel(() => ({ text: "Waiting for the command" }));
+    h.onModel(() => ({ tool: "report", args: { status: "failed", text: "The job is lost" } }));
+    const first = worker();
+    await settled(1);
+    await until(
+      () => (activities.at(-1) === "waiting" ? true : undefined),
+      "the worker to publish that it is waiting",
+    );
+    assert.ok(said("Could not confirm dispatch for job 1"));
+    const [name] = launchFiles();
+    assert.ok(name !== undefined);
+    assert.equal(launchFiles().length, 1);
+    const tab = (await tabsInWorkspace()).find((each) => each["label"] === "job-1-refused");
+    assert.equal(typeof tab?.["tab_id"], "string");
+    const lost = await untilAsync(
+      async () =>
+        (await cardView()).entries.find(
+          (entry) => entry.kind === "job-result" && entry.fields["lost"] === true,
+        ),
+      "cardd to record the job as lost",
+    );
+    assert.equal(
+      h.events.some((event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id),
+      false,
+    );
+    assert.equal(said(lostMessage), false);
+    assert.equal(launchFiles().length, 1);
+    const path = join(jobDir, name);
+    if (fault === "worker reload") {
+      await first.kill();
+      worker();
+    } else {
+      rmSync(path);
+      mkdirSync(path);
+      writeFileSync(join(path, "keep"), "");
+      lossDelivery.resolve();
+    }
+    await until(() => (said(lostMessage) ? true : undefined), "the loss to reach the worker");
+    if (fault === "worker reload") {
+      await until(
+        () => (launchFiles().length === 0 ? true : undefined),
+        "the launch file to be removed by the replacement worker",
+      );
+    } else {
+      await until(
+        () => (said(`launch file ${path} could not be removed`) ? true : undefined),
+        "the worker to report the failed unlink",
+      );
+      assert.ok(existsSync(path));
+    }
+    assert.deepEqual(
+      (await cardView()).entries
+        .filter((entry) => entry.kind === "job-result")
+        .map((entry) => [entry.fields["lost"], entry.fields["exitCode"]]),
+      [[true, undefined]],
+    );
+    assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === tab?.["tab_id"]));
+    assert.equal(existsSync(marker), false);
+    assert.equal(readFileSync(dispatches, "utf8"), "dispatch\n");
+  });
 
 test("run_long reports a dispatch as awaiting startup confirmation while registration is held, then delivers the result", async (t) => {
   const registration = Promise.withResolvers<void>();
