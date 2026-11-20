@@ -42,14 +42,16 @@ export class AgentStartRefused extends Error {}
 const startRefused = (code: unknown): boolean =>
   code === "agent_pane_busy" || code === "agent_name_taken" || code === "server_not_running";
 
-function refusedStart(stderr: string): boolean {
+function refusalOf(output: string): string | undefined {
   try {
-    const payload: unknown = JSON.parse(stderr);
-    if (!isRecord(payload)) return false;
+    const payload: unknown = JSON.parse(output);
+    if (!isRecord(payload)) return undefined;
     const detail = isRecord(payload["error"]) ? payload["error"] : payload;
-    return startRefused(detail["code"]);
+    if (!startRefused(detail["code"])) return undefined;
+    const message = detail["message"];
+    return typeof message === "string" && message.trim() !== "" ? message : String(detail["code"]);
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -280,18 +282,19 @@ function laneTransportFailure(
   return lane === "observe" ? new HostUnread(message) : new Error(message);
 }
 
-function rejectedBeforeStart(
+function refusalDetail(
   file: string,
   error: ExecFileException,
   out: string,
   err: string,
-): boolean {
-  return (
-    error.code === "ENOENT" ||
-    diedBeforeTheCommandStarted(file, error, err) ||
-    refusedStart(err) ||
-    refusedStart(out)
-  );
+): string | undefined {
+  const stdout = refusalOf(out);
+  const stderr = refusalOf(err);
+  if (stdout !== undefined) return [stdout, stderr ?? err.trim()].filter(Boolean).join("\n");
+  if (stderr !== undefined) return stderr;
+  if (error.code === "ENOENT" || diedBeforeTheCommandStarted(file, error, err))
+    return err.trim() || exitStatus(error);
+  return undefined;
 }
 
 async function herdrText(
@@ -310,6 +313,8 @@ async function herdrText(
   const command = ["herdr", ...args.slice(0, split), ...select, ...args.slice(split)];
   const via = transport(host);
   const [file = "herdr", ...rest] = routed(via, command);
+  const message = (detail: string): string =>
+    scrub(`herdr ${args[0] ?? ""} on ${host} failed: ${detail}`);
   return new Promise<string>((resolve, reject) => {
     runOnTransport(
       file,
@@ -324,13 +329,13 @@ async function herdrText(
           resolve(out);
           return;
         }
+        const refusal = replay ? undefined : refusalDetail(file, error, out, err);
+        if (refusal !== undefined) {
+          reject(new AgentStartRefused(message(refusal)));
+          return;
+        }
         const detail = err.trim() || (!replay && out.trim()) || exitStatus(error);
-        const message = scrub(`herdr ${args[0] ?? ""} on ${host} failed: ${detail}`);
-        reject(
-          !replay && rejectedBeforeStart(file, error, out, err)
-            ? new AgentStartRefused(message)
-            : failure(via, error, message, probe),
-        );
+        reject(failure(via, error, message(detail), probe));
       },
       replay,
     );

@@ -9,12 +9,16 @@ const mode = existsSync(marker) ? readFileSync(marker, "utf8").trim() : undefine
 const replacement = mode !== undefined && command.includes("'herdr' 'agent' 'start'");
 if (replacement) {
   if (mode === "refuse") {
-    process.stderr.write(
+    process.stdout.write(
       JSON.stringify({
-        code: "agent_pane_busy",
-        message: "fixture refused the start --fleet-token fixture-secret",
+        error: {
+          code: "agent_pane_busy",
+          message: "fixture refused the start --fleet-token fixture-secret",
+          metadata: "stdout-fixture-metadata",
+        },
       }),
     );
+    process.stderr.write("fixture transport warning --fleet-token transport-fixture-secret\n");
     process.exit(1);
   }
   appendFileSync(starts, "start\n");
