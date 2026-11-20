@@ -1,7 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { idlePark } from "@fleet/protocol";
 import { quietSql } from "./attempts.ts";
-import { jobStateSql, launchedJobSql, loseSilentJobs } from "./jobs.ts";
+import { jobStateSql, launchedJobSql, loseSilentJobs, startedAtSql } from "./jobs.ts";
 import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
 import { IN_FLIGHT_DELIVERY } from "./delivery-states.ts";
 import { escalationText, told, UNRECOVERABLE, unrecoverable } from "./incident-escalation.ts";
@@ -308,7 +308,9 @@ function lostJobMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
      FROM jobs j JOIN attempts a ON a.id = j.attempt JOIN cards c ON c.id = a.card
      WHERE ${jobStateSql("j.state", "lost")} AND j.dropped_at IS NULL AND a.state IN ('starting', 'active')
        AND NOT EXISTS (SELECT 1 FROM jobs later
-         WHERE later.attempt = j.attempt AND later.label = j.label AND later.id > j.id
+         WHERE later.attempt = j.attempt AND later.label = j.label
+           AND (${startedAtSql("later")} > ${startedAtSql("j")}
+             OR (${startedAtSql("later")} = ${startedAtSql("j")} AND later.id > j.id))
            AND ${launchedJobSql("later")}
            AND NOT EXISTS (SELECT 1 FROM entries result
              WHERE result.card = a.card AND result.author = 'job:' || later.id
