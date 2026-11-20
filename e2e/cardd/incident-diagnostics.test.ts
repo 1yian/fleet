@@ -215,6 +215,8 @@ for (const [name, diagnostic] of [
     "a serialized single trace row",
     String.raw`{"trace":"0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72"}`,
   ],
+  ["an inline-code trace row", "`0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72`"],
+  ["an indented trace row", "    0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72"],
   ["a trace hex dump", "0000: 47 45 54 20 2f 20 48 54 54 50 2f 31 2e 31 20 70 61 70 65 72"],
   [
     "a wrapped trace-ascii authorization",
