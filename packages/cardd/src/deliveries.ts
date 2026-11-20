@@ -36,9 +36,7 @@ type DeliveryEvent = "push" | "read" | "ack" | "confirm" | "resend";
 const AT_CONNECT = `${IN_FLIGHT_DELIVERY}, 'acknowledged'`;
 const WHEN_UP = QUEUED_DELIVERY;
 const AGAIN = "'resent', 'pushed-again'";
-const ANSWERED_CHECK = `json_extract(e.fields, '$.recovery') IS NOT NULL AND (
-  d.state IN ('read', 'acknowledged') OR EXISTS (
-    SELECT 1 FROM incidents i WHERE i.recovery_entry = e.id AND i.control_at IS NOT NULL))`;
+const RECOVERY_CHECK = "e.kind = 'comment' AND json_extract(e.fields, '$.recovery') IS NOT NULL";
 const CHASEABLE = `${SENT_DELIVERY}, 'read', 'filed'`;
 
 function deliveryState(value: unknown): DeliveryState {
@@ -232,7 +230,7 @@ export function toPush(
        'again', json(iif(d.state IN (${AGAIN}), 'true', 'false'))) AS j
      FROM deliveries d JOIN entries e ON e.id = d.entry JOIN cards c ON c.id = e.card
      WHERE d.session = ? AND d.state IN (${states})
-       AND NOT (${ANSWERED_CHECK}) ORDER BY e.id`,
+       AND NOT ((${RECOVERY_CHECK}) AND d.state IN ('read', 'acknowledged')) ORDER BY e.id`,
     session,
   );
   const queued = new Set(
@@ -292,6 +290,7 @@ const UNREAD_RESENDS = 3;
 const CHASE_ROWS = `SELECT d.session AS session, d.state AS state, d.resends AS resends, d.told_at AS told, d.updated_at AS updated, s.role AS role, ${ENTRY_JSON} AS j
   FROM deliveries d JOIN sessions s ON s.id = d.session JOIN entries e ON e.id = d.entry
   WHERE d.state IN (${CHASEABLE})
+    AND NOT (${RECOVERY_CHECK})
     AND s.state IN ('idle', 'waiting')
     AND NOT ${LIVE_INCIDENT.replace("SESSION", "d.session")}
     AND (?1 - d.updated_at >= ?2 OR (d.resends >= ${String(UNREAD_RESENDS)} AND (d.told_at IS NULL OR ?1 - d.told_at >= ?3)))
@@ -386,6 +385,7 @@ export function requireCommentsRead(db: DatabaseSync, session: string, status: s
     .prepare(
       `SELECT e.author AS author, e.body AS body FROM deliveries d JOIN entries e ON e.id = d.entry
        WHERE d.session = ? AND d.state IN (${UNREAD_DELIVERY}) AND e.kind = 'comment'
+         AND NOT (${RECOVERY_CHECK})
          AND json_extract(e.fields, '$.task') IS NULL
          AND json_extract(e.fields, '$.for') = 'worker'
        ORDER BY e.id`,
