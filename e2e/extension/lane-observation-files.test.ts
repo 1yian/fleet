@@ -439,6 +439,26 @@ test("a stop that lands between status's lifecycle read and its workspace listin
   ]);
 });
 
+test("a lane directory with a blank suffix and an unread config is reported by its path beside a sibling start", async () => {
+  const worktrees = `${here.root}.worktrees`;
+  const blanks = ["lane-", "lane- "];
+  for (const name of blanks) {
+    mkdirSync(join(worktrees, name, "config"), { recursive: true });
+    writeFileSync(join(worktrees, name, "config", "lane.json"), "{");
+  }
+  const reply: unknown = JSON.parse(fleet(typedMaintenance));
+  assert.ok(isRecord(reply));
+  const expected: unknown = reply["expected"];
+  assert.ok(Array.isArray(expected));
+  assert.deepEqual(expected.map(String), ["ops", ...blanks]);
+  for (const lane of expected) assert.ok(String(lane).trim() !== "");
+  assert.equal(new Set(expected.map(String)).size, expected.length);
+  for (const name of blanks)
+    assert.ok(String(reply["failed"]).includes(`lane ${name} could not be read:`));
+  assert.deepEqual(records(reply["outcomes"]), [{ lane: "ops", action: "started" }]);
+  assert.equal(typeof (await workspace("ops"))?.["workspace_id"], "string");
+});
+
 test("a malformed legacy row does not hide a valid current-title workspace", async () => {
   const home = lane();
   await idlePane("ops", home);
