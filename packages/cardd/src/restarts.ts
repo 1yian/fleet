@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { OpArgs } from "@fleet/protocol";
-import { connected, liveAttemptModel, repinAttempt } from "./attempts.ts";
+import { connected, liveAttemptModel, repinAttempt, restoreAttemptPin } from "./attempts.ts";
 import { requireOpen } from "./change.ts";
 import { comment } from "./comments.ts";
 import { retireNoticeDeliveries } from "./delivery-states.ts";
@@ -93,9 +93,19 @@ function refuseLaunchOption(args: OpArgs<"card.restart">, mate: boolean): void {
     );
 }
 
-function repin(db: DatabaseSync, lane: string, card: number, model: string): void {
+function repin(
+  db: DatabaseSync,
+  lane: string,
+  card: number,
+  model: string,
+  request: number | undefined,
+): void {
   const { previous } = repinAttempt(db, card, model);
   if (previous === model) return;
+  if (request !== undefined)
+    db.prepare(
+      "UPDATE entries SET fields = json_set(fields, '$.modelFrom', ?, '$.modelTo', ?) WHERE id = ?",
+    ).run(previous ?? null, model, request);
   const was = previous ?? "the lane's normal model selection";
   const body = `Model pin changed from ${was} to ${model}. Every restart keeps it.`;
   addEntry(db, { card, author: `mate:${lane}`, kind: "note", body, fields: { model } }, []);
@@ -104,6 +114,23 @@ function repin(db: DatabaseSync, lane: string, card: number, model: string): voi
 interface Planned {
   readonly value: { readonly repeat: boolean };
   readonly notify: readonly string[];
+}
+
+function restorePin(db: DatabaseSync, lane: string, card: number, request: number): void {
+  const row = db
+    .prepare(
+      `SELECT json_extract(fields, '$.modelFrom') AS "from", json_extract(fields, '$.modelTo') AS "to"
+       FROM entries WHERE id = ? AND card = ?`,
+    )
+    .get(request, card);
+  const to = row?.["to"];
+  if (typeof to !== "string") return;
+  const before = row?.["from"];
+  const from = typeof before === "string" ? before : undefined;
+  if (!restoreAttemptPin(db, card, from, to)) return;
+  const body = `Model pin restored from ${to} to ${from ?? "the lane's normal model selection"}: the restart that changed it did not run.`;
+  const fields = { model: from ?? null };
+  addEntry(db, { card, author: `mate:${lane}`, kind: "note", body, fields }, []);
 }
 
 function refusedRestart(intent: IncidentIntent, connectedWorker: boolean): Error {
@@ -223,8 +250,10 @@ export function restartCard(
   requireDirectParent(session, card, mate);
   refuseLaunchOption(args, mate);
   const planned = planRestart(db, session, card, mate, args, timing);
-  if (args.model !== undefined && !planned.value.repeat)
-    repin(db, session.lane, card.id, args.model);
+  if (args.model !== undefined && !planned.value.repeat) {
+    const request = "request" in planned.value ? Number(planned.value.request) : undefined;
+    repin(db, session.lane, card.id, args.model, request);
+  }
   return planned;
 }
 
@@ -239,6 +268,7 @@ export function restartFailed(
   const request = mate ? undefined : requestOf(db, card.id, args.request);
   if (request?.key !== args.key || generationOf(db, request.actor) > request.generation)
     return { value: { recorded: false }, notify: [] };
+  restorePin(db, session.lane, card.id, args.request);
   const body = `The restart did not run, so it does not count toward the ${String(RESTARTS_PER_HOUR)} an hour: its worker process could not be started.`;
   const fields = { restartFailed: args.request };
   addEntry(db, { card: card.id, author: `mate:${session.lane}`, kind: "note", body, fields }, []);

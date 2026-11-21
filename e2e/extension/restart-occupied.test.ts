@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  launchArgsOf,
   mateConnected,
   startDispatchLab,
   stopDispatchLab,
@@ -102,4 +103,42 @@ test("a restart that finds a foreign Pi in the fresh pane before any start comma
     thread.entries.filter((entry) => entry.fields["restartFailed"] !== undefined).length,
     4,
   );
+});
+
+test("a refunded restart leaves the worker's model pin as it was, so the same key retried without a model launches the pinned model", async () => {
+  const dir = tempDir("start-refund-pin-");
+  const armed = join(dir, "armed");
+  parts = await startDispatchLab({
+    hosts: { far: ["node", READINESS, armed] },
+    roots: { far: CHECKOUT },
+  });
+  const { cardd, h, mate } = parts;
+  mkdirSync(join(h.dir, "agent"), { recursive: true });
+  writeFileSync(
+    join(h.dir, "agent", "models.json"),
+    JSON.stringify({ providers: { tier: { apiKey: "scripted" } } }),
+  );
+  const pinned = "openai-codex/gpt-fixture";
+  h.onModel(() => ({ ...DISPATCH, args: { ...DISPATCH.args, model: pinned } }), "mate");
+  h.onModel(async () => {
+    await workerHelloAdopted(cardd, "c-1-a1");
+    writeFileSync(armed, "foreign-shell\n");
+    rmSync(`${armed}.closed`, { force: true });
+    return { tool: "restart_card", args: { card: 1, key: "K", model: "tier/quick" } };
+  }, "mate");
+  h.onModel(() => ({ tool: "board", args: { card: 1 } }), "mate");
+  h.onModel(() => {
+    rmSync(armed, { force: true });
+    return { tool: "restart_card", args: { card: 1, key: "K" } };
+  }, "mate");
+  h.onModel(() => ({ text: "done" }), "mate");
+  await mateConnected(h);
+  mate.prompt("ship the scrollbar fix");
+
+  const results = toolResults(await h.waitForCall(4, "mate", 4 * WORKER_WAIT_MS));
+  assert.match(results.at(-3) ?? "", /did not become idle/);
+  assert.match(results.at(-2) ?? "", /,openai-codex\/gpt-fixture$/m);
+  assert.doesNotMatch(results.at(-2) ?? "", /tier\/quick/);
+  assert.doesNotMatch(results.at(-1) ?? "", /already recorded|did not become idle|restarted 3 times/);
+  assert.match(readFileSync(launchArgsOf(h), "utf8"), /--model\nopenai-codex\/gpt-fixture\n/);
 });
