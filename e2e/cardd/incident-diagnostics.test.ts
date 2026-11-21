@@ -221,6 +221,10 @@ for (const [name, diagnostic] of [
   ["an inline-code trace row", "`0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72`"],
   ["an indented trace row", "    0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72"],
   [
+    "a timestamped clipped cookie tail and terminating row",
+    String.raw`{"trace":"15:16:17.000001 0040: abc.def\r\n15:16:17.000002 0049: "}`,
+  ],
+  [
     "timestamped short clipped trace rows",
     String.raw`{"trace":"15:16:17.000001 0040: Y2Fu\r\n15:16:17.000002 0046: Y2Fu"}`,
   ],
