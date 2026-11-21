@@ -21,6 +21,20 @@ case "$1 $2:$HERDR_FAULT" in
       console.log(JSON.stringify(reply));
     '
     exit $? ;;
+  'workspace list:no-legacy-count')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      for (const row of reply.result.workspaces)
+        if (row.label.startsWith("fleet-")) delete row.pane_count;
+      console.log(JSON.stringify(reply));
+    '
+    exit $? ;;
+  '--version :swap-config')
+    if [ ! -e "$FAULT_PANE.swapped" ]; then
+      : > "$FAULT_PANE.swapped"
+      cp "$FAULT_PANE.next" "$FAULT_PANE.swap" && mv "$FAULT_PANE.swap" "$FAULT_PANE"
+    fi ;;
   'workspace list:partial') printf '%s' '{"result":{"workspaces":[{"label":"2ndmate-ops"}]}}'; exit 0 ;;
   'workspace list:timeout') printf '%s' '{"result":{"workspaces":[]}}'; exec sleep 60 ;;
   'workspace list:omit-once')

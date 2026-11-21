@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { discoverLanes, unreadFailure } from "./homes.ts";
-import { isAbsent } from "./lane-config.ts";
+import { isAbsent, readRegular } from "./lane-config.ts";
 
 type Tier = "pinned" | "aging" | "perishable";
 type Standing = "captain.md" | "captain-shared.md" | "learnings.md";
@@ -37,7 +37,7 @@ export const PRESERVED_PREFIX = "fleet-preserved: ";
 
 function readStrict(path: string): string | undefined {
   try {
-    return readFileSync(path, "utf8");
+    return readRegular(path);
   } catch (error) {
     if (isAbsent(path, error)) return undefined;
     throw error;

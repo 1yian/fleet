@@ -176,6 +176,7 @@ async function findCurrent(
 ): Promise<LaneMatch | undefined> {
   if (row === undefined) return undefined;
   const workspace = String(row["workspace_id"]);
+  requireCount(row, workspace);
   if (purpose === "close") return { workspace, state: "matched" };
   const panes = await panesOf(workspace, row["pane_count"], deadline);
   const [first] = panes;
@@ -198,6 +199,12 @@ async function findCurrent(
   return state !== "down"
     ? { workspace, state: "running" }
     : { workspace, state: "idle", pane: first.pane };
+}
+
+function requireCount(row: Record<string, unknown>, workspace: string): void {
+  const count = row["pane_count"];
+  if (typeof count !== "number" || !Number.isInteger(count) || count < 1)
+    throw new HostUnread(`herdr returned no pane count for workspace ${workspace}`);
 }
 
 function requiredCwd(cwd: string | undefined, workspace: string): string {
@@ -247,13 +254,6 @@ export async function workspaceOf(
     if (current.length > 1)
       throw new HostUnread(`herdr lists ${String(current.length)} workspaces titled ${title}`);
     const legacy = listed.filter((row) => row["label"] === legacyTitle && !isWorkerWorkspace(row));
-    for (const row of [...current, ...legacy]) {
-      const count = row["pane_count"];
-      if (typeof count !== "number" || !Number.isInteger(count) || count < 1)
-        throw new HostUnread(
-          `herdr returned no pane count for workspace ${String(row["workspace_id"])}`,
-        );
-    }
     return { current, legacy };
   };
   const changed = () => new HostUnread(`herdr workspace candidates changed for ${info.lane}`);

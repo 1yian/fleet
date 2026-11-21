@@ -1,4 +1,12 @@
-import { lstatSync, readFileSync, statSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { isUuid, type BwsConfig } from "./bws.ts";
@@ -185,11 +193,23 @@ function hasReadableAncestor(path: string): boolean {
   return entry.isSymbolicLink() ? statSync(parent).isDirectory() : entry.isDirectory();
 }
 
+export function readRegular(file: string): string {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const kind = fstatSync(fd);
+    if (!kind.isFile() && !kind.isDirectory())
+      throw Object.assign(new Error(`${file} is not a regular file`), { code: "ENOTREGULAR" });
+    return readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function readLaneConfig(home: string): LaneConfig | undefined {
   const file = join(home, LANE_FILE);
   let text: string;
   try {
-    text = readFileSync(file, "utf8");
+    text = readRegular(file);
   } catch (error) {
     if (isAbsent(file, error)) return undefined;
     throw error;

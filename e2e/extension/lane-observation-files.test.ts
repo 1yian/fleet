@@ -1,18 +1,8 @@
 import assert from "node:assert/strict";
-import { execFile, execFileSync, spawn } from "node:child_process";
-import {
-  constants,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { open, writeFile } from "node:fs/promises";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { promisify } from "node:util";
 import { isRecord, records } from "../support/json.ts";
 import {
   addLane,
@@ -202,31 +192,70 @@ test("a home that becomes readable after the sweep's snapshot waits for the next
   const config = join(fix, "config", "lane.json");
   const good = readFileSync(config, "utf8");
   writeFileSync(join(fix, "config", "optchat.json"), JSON.stringify({ profile: "ghost" }));
-  rmSync(config);
-  execFileSync("mkfifo", [config]);
-  const sweep = promisify(execFile)(process.execPath, [here.launch, ...typedMaintenance], {
-    encoding: "utf8",
-    env: fleetEnv(),
-    timeout: 90_000,
-  });
-  await writeFile(config, "{");
-  const repair = writeFile(config, good);
-  const { stdout } = await sweep;
-  const reader = await open(config, constants.O_RDONLY | constants.O_NONBLOCK);
-  await repair;
-  await reader.close();
-  const reply: unknown = JSON.parse(stdout);
+  writeFileSync(config, "{");
+  writeFileSync(`${config}.next`, good);
+  const reply: unknown = JSON.parse(fleet(typedMaintenance, "swap-config", config));
+  assert.ok(existsSync(`${config}.swapped`));
+  assert.equal(readFileSync(config, "utf8"), good);
   assert.ok(isRecord(reply));
   assert.deepEqual(reply["expected"], ["ops", "fix"]);
   assert.match(String(reply["failed"]), /lane fix could not be read: .*not valid JSON/);
   assert.deepEqual(records(reply["outcomes"]), [{ lane: "ops", action: "started" }]);
   assert.equal(await workspace("fix"), undefined);
   assert.equal(existsSync(join(fix, "state", "starts")), false);
-  rmSync(config);
-  writeFileSync(config, good);
   const next: unknown = JSON.parse(fleet(typedMaintenance));
   assert.ok(isRecord(next));
   assert.match(String(next["failed"]), /optchat of lane fix has no AGENTS.md and config.json/);
   assert.equal(await workspace("fix"), undefined);
   assert.equal(existsSync(join(fix, "state", "starts")), false);
+});
+
+test("a lane claim that changes after the sweep checked it is unread and never acted on", async () => {
+  const home = lane();
+  const config = join(home, "config", "lane.json");
+  const good = readFileSync(config, "utf8");
+  const changed: unknown = JSON.parse(good);
+  assert.ok(isRecord(changed));
+  changed["args"] = ["--changed"];
+  for (const next of ["{", JSON.stringify(changed)]) {
+    rmSync(`${config}.swapped`, { force: true });
+    writeFileSync(`${config}.next`, next);
+    const reply: unknown = JSON.parse(fleet(typedMaintenance, "swap-config", config));
+    assert.ok(existsSync(`${config}.swapped`));
+    assert.ok(isRecord(reply));
+    assert.deepEqual(reply["expected"], ["ops"]);
+    assert.deepEqual(records(reply["outcomes"]), [{ lane: "ops", action: "unread" }]);
+    assert.equal(await workspace("ops"), undefined);
+    assert.equal(existsSync(join(home, "state", "starts")), false);
+    assert.equal(existsSync(join(home, "state", "stopped")), false);
+    writeFileSync(config, good);
+  }
+  assert.deepEqual(maintain(), action("ops", "started"));
+});
+
+test("a lane config that is a writerless FIFO is unread without blocking a healthy sibling", async () => {
+  const fix = addLane("fix");
+  const config = join(fix, "config", "lane.json");
+  rmSync(config);
+  execFileSync("mkfifo", [config]);
+  const out = execFileSync(process.execPath, [here.launch, ...typedMaintenance], {
+    encoding: "utf8",
+    env: fleetEnv(),
+    timeout: 30_000,
+  });
+  const reply: unknown = JSON.parse(out);
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["expected"], ["ops", "fix"]);
+  assert.match(String(reply["failed"]), /lane fix could not be read: .*not a regular file/);
+  assert.deepEqual(records(reply["outcomes"]), [{ lane: "ops", action: "started" }]);
+  assert.equal(await workspace("fix"), undefined);
+});
+
+test("a malformed legacy row does not hide a valid current-title workspace", async () => {
+  const home = lane();
+  await idlePane("ops", home);
+  await idlePane("ops", home, "fleet-ops");
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"], "no-legacy-count")), [
+    { lane: "ops", state: "down" },
+  ]);
 });

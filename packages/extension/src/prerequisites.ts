@@ -1,10 +1,10 @@
 import { execFileSync, spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { ghLogin, type GhRun } from "./gh-login.ts";
 import { discoverLanes, type Discovery } from "./lane-homes.ts";
-import { isRecord, readLaneConfig } from "./lane-config.ts";
+import { isRecord, readLaneConfig, readRegular } from "./lane-config.ts";
 import { remainingMs } from "./maintenance-budget.ts";
 
 interface Tool {
@@ -153,7 +153,7 @@ export function settingsOf(home: string): Record<string, unknown> | undefined {
   const file = join(home, "config", "optchat.json");
   if (!existsSync(file)) return undefined;
   try {
-    const found: unknown = JSON.parse(readFileSync(file, "utf8"));
+    const found: unknown = JSON.parse(readRegular(file));
     return isRecord(found) ? found : {};
   } catch {
     return {};

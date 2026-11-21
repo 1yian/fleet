@@ -30,6 +30,8 @@ import {
   LANE_FILE,
   mateStartArgs,
   parseLaneConfig,
+  readLaneConfig,
+  readRegular,
   type LaneConfig,
 } from "./lane-config.ts";
 import { remainingMs } from "./maintenance-budget.ts";
@@ -143,7 +145,7 @@ const ifUnread =
 
 function readState(file: string, name: string): string | undefined {
   try {
-    return readFileSync(file, "utf8");
+    return readRegular(file);
   } catch (error) {
     if (isAbsent(file, error)) return undefined;
     const code = error instanceof Error && "code" in error ? String(error.code) : "unknown";
@@ -270,17 +272,32 @@ async function confirmTarget(
     throw new HostUnread(`${info.lane} changed while its start was being prepared`);
 }
 
+const noClaimCheck = (): void => undefined;
+
+function confirmClaim(info: LaneHome): void {
+  let now: LaneConfig | undefined;
+  try {
+    now = readLaneConfig(info.home);
+  } catch {
+    throw new HostUnread(`${info.lane} config could not be read again after it was checked`);
+  }
+  if (JSON.stringify(now) !== JSON.stringify(info.config))
+    throw new HostUnread(`${info.lane} config changed after it was checked`);
+}
+
 async function start(
   root: string,
   info: LaneHome,
   existingPane: string | undefined,
   lift: boolean,
   deadline?: number,
+  confirm: (info: LaneHome) => void = noClaimCheck,
 ): Promise<void> {
   const launchDeadline = startDeadline(deadline);
   const history = recentStarts(info.home, Date.now());
   syncHome(root, info.home, launchDeadline);
   await confirmTarget(info, existingPane, launchDeadline);
+  confirm(info);
   const pane = existingPane ?? (await createMatePane(info, launchDeadline));
   const pi = ["pi", "--continue", TRUST_ARG, ...mateStartArgs(info.config.args, info.config.tier)];
   const { direnv } = info.config;
@@ -333,7 +350,8 @@ async function upOne(
   root: string,
   info: LaneHome,
   only: string | undefined,
-  deadline?: number,
+  deadline: number | undefined,
+  confirm: (info: LaneHome) => void,
 ): Promise<Outcome> {
   const { lane, home } = info;
   const observationDeadline =
@@ -343,6 +361,7 @@ async function upOne(
   const observed = await workspaceOf(info, "liveness", observationDeadline);
   const reason = heldReason(home);
   const history = recentStarts(home, Date.now());
+  confirm(info);
   if (observed?.state === "running") {
     if (reason !== undefined) liftHold(home);
     return { lane, action: "running" };
@@ -354,7 +373,7 @@ async function upOne(
     writeFileSync(stoppedFile(home), `crash loop: ${detail}\n`);
     return { lane, action: "held", detail };
   }
-  await start(root, info, idlePaneOf(observed), lift, deadline);
+  await start(root, info, idlePaneOf(observed), lift, deadline, confirm);
   return { lane, action: "started" };
 }
 
@@ -366,6 +385,7 @@ export async function up(
   discovered?: Discovery,
 ): Promise<SweepResult> {
   const { homes: lanes, unread } = named(root, only, discovered);
+  const confirm = discovered === undefined ? noClaimCheck : confirmClaim;
   const expected = [...lanes, ...unread].map(({ lane }) => lane);
   const unreadFailed = unreadFailure(unread);
   const first = offset % Math.max(1, lanes.length);
@@ -376,7 +396,7 @@ export async function up(
         await withLifecycleLock(
           info.home,
           info.lane,
-          () => upOne(root, info, only, deadline),
+          () => upOne(root, info, only, deadline, confirm),
           deadline,
         ),
       );
