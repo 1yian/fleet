@@ -368,6 +368,22 @@ for (const [name, diagnostic] of [
     String.raw`{"url":"https://localhost/callback?api\u0020key=paper"}`,
   ],
   [
+    "an escaped tab inside a parameter name",
+    String.raw`{"url":"https://localhost/callback?pass\u0009word=paper"}`,
+  ],
+  [
+    "an escaped line feed inside a parameter name",
+    String.raw`{"url":"https://localhost/callback?pass\u000aword=paper"}`,
+  ],
+  [
+    "an escaped tab after the query opener",
+    String.raw`{"url":"https://localhost/callback?\u0009password=paper"}`,
+  ],
+  [
+    "a literal tab inside a parameter name",
+    "Callback https://localhost/callback?pass\tword=paper failed",
+  ],
+  [
     "an encoded fragment parameter name",
     "Callback https://localhost/callback#pass%77ord=paper failed",
   ],

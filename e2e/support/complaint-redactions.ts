@@ -88,6 +88,18 @@ export const REDACTED_COMPLAINTS = [
     "[URL withheld: credential boundaries unclear]",
   ],
   [
+    String.raw`{"url":"https://localhost/callback?pass\u0009word=paper"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    "Callback https://localhost/callback?pass\tword=paper failed",
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    String.raw`{"url":"https://localhost/callback?\u000apassword=paper"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
     "Callback https://localhost/callback#pass%77ord=paper failed",
     "[URL withheld: credential boundaries unclear]",
   ],
@@ -401,3 +413,17 @@ export const FIXTURES = {
   curlData: CURL_DATA_COMPLAINTS,
   redacted: REDACTED_COMPLAINTS,
 };
+
+export const RECOVERY_SCOPE = [
+  [
+    "a proxy CONNECT success before an origin auth failure",
+    "HTTP/1.1 200 Connection established\r\n\r\nHTTP/2 401\r\nSet-Cookie: session=paper\r\n\r\n",
+    true,
+  ],
+  [
+    "a browser-normalized escaped credential name",
+    String.raw`{"url":"https://localhost/cb?pass\u0009word=paper"}`,
+    true,
+  ],
+  ["an unrelated withheld curl command", "curl --user 'demo:paper canoe' https://localhost", false],
+] as const;

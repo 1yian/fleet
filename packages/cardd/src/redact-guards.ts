@@ -152,13 +152,37 @@ function literalSpan(found: Decoded, from: number, length: number): boolean {
   return true;
 }
 
-export function hasEncodedCredentialParam(text: string): boolean {
-  const found = decode(text);
+const BROWSER_IGNORED = new Set(["\t", "\n", "\r", "\u0001"]);
+const URL_CANDIDATE = /[a-z][a-z\d+.-]*:\/\/[^\s]*$/i;
+
+function withoutBrowserWhitespace(found: Decoded): Decoded {
+  const view: string[] = [];
+  const starts: number[] = [];
+  const literal: boolean[] = [];
+  Array.from(found.view).forEach((char, index) => {
+    if (BROWSER_IGNORED.has(char)) return;
+    view.push(char);
+    starts.push(found.starts[index] ?? 0);
+    literal.push(found.literal[index] === true);
+  });
+  return { view: view.join(""), starts, literal };
+}
+
+function hasCredentialAssignment(found: Decoded, candidatesOnly: boolean): boolean {
   for (const match of found.view.matchAll(PARAM_NAME)) {
     const name = match[1] ?? "";
     const key = percentDecoded(name);
     if (!CREDENTIAL_KEY.test(key)) continue;
+    if (candidatesOnly && !URL_CANDIDATE.test(found.view.slice(0, match.index))) continue;
     if (key !== name || !literalSpan(found, match.index, name.length + 2)) return true;
   }
   return false;
+}
+
+export function hasEncodedCredentialParam(text: string): boolean {
+  const found = decode(text);
+  return (
+    hasCredentialAssignment(found, false) ||
+    hasCredentialAssignment(withoutBrowserWhitespace(found), true)
+  );
 }

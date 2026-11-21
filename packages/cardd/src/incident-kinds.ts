@@ -1,5 +1,5 @@
 import { CURL_DATA_SECRET, CURL_SHELL_EXPANSION } from "./curl-shell.ts";
-import { VERSIONED_ENVELOPE } from "./http-envelope.ts";
+import { LEADING_ENVELOPE, milliseconds, retryAfterMs } from "./http-envelope.ts";
 import {
   hasBrowserUserinfo,
   hasCookieRecord,
@@ -357,22 +357,6 @@ export function sanitize(text: string): string {
   return clipDiagnostic(redact(text, "diagnostic"));
 }
 
-const SECONDS = 1000;
-
-function retryAfterMs(error: string): number | undefined {
-  const named =
-    /(?:(["'])retry[-_ ]after\1[ \t]*:[ \t]*|\bretry[-_ ]after[ \t]*[:=]?[ \t]*)(["']?)(\d+(?:\.\d+)?)\2(?!\w|\.\d)/i.exec(
-      error,
-    );
-  const within = /retry (?:again )?in (\d+(?:\.\d+)?) ?s/i.exec(error);
-  return milliseconds(named?.[3] ?? within?.[1]);
-}
-
-function milliseconds(seconds: string | undefined): number | undefined {
-  const ms = Math.ceil(Number(seconds) * SECONDS);
-  return Number.isSafeInteger(ms) && ms <= 8_640_000_000_000_000 - Date.now() ? ms : undefined;
-}
-
 const KINDS: readonly (readonly [Kind, RegExp])[] = [
   [
     "stale-module",
@@ -398,12 +382,6 @@ export interface FailureSignals {
   readonly retryAfter: number | undefined;
 }
 
-const HTTP_REASON = String.raw`(?:too many requests|rate limit exceeded|overloaded|service unavailable|unauthorized|forbidden|(?<=\b402[ \t]+)payment required|(?<=\b500[ \t]+)internal server error|(?<=\b502[ \t]+)bad gateway|(?<=\b503[ \t]+)service temporarily unavailable|(?<=\b504[ \t]+)gateway timeout)`;
-const HTTP_ENVELOPE = new RegExp(
-  String.raw`^(?:HTTP(?:/\d(?:\.\d)?)?[ \t]+|(?=\d{3}[ \t]+${HTTP_REASON}\b))(\d{3})(?:[ \t]+${HTTP_REASON})?\.?[ \t]*(?:Retry-After:[ \t]*(\d+(?:\.\d+)?)[ \t]*)?(?=\r?\n|$)`,
-  "i",
-);
-
 const HTTP_HEADERS = /^\n((?:[!#$%&'*+.^_\u0060|~\w-]+:[^\n]*\n)*)\n/;
 const RETRY_HEADER = /^retry-after:[ \t]*(\d+(?:\.\d+)?)[ \t]*$/i;
 
@@ -416,6 +394,12 @@ function headerRetryAfter(source: string): string | undefined {
   return RETRY_HEADER.exec(redactNormalized(hint, "diagnostic"))?.[1];
 }
 
+function withheldKind(source: string, status: string, bare: boolean): Kind {
+  const refused =
+    hasCookieRecord(source) || [source, logicalView(source)].some(hasEncodedCredentialParam);
+  return status.startsWith("2") || (bare && refused) ? "withheld" : classify(status);
+}
+
 export function diagnoseFailure(text: string): {
   readonly error: string;
   readonly signals: FailureSignals;
@@ -425,11 +409,13 @@ export function diagnoseFailure(text: string): {
   const error = clipDiagnostic(diagnostic);
   const marked = [YAML_WITHHELD, URL_WITHHELD, CURL_WITHHELD, RECORD_WITHHELD].includes(diagnostic);
   if (marked) {
-    const envelope = HTTP_ENVELOPE.exec(source) ?? VERSIONED_ENVELOPE.exec(source);
+    const envelope = LEADING_ENVELOPE.exec(source);
     const [line = "", status = "", inline] = envelope ?? [];
+    const kind = withheldKind(source, status, envelope === null);
     const seconds =
-      inline ?? (envelope === null ? undefined : headerRetryAfter(source.slice(line.length)));
-    const kind = envelope === null ? "withheld" : classify(status);
+      kind === "withheld" || envelope === null
+        ? inline
+        : (inline ?? headerRetryAfter(source.slice(line.length)));
     return { error, signals: { kind, retryAfter: milliseconds(seconds) } };
   }
   return { error, signals: { kind: classify(error), retryAfter: retryAfterMs(diagnostic) } };

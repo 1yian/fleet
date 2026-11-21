@@ -3,6 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import type { Card, Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { RECOVERY_SCOPE } from "../support/complaint-redactions.ts";
 import { is, reportFailure } from "../support/incidents.ts";
 
 const MODEL = "openai-codex/gpt-fixture";
@@ -389,6 +390,19 @@ for (const [status, separator, recovering] of [
       );
     }
   });
+}
+
+for (const [name, diagnostic, blocked] of RECOVERY_SCOPE) {
+  for (const recovering of [false, true]) {
+    test(`${name} ${blocked ? "blocks" : "keeps"} ${recovering ? "further" : "initial"} recovery`, async () => {
+      const card = await newCard(cleo, "Restore provider authentication");
+      const { incident, notice } = await noticeAfter(card, diagnostic, recovering, "the failure");
+      assert.doesNotMatch(notice.body, /paper/);
+      const retry = restart(card, incident, { mode: "retry", key: "withheld-retry" });
+      if (blocked) await assert.rejects(retry, /incident \d+ is blocked/);
+      else await retry;
+    });
+  }
 }
 
 test("a recovery that gets no response within the verification window fails and leaves a normal retry", async () => {
