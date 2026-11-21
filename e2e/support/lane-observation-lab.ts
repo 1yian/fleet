@@ -200,6 +200,12 @@ case "$1 $2:$HERDR_FAULT" in
     fi
     printf '%s' "$reply"
     exit 0 ;;
+  'pane list:replace-between')
+    printf 'x\\n' >> "$HERDR_FAULT_LOG.panes"
+    if [ "$(wc -l < "$HERDR_FAULT_LOG.panes")" -eq 2 ]; then
+      "$REAL_HERDR" pane split "$FAULT_PANE" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
+      "$REAL_HERDR" pane close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
+    fi ;;
   'pane list:split-utility-flip')
     reply=$("$REAL_HERDR" "$@") || exit $?
     if [ ! -e "$HERDR_FAULT_LOG.utility" ]; then

@@ -91,3 +91,15 @@ test("a workspace renamed during the confirming pane read is neither stopped nor
     "fleet-utility",
   );
 });
+
+test("a pane replaced between the two close reads, with the count unchanged, is neither stopped nor marked", async () => {
+  const root = await idlePane("ops", ops());
+  const before = await workspace("ops");
+  assert.ok(typeof before?.["workspace_id"] === "string");
+  assert.throws(
+    () => fleet(["stop", "ops"], "replace-between", root),
+    /herdr workspace candidates changed for ops/,
+  );
+  assert.equal(existsSync(join(ops(), "state", "stopped")), false);
+  assert.equal((await workspace("ops"))?.["workspace_id"], before["workspace_id"]);
+});

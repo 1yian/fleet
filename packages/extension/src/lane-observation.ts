@@ -180,6 +180,7 @@ async function findCurrent(
   const panes = await panesOf(workspace, row["pane_count"], deadline);
   if (purpose === "close") {
     expect(obs, workspace, panes, membership);
+    obs.log.push(`close ${workspace} ${membership(panes)}`);
     return { workspace, state: "matched" };
   }
   const [first] = panes;
