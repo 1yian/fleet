@@ -9,6 +9,7 @@ import {
   stopDispatchLab,
   toolResults,
   WORKER_WAIT_MS,
+  workerHelloAdopted,
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
 import { tempDir } from "../support/run-root.ts";
@@ -80,7 +81,11 @@ test("a restart that finds a foreign Pi in the fresh pane before any start comma
     return restart;
   };
   h.onModel(() => DISPATCH, "mate");
-  for (let tried = 0; tried < 4; tried += 1) h.onModel(arm, "mate");
+  h.onModel(async () => {
+    await workerHelloAdopted(cardd, "c-1-a1");
+    return arm();
+  }, "mate");
+  for (let tried = 1; tried < 4; tried += 1) h.onModel(arm, "mate");
   h.onModel(() => ({ text: "refused" }), "mate");
   await mateConnected(h);
   mate.prompt("ship the scrollbar fix");

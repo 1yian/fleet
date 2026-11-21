@@ -2,8 +2,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { Cardd } from "./cardd.ts";
-import { Harness, type Move, type Pi, type Turn } from "./harness.ts";
+import { Harness, poll, type Move, type Pi, type Turn } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
 import { RepeatProxy, type MateRoute } from "./repeat-proxy.ts";
@@ -249,6 +250,24 @@ export const holdRepeat = (key: string): ((carddUrl: string) => Promise<MateRout
 
 export const mateConnected = (h: Harness) =>
   h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
+
+function sessionGeneration(cardd: Cardd, session: string): number {
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    return Number(
+      db.prepare("SELECT generation FROM sessions WHERE id = ?").get(session)?.["generation"] ?? 0,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+export const workerHelloAdopted = (cardd: Cardd, session: string) =>
+  poll(
+    () => (sessionGeneration(cardd, session) >= 1 ? true : undefined),
+    `${session} hello to advance its generation`,
+    WORKER_WAIT_MS,
+  );
 
 export function herdrStartRunning(lab: HerdrLab, attempt: string): boolean {
   try {
