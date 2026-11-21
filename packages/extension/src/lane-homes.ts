@@ -79,7 +79,7 @@ function scanHomes(root: string): Scanned[] {
         return config === undefined ? [] : [{ name, lane: config.lane, home, config }];
       } catch (error) {
         const suffix = name.slice("lane-".length);
-        return [{ name, lane: suffix.trim() === "" ? name : suffix, error }];
+        return [{ name, lane: suffix.trim() === "" ? home : suffix, error }];
       }
     });
   return mergeSharedClaims(scanned);

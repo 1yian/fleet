@@ -439,23 +439,34 @@ test("a stop that lands between status's lifecycle read and its workspace listin
   ]);
 });
 
-test("a lane directory with a blank suffix and an unread config is reported by its path beside a sibling start", async () => {
+test("a lane directory with a blank suffix and an unread config is reported by its path and does not shadow a healthy lane named lane-", async () => {
   const worktrees = `${here.root}.worktrees`;
   const blanks = ["lane-", "lane- "];
   for (const name of blanks) {
     mkdirSync(join(worktrees, name, "config"), { recursive: true });
     writeFileSync(join(worktrees, name, "config", "lane.json"), "{");
   }
+  addLane("lane-");
+  const labels = blanks.map((name) => join(worktrees, name));
   const reply: unknown = JSON.parse(fleet(typedMaintenance));
   assert.ok(isRecord(reply));
   const expected: unknown = reply["expected"];
   assert.ok(Array.isArray(expected));
-  assert.deepEqual(expected.map(String), ["ops", ...blanks]);
+  assert.deepEqual(expected.map(String).sort(), ["lane-", "ops", ...labels].sort());
   for (const lane of expected) assert.ok(String(lane).trim() !== "");
   assert.equal(new Set(expected.map(String)).size, expected.length);
-  for (const name of blanks)
-    assert.ok(String(reply["failed"]).includes(`lane ${name} could not be read:`));
-  assert.deepEqual(records(reply["outcomes"]), [{ lane: "ops", action: "started" }]);
+  for (const label of labels)
+    assert.ok(String(reply["failed"]).includes(`lane ${label} could not be read:`));
+  assert.ok(!String(reply["failed"]).includes("claimed by more than one home"));
+  assert.deepEqual(
+    records(reply["outcomes"])
+      .map((row) => ({ lane: String(row["lane"]), action: String(row["action"]) }))
+      .sort((a, b) => a.lane.localeCompare(b.lane)),
+    [
+      { lane: "lane-", action: "started" },
+      { lane: "ops", action: "started" },
+    ],
+  );
   assert.equal(typeof (await workspace("ops"))?.["workspace_id"], "string");
 });
 
