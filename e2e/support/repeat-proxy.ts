@@ -24,6 +24,12 @@ const holds = (frame: string, key: string): boolean => {
   );
 };
 
+const text = (data: RawData): string => {
+  if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  return Buffer.from(new Uint8Array(data)).toString("utf8");
+};
+
 export class RepeatProxy implements MateRoute {
   readonly url: string;
   private readonly server: Server;
@@ -68,7 +74,7 @@ export class RepeatProxy implements MateRoute {
     const ready = new Promise<void>((resolve) => server.once("open", resolve));
     const forward = async (data: RawData, isBinary: boolean): Promise<void> => {
       await ready;
-      const frame = isBinary ? "" : data.toString();
+      const frame = isBinary ? "" : text(data);
       if (!isBinary && holds(frame, this.key)) {
         this.seen += 1;
         if (this.seen === 2) await this.releasedPromise;
@@ -81,16 +87,32 @@ export class RepeatProxy implements MateRoute {
     server.on("message", (data, isBinary) => {
       if (client.readyState === WebSocket.OPEN) client.send(data, { binary: isBinary });
     });
-    client.on("close", () => server.close());
-    server.on("close", () => client.close());
-    client.on("error", () => server.terminate());
-    server.on("error", () => client.terminate());
+    client.on("close", () => {
+      server.close();
+    });
+    server.on("close", () => {
+      client.close();
+    });
+    client.on("error", () => {
+      server.terminate();
+    });
+    server.on("error", () => {
+      client.terminate();
+    });
   }
 
   async stop(): Promise<void> {
     this.released();
     for (const socket of this.open) socket.terminate();
-    await new Promise<void>((resolve) => this.sockets.close(() => resolve()));
-    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+    await new Promise<void>((resolve) => {
+      this.sockets.close(() => {
+        resolve();
+      });
+    });
+    await new Promise<void>((resolve) => {
+      this.server.close(() => {
+        resolve();
+      });
+    });
   }
 }
