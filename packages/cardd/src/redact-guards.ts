@@ -37,7 +37,14 @@ const HTTP_TEXT = /HTTP\/|^(?:GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s|^[\w-]+:
 const BROWSER_USERINFO = /(?<![a-z\d+.-])(?:https?|wss?|ftp):\/*(?!\[hidden\]@)[^\s/?#@]*@/i;
 
 export const hasBrowserUserinfo = (text: string): boolean =>
-  BROWSER_USERINFO.test(text.replace(/[\t\n\r]/g, "").replace(/\\/g, "/"));
+  BROWSER_USERINFO.test(
+    text
+      .replace(UNICODE_ESCAPE, (_escape, hex: string) =>
+        String.fromCharCode(Number.parseInt(hex, 16)),
+      )
+      .replace(/[\t\n\r]/g, "")
+      .replace(/\\/g, "/"),
+  );
 
 const decoded = (text: string): string =>
   text
@@ -51,14 +58,17 @@ const decoded = (text: string): string =>
 function hasTraceRows(text: string): boolean {
   const rows = Array.from(text.matchAll(TRACE_ROW), (row) => ({
     offset: Number.parseInt(row[1] ?? "", 16),
-    rest: row[2] ?? "",
+    rest: (row[2] ?? "").replace(/\r$/, ""),
   }));
-  const rising =
-    rows.length > 1 &&
-    rows.every((row, at) => at === 0 || row.offset > (rows[at - 1]?.offset ?? 0));
-  return (
-    rows.some((row) => row.offset === 0) || (rising && rows.some((row) => HTTP_TEXT.test(row.rest)))
+  const pairs = rows
+    .slice(1)
+    .map((row, at) => ({ gap: row.offset - (rows[at]?.offset ?? 0), prior: rows[at]?.rest ?? "" }));
+  const advanced = pairs.some(
+    ({ gap, prior }) => gap - prior.length >= 0 && gap - prior.length <= 2,
   );
+  const rising = rows.length > 1 && pairs.every(({ gap }) => gap > 0);
+  const http = rows.some((row) => HTTP_TEXT.test(row.rest));
+  return rows.some((row) => row.offset === 0) || advanced || (rising && http);
 }
 
 export const hasCookieHeader = (text: string): boolean => {

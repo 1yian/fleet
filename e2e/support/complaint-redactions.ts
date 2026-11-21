@@ -31,6 +31,10 @@ export const REDACTED_COMPLAINTS = [
     'Reply {"message":"Unauthorized","field":"token"} omits the header.',
   ],
   ["8080: connection refused", "8080: connection refused"],
+  [
+    String.raw`{"url":"https:demo:paper\u0040localhost/api"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
   ["8080: i/o timeout\n9090: connection refused", "8080: i/o timeout 9090: connection refused"],
   [
     "Browser URL https:demo:paper@localhost/api failed",
@@ -217,6 +221,8 @@ export const COOKIE_COMPLAINTS = [
   '> Authorization: Digest username="demo", response="paper"',
   "> Proxy-Authorization: Basic cGFwZXI6Y2Fub2U=",
   "> X-Api-Key: paper",
+  "0040: Y2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2Fu\n0080: Y2Fu",
+  String.raw`{"trace":"0040: Y2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2Fu\r\n0080: Y2Fu"}`,
   "`0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72`",
   "    0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72",
   "> - 0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72",

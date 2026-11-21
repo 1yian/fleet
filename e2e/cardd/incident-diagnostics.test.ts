@@ -217,6 +217,10 @@ for (const [name, diagnostic] of [
   ],
   ["an inline-code trace row", "`0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72`"],
   ["an indented trace row", "    0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72"],
+  [
+    "clipped trace continuation rows",
+    "0040: Y2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2Fu\n0080: Y2Fu",
+  ],
   ["a trace hex dump", "0000: 47 45 54 20 2f 20 48 54 54 50 2f 31 2e 31 20 70 61 70 65 72"],
   [
     "a wrapped trace-ascii authorization",
@@ -296,6 +300,7 @@ for (const [name, diagnostic] of [
   ["a tab inside userinfo", "Browser URL https://demo:pa\tper@localhost/api failed"],
   ["no authority separators", "Browser URL https:demo:paper@localhost/api failed"],
   ["excess authority separators", "Browser URL https:////demo:paper@localhost/api failed"],
+  ["an escaped at sign", String.raw`{"url":"https:demo:paper\u0040localhost/api"}`],
 ] as const) {
   test(`a browser-equivalent URL with ${name} is withheld`, async () => {
     const card = await newCard(cleo, "Report a failing diagnostic");
