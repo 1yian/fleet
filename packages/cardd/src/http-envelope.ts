@@ -1,5 +1,3 @@
-import { hasCookieRecord } from "./redact-guards.ts";
-
 const CODED_REASONS: readonly (readonly [string, string])[] = [
   ["payment required", "402"],
   ["internal server error", "500"],
@@ -73,7 +71,7 @@ export const LEADING_ENVELOPE = {
     let rest = source;
     while (INTERIM_LINE.test(rest)) {
       const block = INTERIM_BLOCK.exec(rest)?.[0];
-      if (block === undefined || hasCookieRecord(block)) return BLOCKED;
+      if (block === undefined) return BLOCKED;
       rest = rest.slice(block.length);
     }
     const final = direct(rest);

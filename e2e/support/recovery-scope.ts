@@ -58,4 +58,23 @@ export const RECOVERY_SCOPE = [
     "curl --user 'demo:paper canoe' https://localhost",
     "open",
   ],
+  [
+    "a credential-bearing CONNECT block before a final auth failure",
+    "HTTP/1.1 200 Connection established\r\nSet-Cookie: tunnel=paper\r\n\r\nHTTP/2 401\r\nSet-Cookie: session=paper\r\n\r\n",
+    "blocked",
+    /is blocked: auth is not repaired/,
+  ],
+  [
+    "a credential-bearing CONNECT block before a final delayed overload",
+    "HTTP/1.1 200 Connection established\r\nSet-Cookie: tunnel=paper\r\n\r\nHTTP/2 503\r\nRetry-After: 120\r\nSet-Cookie: session=paper\r\n\r\n",
+    "delayed",
+    /not eligible for recovery/,
+  ],
+  [
+    "a credential-bearing informational block before a final auth failure",
+    "HTTP/1.1 103 Early Hints\r\nSet-Cookie: hint=paper\r\n\r\nHTTP/1.1 401 Unauthorized\r\nSet-Cookie: session=paper\r\n\r\n",
+    "blocked",
+    /is blocked: auth is not repaired/,
+  ],
+  ["an unrelated withheld YAML collection", "token: [paper, canoe]", "open", undefined],
 ] as const;
