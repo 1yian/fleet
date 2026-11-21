@@ -298,6 +298,7 @@ async function start(
   await confirmTarget(info, existingPane, launchDeadline);
   confirm(info);
   const pane = existingPane ?? (await createMatePane(info, launchDeadline));
+  await confirmTarget(info, pane, launchDeadline);
   confirm(info);
   const pi = ["pi", "--continue", TRUST_ARG, ...mateStartArgs(info.config.args, info.config.tier)];
   const { direnv } = info.config;

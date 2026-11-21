@@ -94,6 +94,15 @@ case "$1 $2:$HERDR_FAULT" in
       printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
+  'workspace create:split-after-create')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    pane=$(printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      console.log(reply.result.root_pane.pane_id);
+    ')
+    "$REAL_HERDR" pane split "$pane" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
+    printf '%s' "$reply"
+    exit 0 ;;
   'pane process-info:pi-stays-split-at-info')
     if [ "$4" = "$FAULT_PANE" ]; then
       if [ ! -e "$HERDR_FAULT_LOG.split" ]; then

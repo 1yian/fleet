@@ -146,7 +146,10 @@ test("an unreadable root config is reported by typed maintenance without stoppin
   assert.deepEqual(records(reply["outcomes"]), [{ lane: "ops", action: "started" }]);
   assert.throws(() => fleet(["up"]), /not valid JSON/);
   writeFileSync(config, good);
-  assert.deepEqual(maintain(), action("ops", "running"));
+  const repaired: unknown = JSON.parse(fleet(typedMaintenance));
+  assert.ok(isRecord(repaired));
+  assert.deepEqual(repaired["expected"], ["ops"]);
+  assert.equal(repaired["failed"], undefined);
 });
 
 test("a dangling lane config, stop marker or start history is unread, never absent", async () => {

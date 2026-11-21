@@ -230,3 +230,21 @@ test("a legacy workspace outside the lane home whose cwd becomes unusable on the
   rmSync(starts);
   assert.deepEqual(maintain(), action("ops", "started"));
 });
+
+test("a workspace split while its creation reply is returned is never run into or closed", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const starts = join(home, "state", "starts");
+  assert.deepEqual(maintain("split-after-create"), action("ops", "unread"));
+  assert.equal(existsSync(starts), false);
+  assert.equal(existsSync(join(home, "state", "stopped")), false);
+  const created = await workspace("ops");
+  assert.equal(typeof created?.["workspace_id"], "string");
+  assert.equal(created?.["pane_count"], 2);
+  const panes = records((await lab.run(["pane", "list"]))["panes"]);
+  for (const pane of panes) {
+    const info = records([
+      (await lab.run(["pane", "process-info", "--pane", String(pane["pane_id"])]))["process_info"],
+    ])[0];
+    assert.equal(info?.["shell_pid"], info?.["foreground_process_group_id"]);
+  }
+});
