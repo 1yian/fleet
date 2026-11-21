@@ -63,9 +63,7 @@ function hasTraceRows(text: string): boolean {
   const pairs = rows
     .slice(1)
     .map((row, at) => ({ gap: row.offset - (rows[at]?.offset ?? 0), prior: rows[at]?.rest ?? "" }));
-  const advanced = pairs.some(
-    ({ gap, prior }) => gap - prior.length >= 0 && gap - prior.length <= 2,
-  );
+  const advanced = pairs.some(({ gap, prior }) => prior.length === 64 && gap === 64);
   const rising = rows.length > 1 && pairs.every(({ gap }) => gap > 0);
   const http = rows.some((row) => HTTP_TEXT.test(row.rest));
   return rows.some((row) => row.offset === 0) || advanced || (rising && http);

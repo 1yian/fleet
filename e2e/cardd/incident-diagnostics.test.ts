@@ -328,3 +328,12 @@ test("two port-prefixed failure lines keep their text and their transient recove
   assert.ok(heard.body.includes("Classified transient."), heard.body);
   assert.ok(heard.body.includes("mode=retry"), heard.body);
 });
+
+test("two port lines whose offsets match the first message length keep text and transient recovery", async () => {
+  const card = await newCard(cleo, "Report matching-gap port failures");
+  await reportFailure(fleet, cleo, card, "8080: network timeout\n8090: connection refused");
+  const heard = await cleo.waitForEntry(is("runtime-failure"), "the runtime failure");
+  assert.ok(heard.body.includes("8080: network timeout"), heard.body);
+  assert.ok(heard.body.includes("Classified transient."), heard.body);
+  assert.ok(heard.body.includes("mode=retry"), heard.body);
+});

@@ -32,6 +32,10 @@ export const REDACTED_COMPLAINTS = [
   ],
   ["8080: connection refused", "8080: connection refused"],
   [
+    "8080: network timeout\n8090: connection refused",
+    "8080: network timeout 8090: connection refused",
+  ],
+  [
     String.raw`{"url":"https:demo:paper\u0040localhost/api"}`,
     "[URL withheld: credential boundaries unclear]",
   ],
