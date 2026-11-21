@@ -121,8 +121,17 @@ export function percentDecoded(name: string): string {
   return current;
 }
 
-export const hasEncodedCredentialParam = (text: string): boolean =>
-  Array.from(decoded(text).matchAll(PARAM_NAME)).some(([assignment = "", name = ""]) => {
+const occurrences = (text: string, part: string): number => text.split(part).length - 1;
+
+export function hasEncodedCredentialParam(text: string): boolean {
+  const seen = new Map<string, number>();
+  for (const [assignment = "", name = ""] of decoded(text).matchAll(PARAM_NAME)) {
     const plain = percentDecoded(name);
-    return CREDENTIAL_KEY.test(plain) && (plain !== name || !text.includes(assignment));
-  });
+    if (!CREDENTIAL_KEY.test(plain)) continue;
+    if (plain !== name) return true;
+    const count = (seen.get(assignment) ?? 0) + 1;
+    if (count > occurrences(text, assignment)) return true;
+    seen.set(assignment, count);
+  }
+  return false;
+}

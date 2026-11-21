@@ -348,6 +348,14 @@ for (const [name, diagnostic] of [
     String.raw`{"url":"https://localhost/callback#next=1\u0026token\u003dpaper"}`,
   ],
   [
+    "a plain URL before an escaped query opener",
+    String.raw`{"a":"https://localhost/cb?password=example","b":"https://localhost/cb\u003fpassword=paper"}`,
+  ],
+  [
+    "an escaped query opener before a plain URL",
+    String.raw`{"b":"https://localhost/cb\u003fpassword=paper","a":"https://localhost/cb?password=example"}`,
+  ],
+  [
     "an encoded fragment parameter name",
     "Callback https://localhost/callback#pass%77ord=paper failed",
   ],
