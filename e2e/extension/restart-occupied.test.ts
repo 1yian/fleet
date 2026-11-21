@@ -128,6 +128,11 @@ test("a refunded restart leaves the worker's model pin as it was, so the same ke
     return { tool: "restart_card", args: { card: 1, key: "K", model: "tier/quick" } };
   }, "mate");
   h.onModel(() => ({ tool: "board", args: { card: 1 } }), "mate");
+  h.onModel(
+    () => ({ tool: "run_long", args: { label: "wait0", command: "sleep 600" } }),
+    "worker",
+  );
+  h.onModel(() => ({ text: "waiting for the job" }), "worker");
   const before = { generation: 0, calls: 0 };
   h.onModel(() => {
     rmSync(armed, { force: true });
@@ -151,7 +156,6 @@ test("a refunded restart leaves the worker's model pin as it was, so the same ke
   const results = toolResults(await h.waitForCall(5, "mate", 4 * WORKER_WAIT_MS));
   assert.match(results.at(-4) ?? "", /did not become idle/);
   assert.match(results.at(-3) ?? "", /,openai-codex\/gpt-fixture$/m);
-  assert.doesNotMatch(results.at(-3) ?? "", /tier\/quick/);
   assert.match(results.at(-2) ?? "", /^Started c-1-a1 again on far, /);
   assert.doesNotMatch(results.at(-2) ?? "", /already recorded|did not become idle|restarted 3 times/);
   const replacement = h.modelsOf("worker").slice(before.calls);

@@ -101,14 +101,14 @@ function repin(
   request: number | undefined,
 ): void {
   const { previous } = repinAttempt(db, card, model);
-  if (previous === model) return;
-  if (request !== undefined)
-    db.prepare(
-      "UPDATE entries SET fields = json_set(fields, '$.modelFrom', ?, '$.modelTo', ?) WHERE id = ?",
-    ).run(previous ?? null, model, request);
+  if (previous === model && request === undefined) return;
   const was = previous ?? "the lane's normal model selection";
-  const body = `Model pin changed from ${was} to ${model}. Every restart keeps it.`;
-  addEntry(db, { card, author: `mate:${lane}`, kind: "note", body, fields: { model } }, []);
+  const body =
+    previous === model
+      ? `Model pin kept at ${model}. Every restart keeps it.`
+      : `Model pin changed from ${was} to ${model}. Every restart keeps it.`;
+  const fields = { model, pinFrom: previous ?? null, pinTo: model, pinRequest: request ?? null };
+  addEntry(db, { card, author: `mate:${lane}`, kind: "note", body, fields }, []);
 }
 
 interface Planned {
@@ -116,33 +116,26 @@ interface Planned {
   readonly notify: readonly string[];
 }
 
-function passPinBaton(
-  db: DatabaseSync,
-  card: number,
-  request: number,
-  from: string | undefined,
-  to: string,
-): void {
-  db.prepare(
-    `UPDATE entries SET fields = json_set(fields, '$.modelFrom', ?)
-     WHERE card = ? AND id > ? AND json_extract(fields, '$.modelFrom') = ?`,
-  ).run(from ?? null, card, request, to);
-}
-
 function restorePin(db: DatabaseSync, lane: string, card: number, request: number): void {
-  const row = db
+  const rows = db
     .prepare(
-      `SELECT json_extract(fields, '$.modelFrom') AS "from", json_extract(fields, '$.modelTo') AS "to"
-       FROM entries WHERE id = ? AND card = ?`,
+      `SELECT json_extract(fields, '$.pinFrom') AS "from", json_extract(fields, '$.pinTo') AS "to",
+         json_extract(fields, '$.pinRequest') AS request, json_extract(fields, '$.pinRefunded') AS refunded
+       FROM entries WHERE card = ? AND kind = 'note'
+         AND (json_type(fields, '$.pinTo') IS NOT NULL OR json_type(fields, '$.pinRefunded') IS NOT NULL)
+       ORDER BY id`,
     )
-    .get(request, card);
-  const to = row?.["to"];
-  if (typeof to !== "string") return;
-  const before = row?.["from"];
-  const from = typeof before === "string" ? before : undefined;
-  if (!restoreAttemptPin(db, card, from, to)) return passPinBaton(db, card, request, from, to);
-  const body = `Model pin restored from ${to} to ${from ?? "the lane's normal model selection"}: the restart that changed it did not run.`;
-  const fields = { model: from ?? null };
+    .all(card);
+  if (!rows.some((row) => row["request"] === request && typeof row["to"] === "string")) return;
+  const refunded = new Set([request, ...rows.map((row) => row["refunded"])]);
+  const pins = rows.filter((row) => typeof row["to"] === "string");
+  const first = pins[0];
+  const last = pins.findLast((row) => !refunded.has(row["request"]));
+  const pinned = last?.["to"] ?? first?.["from"];
+  const model = typeof pinned === "string" ? pinned : undefined;
+  restoreAttemptPin(db, card, model);
+  const body = `Model pin restored to ${model ?? "the lane's normal model selection"}: the restart that changed it did not run.`;
+  const fields = { model: model ?? null, pinRefunded: request };
   addEntry(db, { card, author: `mate:${lane}`, kind: "note", body, fields }, []);
 }
 
