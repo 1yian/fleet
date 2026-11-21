@@ -155,11 +155,15 @@ export class Jobs {
     this.advance(job);
     this.unresolved.delete(job);
     const wasWaiting = this.waiting;
-    this.clearPending(job);
     if (running) {
+      this.clearPending(job);
       this.running.add(job);
       this.launches.delete(job);
-    } else this.running.delete(job);
+    } else {
+      this.running.delete(job);
+      const pending = this.pending.get(job);
+      if (pending !== undefined) pending.dispatched = false;
+    }
     if (this.waiting !== wasWaiting) this.onWaitChanged();
   }
 

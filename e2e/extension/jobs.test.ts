@@ -740,8 +740,12 @@ for (const fault of ["failed", "partial"] as const) {
   });
 }
 
-for (const paneReply of ["intact", "unreadable"] as const)
-  test(`a generic stop before a delayed fence preserves exact tab cleanup and rejects an ${paneReply} pane reply`, async (t) => {
+for (const [paneReply, reconnect] of [
+  ["intact", false],
+  ["unreadable", false],
+  ["intact", true],
+] as const)
+  test(`a generic stop${reconnect ? " and a negative exact retry" : ""} before a delayed fence preserve exact tab cleanup and reject an ${paneReply} pane reply`, async (t) => {
     const registration = Promise.withResolvers<void>();
     let registering = false;
     const stopDelivery = Promise.withResolvers<void>();
@@ -751,7 +755,8 @@ for (const paneReply of ["intact", "unreadable"] as const)
       stopDelivery.resolve();
       fenceDelivery.resolve();
     });
-    await jobProxy(
+    let negativeReads = 0;
+    const disconnect = await jobProxy(
       t,
       async (op, args) => {
         if (op === "job.register") {
@@ -764,6 +769,14 @@ for (const paneReply of ["intact", "unreadable"] as const)
       undefined,
       undefined,
       stopDelivery.promise,
+      undefined,
+      undefined,
+      (reply) => {
+        if (reply.ok && !check(OPS["job.running"].result, reply.value).running) negativeReads += 1;
+        return reply;
+      },
+      undefined,
+      reconnect,
     );
     const bin = join(jobDir, "bin");
     mkdirSync(bin);
@@ -842,6 +855,15 @@ exec ${quote(herdr)} "$@"
     ]);
     assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === tab));
     assert.equal(h.events.some(delivered), false);
+    if (reconnect) {
+      disconnect();
+      await until(
+        () => (negativeReads > 0 ? true : undefined),
+        "the reconnect's negative exact read before the fence",
+      );
+      assert.equal(h.events.some(delivered), false);
+      assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === tab));
+    }
     fenceDelivery.resolve();
     await h.waitFor(delivered, "the delayed fence before the pane reply");
     await waitTabGone(String(tab), "tab_id");
