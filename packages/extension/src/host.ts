@@ -1,16 +1,13 @@
 import type { ExecFileException } from "node:child_process";
 import { hostname } from "node:os";
 import { fleetHostName, routed } from "@fleet/protocol/route";
-import {
-  diedBeforeTheCommandStarted,
-  type Detach,
-  runOnTransport,
-} from "@fleet/protocol/transport";
+import { type Detach, runOnTransport } from "@fleet/protocol/transport";
 import { spawnDetached } from "./detached.ts";
+import { exitStatus, startError, startFailure } from "./host-start.ts";
+import { isRecord } from "./lane-config.ts";
 import { remainingMs } from "./maintenance-budget.ts";
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+export { AgentReadinessTimedOut, AgentStartRefused } from "./host-start.ts";
 
 export class HostUnreachable extends Error {}
 
@@ -36,44 +33,6 @@ type LaneCommand = "observe" | "mutate";
 export class TimedOut extends Error {}
 
 export class WorkspaceNotFound extends Error {}
-
-export class AgentStartRefused extends Error {}
-
-export class AgentReadinessTimedOut extends Error {}
-
-const startRefused = (code: unknown): boolean =>
-  code === "agent_pane_busy" || code === "agent_name_taken" || code === "server_not_running";
-
-const readinessTimeout = (payload: Record<string, unknown>): boolean =>
-  isRecord(payload["error"]) &&
-  payload["error"]["code"] === "timeout" &&
-  payload["id"] === "cli:agent:start";
-
-function structured(output: string): Record<string, unknown> | undefined {
-  try {
-    const payload: unknown = JSON.parse(output);
-    return isRecord(payload) ? payload : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function refusalOf(output: string): string | undefined {
-  const payload = structured(output);
-  if (payload === undefined) return undefined;
-  const detail = isRecord(payload["error"]) ? payload["error"] : payload;
-  if (!startRefused(detail["code"])) return undefined;
-  const message = detail["message"];
-  return typeof message === "string" && message.trim() !== "" ? message : String(detail["code"]);
-}
-
-const timedOutStart = (...outputs: string[]): boolean =>
-  outputs.some((text) =>
-    text.split("\n").some((line) => {
-      const payload = structured(line.trim());
-      return payload !== undefined && readinessTimeout(payload);
-    }),
-  );
 
 const firstLabel = (name: string): string => (name.toLowerCase().split(".")[0] ?? "").trim();
 
@@ -132,11 +91,6 @@ const failure = (
   via.length > 0 && (error.code === 255 || (probe && error.killed === true))
     ? new HostUnreachable(message)
     : new Error(message);
-
-const exitStatus = (error: { code?: unknown; signal?: unknown }): string =>
-  typeof error.signal === "string"
-    ? `killed by ${error.signal}`
-    : `exit status ${String(error.code)}`;
 
 const OPEN_FILES = 65_536;
 const SERVER_WAIT_MS = 30_000;
@@ -302,32 +256,20 @@ function laneTransportFailure(
   return lane === "observe" ? new HostUnread(message) : new Error(message);
 }
 
-function refusalDetail(
-  file: string,
-  error: ExecFileException,
-  out: string,
-  err: string,
-): string | undefined {
-  const stdout = refusalOf(out);
-  const stderr = refusalOf(err);
-  if (stdout !== undefined) return [stdout, stderr ?? err.trim()].filter(Boolean).join("\n");
-  if (stderr !== undefined) return stderr;
-  if (error.code === "ENOENT" || diedBeforeTheCommandStarted(file, error, err))
-    return err.trim() || exitStatus(error);
-  return undefined;
-}
-
-function startFailure(
-  file: string,
-  error: ExecFileException,
-  out: string,
-  err: string,
-  message: (detail: string) => string,
-): Error | undefined {
-  const refusal = refusalDetail(file, error, out, err);
-  if (refusal !== undefined) return new AgentStartRefused(message(refusal));
-  if (!timedOutStart(out, err)) return undefined;
-  return new AgentReadinessTimedOut(message(err.trim() || out.trim() || exitStatus(error)));
+function commandFailure(c: {
+  file: string;
+  via: readonly string[];
+  error: ExecFileException;
+  out: string;
+  err: string;
+  replay: boolean;
+  message: (detail: string) => string;
+  probe: boolean;
+}): Error {
+  const started = c.replay ? undefined : startFailure(c.file, c.error, c.out, c.err, c.message);
+  if (started !== undefined) return started;
+  const detail = c.err.trim() || (!c.replay && c.out.trim()) || exitStatus(c.error);
+  return failure(c.via, c.error, c.message(detail), c.probe);
 }
 
 async function herdrText(
@@ -354,34 +296,14 @@ async function herdrText(
       rest,
       { timeout, ...(deadline === undefined ? {} : { detach: ownGroup, sharedRetryBudget: true }) },
       (error, out, err) => {
-        if (error !== null && lane !== undefined) {
+        if (error !== null && lane !== undefined)
           reject(laneTransportFailure(lane, args, error, out, err));
-          return;
-        }
-        if (error === null || (replay && out.trim() !== "")) {
-          resolve(out);
-          return;
-        }
-        const started = replay ? undefined : startFailure(file, error, out, err, message);
-        if (started !== undefined) {
-          reject(started);
-          return;
-        }
-        const detail = err.trim() || (!replay && out.trim()) || exitStatus(error);
-        reject(failure(via, error, message(detail), probe));
+        else if (error === null || (replay && out.trim() !== "")) resolve(out);
+        else reject(commandFailure({ file, via, error, out, err, replay, message, probe }));
       },
       replay,
     );
   });
-}
-
-function startError(
-  error: Record<string, unknown>,
-  reply: Record<string, unknown>,
-  message: string,
-): Error | undefined {
-  if (startRefused(error["code"])) return new AgentStartRefused(message);
-  return readinessTimeout(reply) ? new AgentReadinessTimedOut(message) : undefined;
 }
 
 function resultOf(
