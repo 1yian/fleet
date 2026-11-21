@@ -153,7 +153,7 @@ function literalSpan(found: Decoded, from: number, length: number): boolean {
 }
 
 const BROWSER_IGNORED = new Set(["\t", "\n", "\r", "\u0001"]);
-const URL_CANDIDATE = /(?:(?<![a-z\d+.-])(?:https?|wss?|ftp):[/\\]*|[a-z][a-z\d+.-]*:\/\/)\S*$/i;
+const URL_SCHEME = /(?<![a-z\d+.-])(?:https?|wss?|ftp):[/\\]*|[a-z][a-z\d+.-]*:\/\//gi;
 
 function withoutBrowserWhitespace(found: Decoded): Decoded {
   const kept: number[] = [];
@@ -176,6 +176,27 @@ function closesQuote(found: Decoded, index: number, quote: string): boolean {
   return index === 0 || found.starts[index] === (found.starts[index - 1] ?? -2) + 1;
 }
 
+function closedBetween(found: Decoded, from: number, to: number, quote: string): boolean {
+  for (let index = from; index < to; index += 1) {
+    if (closesQuote(found, index, quote)) return true;
+  }
+  return false;
+}
+
+function urlContext(found: Decoded, at: number): { quote: string | undefined } | null {
+  const starts = Array.from(found.view.slice(0, at).matchAll(URL_SCHEME), (m) => m.index);
+  for (const start of starts.reverse()) {
+    const opener = found.view[start - 1] ?? "";
+    const quote = /["'\u0060]/.test(opener) ? opener : undefined;
+    const open =
+      quote === undefined
+        ? !/\s/.test(found.view.slice(start, at))
+        : !closedBetween(found, start, at, quote);
+    if (open) return { quote };
+  }
+  return null;
+}
+
 function valueBoundary(found: Decoded, start: number, quote: string | undefined): number {
   if (quote === undefined) {
     const stop = found.view.slice(start).search(VALUE_END);
@@ -191,12 +212,10 @@ function unprovenValue(
   found: Decoded,
   match: RegExpExecArray,
   name: string,
-  candidate: RegExpExecArray | null,
+  context: { quote: string | undefined } | null,
 ): boolean {
   const valueStart = match.index + name.length + 2;
-  const opener = found.view[(candidate?.index ?? 0) - 1] ?? "";
-  const quote = /["'\u0060]/.test(opener) ? opener : undefined;
-  const valueEnd = candidate === null ? valueStart : valueBoundary(found, valueStart, quote);
+  const valueEnd = context === null ? valueStart : valueBoundary(found, valueStart, context.quote);
   if (!literalSpan(found, match.index, valueEnd - match.index)) return true;
   return !VALUE_CORE.test(found.view.slice(valueStart, valueEnd).replace(VALUE_TAIL, ""));
 }
@@ -206,9 +225,9 @@ function hasCredentialAssignment(found: Decoded, candidatesOnly: boolean): boole
     const name = match[1] ?? "";
     const key = percentDecoded(name);
     if (!CREDENTIAL_KEY.test(key)) continue;
-    const candidate = URL_CANDIDATE.exec(found.view.slice(0, match.index));
-    if (candidatesOnly && candidate === null) continue;
-    if (key !== name || unprovenValue(found, match, name, candidate)) return true;
+    const context = urlContext(found, match.index);
+    if (candidatesOnly && context === null) continue;
+    if (key !== name || unprovenValue(found, match, name, context)) return true;
   }
   return false;
 }

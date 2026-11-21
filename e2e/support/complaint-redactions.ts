@@ -12,6 +12,10 @@ export const REDACTED_COMPLAINTS = [
     "Callback https://localhost/cb?password=paper, then retry",
     "Callback https://localhost/cb?password=[hidden], then retry",
   ],
+  [
+    String.raw`{"url":"https://localhost/cb?label=hello world\u0026next=yes"}`,
+    String.raw`{"url":"https://localhost/cb?label=hello world\u0026next=yes"}`,
+  ],
   ["password: ``paper ``` canoe ` sail``, next=visible", "password: [hidden], next=visible"],
   ["password: Basic paper\n canoe harbor\nnext: visible", "password: [hidden] next: visible"],
   ["password:\n paper canoe\n harbor\nnext: visible", "password: [hidden] next: visible"],
@@ -137,6 +141,10 @@ export const REDACTED_COMPLAINTS = [
   ],
   [
     String.raw`{"url":"https://localhost/cb?password=paper\u003c canoe"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    String.raw`{"url":"https://localhost/cb?label=hello world\u0026password=paper canoe"}`,
     "[URL withheld: credential boundaries unclear]",
   ],
   [

@@ -339,8 +339,8 @@ for (const [name, diagnostic] of [
     "Callback https://localhost/callback#client+secret=paper failed",
   ],
   [
-    "an escaped ampersand before a parameter name",
-    String.raw`{"url":"https://localhost/callback?next=1\u0026password=paper"}`,
+    "a spaced benign parameter before a quoted credential",
+    String.raw`{"url":"https://localhost/cb?label=hello world\u0026password=paper canoe"}`,
   ],
   ["an escaped query opener", String.raw`{"url":"https://localhost/callback\u003fpassword=paper"}`],
   [
