@@ -116,7 +116,7 @@ class StartUnconfirmed extends Error {
 
 async function launchReplacement(host: string, pane: string, args: string[]): Promise<void> {
   if (!(await until(() => shellIdle(host, pane), SHELL_WAIT_MS)))
-    throw new Error(`the shell in pane ${pane} on ${host} did not become idle`);
+    throw new DidNotStart(new Error(`the shell in pane ${pane} on ${host} did not become idle`));
   try {
     await startReplacementOnce(host, args);
   } catch (error) {
@@ -236,7 +236,10 @@ async function startAgent(
     else await launchReplacement(host, pane, args);
   } catch (error) {
     if (replacementStarted !== undefined) {
-      const outcome = await replacementError(host, pane, worker, error, replacementStarted);
+      const outcome =
+        error instanceof DidNotStart
+          ? error
+          : await replacementError(host, pane, worker, error, replacementStarted);
       if (outcome instanceof Error) throw outcome;
       readiness = outcome;
     } else {

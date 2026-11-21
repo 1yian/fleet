@@ -46,7 +46,21 @@ const processInfo = command.includes("'herdr' 'pane' 'process-info'");
 if (mode !== "visible" && mode !== "contain-fail" && afterStart && processInfo) {
   while (!existsSync(released)) await delay(20);
 }
+const closed = `${marker}.closed`;
+if (mode === "foreign-shell" && command.includes("'contain' 'attach'"))
+  writeFileSync(closed, "closed\n");
 const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+if (mode === "foreign-shell" && existsSync(closed) && processInfo) {
+  const info = parseRecord(result.stdout);
+  const body = isRecord(info["result"]) ? info["result"]["process_info"] : undefined;
+  if (isRecord(body)) {
+    const foreground = body["foreground_processes"];
+    if (Array.isArray(foreground)) foreground.push({ pid: 2147483646, name: "pi" });
+    body["foreground_process_group_id"] = 2147483646;
+  }
+  process.stdout.write(JSON.stringify(info));
+  process.exit(0);
+}
 if (mode === "refuse-occupied" && existsSync(`${marker}.refused`) && processInfo) {
   rmSync(`${marker}.refused`);
   const info = parseRecord(result.stdout);
