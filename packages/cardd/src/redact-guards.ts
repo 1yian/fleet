@@ -20,9 +20,10 @@ const CREDENTIAL_KEY = new RegExp(String.raw`^${SECRET_NAME}$`, "i");
 const RECORD_KEY = new RegExp(String.raw`^${RECORD_NAME}$`, "i");
 const RECORD_MENTION = new RegExp(String.raw`(?<![\w-])${RECORD_NAME}(?![\w-])`, "i");
 const EXPLICIT_KEY = new RegExp(
-  String.raw`(?:^|[{\[,])[ \t]*(?:-[ \t]+)*\?(?:[ \t]*\n[ \t]+|[ \t]+)([^\n,}\]]*)`,
+  String.raw`(?:^|[{\[,])[ \t]*(?:-[ \t]+)*\?(?=[ \t\n]|(?![\s\S]))([\s\S]*?)(?=\n[ \t]*:(?:[ \t\n]|(?![\s\S]))|[ \t]:(?:[ \t\n,}\]]|(?![\s\S]))|(?![\s\S]))`,
   "gm",
 );
+const KEY_SPLICE = /\\+\n[ \t]*/g;
 const UNICODE_ESCAPE = /\\+u([\da-f]{4})/gi;
 
 export function normalizeInput(text: string): string {
@@ -145,7 +146,7 @@ export function hasEscapedCredentialKey(text: string): boolean {
 
 export function hasExplicitCredentialKey(text: string): boolean {
   for (const [, key = ""] of text.matchAll(EXPLICIT_KEY)) {
-    if (RECORD_MENTION.test(decodeKeyEscapes(key))) return true;
+    if (RECORD_MENTION.test(decodeKeyEscapes(key.replace(KEY_SPLICE, "")))) return true;
   }
   return false;
 }
