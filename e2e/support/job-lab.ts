@@ -56,8 +56,8 @@ export class JobLab {
     this.env["TMPDIR"] = this.jobDir;
   }
 
-  static async start(): Promise<JobLab> {
-    const fleet = await startFleet({ CARDD_TIMING_SCALE: "0.04" });
+  static async start(timingScale = "0.04"): Promise<JobLab> {
+    const fleet = await startFleet({ CARDD_TIMING_SCALE: timingScale });
     const h = await Harness.start();
     const lab = await HerdrLab.start({});
     const created = await lab.run(["workspace", "create", "--no-focus"]);
@@ -169,7 +169,7 @@ export class JobLab {
       creates: join(this.jobDir, "tab-creates"),
       runs: join(this.jobDir, "pane-runs"),
       keys: join(this.jobDir, "pane-keys"),
-      holdTab: join(this.jobDir, "hold-tab-create"),
+      failTab: join(this.jobDir, "fail-tab-create"),
       release: join(this.jobDir, "release-dispatch"),
     };
     const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
@@ -181,7 +181,7 @@ if [ "$1 $2" = 'tab close' ]; then
 fi
 if [ "$1 $2" = 'tab create' ]; then
   echo tab >> ${quote(logs.creates)}
-  while [ -e ${quote(logs.holdTab)} ]; do sleep 0.05; done
+  if [ -e ${quote(logs.failTab)} ]; then echo 'tab create refused' >&2; exit 1; fi
 fi
 if [ "$1 $2" = 'pane send-keys' ]; then
   echo "$3" >> ${quote(logs.keys)}

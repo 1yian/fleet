@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type ServerMessage } from "@fleet/protocol";
@@ -129,7 +129,7 @@ test("a legacy stop with no crossing news still interrupts its exact pane", asyn
   assert.deepEqual(readFileSync(shim.keys, "utf8").trim().split("\n"), [String(pane["pane_id"])]);
 });
 
-test("a stop that arrives while the launch is still creating its tab signals no same-named decoy", async (t) => {
+async function legacyProxy(t: Parameters<typeof JobLab.prototype.proxy>[0]) {
   jl.env["PROBE_STOP_RESULT"] = "1";
   const proxy = await jl.proxy(t);
   proxy.httpFault(
@@ -137,11 +137,11 @@ test("a stop that arrives while the launch is still creating its tab signals no 
     { status: 400, body: { ok: false, error: "unknown operation job.prepare" } },
     1,
   );
-  const shim = jl.installShim();
-  writeFileSync(shim.release, "");
-  writeFileSync(shim.holdTab, "");
-  t.after(() => rmSync(shim.holdTab, { force: true }));
-  await jl.lab.run([
+  return proxy;
+}
+
+const makeDecoy = () =>
+  jl.lab.run([
     "tab",
     "create",
     "--workspace",
@@ -150,28 +150,65 @@ test("a stop that arrives while the launch is still creating its tab signals no 
     "job-1-gate",
     "--no-focus",
   ]);
-  const started = until(
-    () => (proxy.replied.includes("job.start") ? true : undefined),
-    "the legacy start reply",
-  );
-  proxy.callFault("job.stop", { gate: started });
+
+const STILL_STARTING = {
+  type: "text",
+  text: "job 1 (gate) is still starting in this worker, so nothing was signalled.",
+};
+
+test("a stop that overtakes the legacy start receipt signals no same-named decoy", async (t) => {
+  const proxy = await legacyProxy(t);
+  const shim = jl.installShim();
+  writeFileSync(shim.release, "");
+  await makeDecoy();
+  const startSeen = Promise.withResolvers<ServerMessage>();
+  const stopAnswered = Promise.withResolvers<undefined>();
+  t.after(() => stopAnswered.resolve(undefined));
+  proxy.callFault("job.start", { hold: stopAnswered.promise, seen: (m) => startSeen.resolve(m) });
+  proxy.callFault("job.stop", { gate: startSeen.promise });
   jl.h.onModel(() => ({
     tool: "run_long",
     args: { label: "gate", command: "echo gate" },
     alongside: [{ tool: "stop_job", args: { job: 1 } }],
   }));
-  jl.h.onModel(() => ({ text: "The launch was still starting" }));
+  jl.h.onModel(() => ({ text: "The stop overtook the start" }));
   jl.worker();
   const stopped = await jl.h.waitFor(
     (event) => event["type"] === "stop_result",
-    "the stop that crossed the launch",
+    "the stop that overtook the legacy start receipt",
+  );
+  stopAnswered.resolve(undefined);
+  assert.equal(stopped["isError"], false);
+  assert.deepEqual(stopped["content"], [STILL_STARTING]);
+  assert.equal(existsSync(shim.keys), false);
+});
+
+test("a stop from a replacement worker still interrupts the exact legacy pane", async (t) => {
+  const { pi, shim } = await legacyGate(t);
+  const tab = await gateTab();
+  assert.ok(tab);
+  await pi.kill();
+  const panes = await jl.lab.run([
+    "pane",
+    "list",
+    "--workspace",
+    jl.env["HERDR_WORKSPACE_ID"] ?? "",
+  ]);
+  const pane = records(panes["panes"]).find((each) => each["tab_id"] === tab["tab_id"]);
+  assert.ok(pane);
+  const second = jl.worker();
+  await jl.h.waitForNth(
+    (event) => event["type"] === "fleet_connected",
+    2,
+    "the replacement worker to connect",
+  );
+  jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
+  jl.h.onModel(() => ({ text: "The stop was sent" }));
+  second.prompt("Stop the gate job");
+  const stopped = await jl.h.waitFor(
+    (event) => event["type"] === "stop_result",
+    "the replacement worker's stop",
   );
   assert.equal(stopped["isError"], false);
-  assert.deepEqual(stopped["content"], [
-    {
-      type: "text",
-      text: "job 1 (gate) is still starting in this worker, so nothing was signalled.",
-    },
-  ]);
-  assert.equal(existsSync(shim.keys), false);
+  assert.deepEqual(readFileSync(shim.keys, "utf8").trim().split("\n"), [String(pane["pane_id"])]);
 });

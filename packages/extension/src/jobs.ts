@@ -93,6 +93,8 @@ export class Jobs {
   private readonly files: JobFiles;
   private readonly cancelledJobs = new Set<number>();
   private readonly ownedTabs = new Map<number, string>();
+  private readonly localLegacy = new Set<number>();
+  private legacyStarts = 0;
   private readonly link: Link;
   private readonly endpoint: { url: string; token: string };
   private readonly warn: (text: string) => void;
@@ -286,12 +288,21 @@ export class Jobs {
         receipt.error === "unknown operation job.prepare"
       )
         return {
-          ...(await this.link.call("job.start", { label, command })),
+          ...(await this.legacyStart(label, command)),
           registeredLaunch: false,
         };
       throw new Error(receipt.error);
     }
     throw new Error(`Could not confirm the reservation for ${label}; no command was launched`);
+  }
+
+  private async legacyStart(label: string, command: string) {
+    this.legacyStarts += 1;
+    try {
+      return await this.link.call("job.start", { label, command });
+    } finally {
+      this.legacyStarts -= 1;
+    }
   }
 
   async launch(
@@ -330,6 +341,7 @@ export class Jobs {
       : undefined;
     const launching = { unstarted: false, ran: false, legacy: !registeredLaunch };
     this.launching.set(job, launching);
+    if (launching.legacy) this.localLegacy.add(job);
     if (launching.legacy && !this.lastResult.has(job)) this.running.add(job);
     let dispatched = false;
     try {
@@ -461,9 +473,11 @@ export class Jobs {
     }
     if (stale()) return superseded;
     const starting = `${named} is still starting in this worker, so nothing was signalled.`;
+    const unclaimed = (): boolean =>
+      this.launching.has(job) || this.localLegacy.has(job) || this.legacyStarts > 0;
     let tab = known ?? this.ownedTabs.get(job);
     if (tab === undefined) {
-      if (this.launching.has(job)) return starting;
+      if (unclaimed()) return starting;
       if (!legacy && !(await confirmLegacyStop(this.endpoint, job, label)))
         return `${named} has no verified tab ID in this worker session, so nothing was signalled.`;
       const tabs = records(
@@ -472,7 +486,7 @@ export class Jobs {
       if (stale()) return superseded;
       tab = this.ownedTabs.get(job);
       if (tab === undefined) {
-        if (this.launching.has(job)) return starting;
+        if (unclaimed()) return starting;
         const matches = tabs.filter((each) => each["label"] === tabName(job, label));
         if (matches.length > 1)
           return `${named} has multiple matching tabs and no known tab ID, so nothing was signalled.`;
@@ -485,7 +499,7 @@ export class Jobs {
     if (stale()) return superseded;
     const owned = this.ownedTabs.get(job);
     if (owned !== undefined && owned !== tab) return starting;
-    if (known === undefined && owned === undefined && this.launching.has(job)) return starting;
+    if (known === undefined && owned === undefined && unclaimed()) return starting;
     const pane = field(
       panes.find((each) => tab !== undefined && each["tab_id"] === tab),
       "pane_id",
