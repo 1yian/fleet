@@ -328,31 +328,71 @@ export function dropLostJob(
   return { label: moved.label, state: moved.life.state, dropped: true };
 }
 
-export function loseSilentJobs(
-  db: DatabaseSync,
-  before: number,
-): { id: number; label: string; card: number }[] {
-  const silent = db
-    .prepare(
-      `SELECT j.id AS id, j.label AS label, a.card AS card FROM jobs j JOIN attempts a ON a.id = j.attempt
-       WHERE ${runningJobSql("j")}
-         AND j.updated_at < ? AND a.state IN ('starting', 'active')
-       ORDER BY j.id`,
-    )
-    .all(before);
-  const lost: { id: number; label: string; card: number }[] = [];
+export interface LostJob {
+  readonly id: number;
+  readonly label: string;
+  readonly card: number;
+}
+
+function loseRows(db: DatabaseSync, rows: readonly Record<string, unknown>[]): LostJob[] {
+  const lost: LostJob[] = [];
   const at = Date.now();
-  for (const row of silent) {
+  for (const row of rows) {
     const job = readJob(db, numberOf(row["id"], "id"));
     if (job === undefined) continue;
     if (transitionJob(db, job, { name: "lose" }, at) === undefined) continue;
-    lost.push({
-      id: job.id,
-      label: job.label,
-      card: numberOf(row["card"], "card"),
-    });
+    lost.push({ id: job.id, label: job.label, card: numberOf(row["card"], "card") });
   }
   return lost;
+}
+
+export function loseSilentLegacyJobs(db: DatabaseSync, before: number): LostJob[] {
+  return loseRows(
+    db,
+    db
+      .prepare(
+        `SELECT j.id AS id, j.label AS label, a.card AS card FROM jobs j JOIN attempts a ON a.id = j.attempt
+         WHERE j.launch_id IS NULL AND ${outstandingJobSql("j")}
+           AND j.updated_at < ? AND a.state IN ('starting', 'active')
+         ORDER BY j.id`,
+      )
+      .all(before),
+  );
+}
+
+export interface SilentWrapper {
+  readonly job: number;
+  readonly host: string;
+  readonly pid: number;
+}
+
+export function silentWrappers(db: DatabaseSync, before: number): SilentWrapper[] {
+  return db
+    .prepare(
+      `SELECT j.id AS id, j.wrapper_pid AS pid, a.host AS host FROM jobs j JOIN attempts a ON a.id = j.attempt
+       WHERE j.launch_id IS NOT NULL AND j.wrapper_pid IS NOT NULL AND ${outstandingJobSql("j")}
+         AND j.updated_at < ? AND a.state IN ('starting', 'active')
+       ORDER BY j.id`,
+    )
+    .all(before)
+    .map((row) => ({
+      job: numberOf(row["id"], "id"),
+      host: textOf(row["host"], "host"),
+      pid: numberOf(row["pid"], "wrapper_pid"),
+    }));
+}
+
+export function loseGoneWrapper(db: DatabaseSync, gone: SilentWrapper): LostJob[] {
+  return loseRows(
+    db,
+    db
+      .prepare(
+        `SELECT j.id AS id, j.label AS label, a.card AS card FROM jobs j JOIN attempts a ON a.id = j.attempt
+         WHERE j.id = ? AND j.wrapper_pid = ? AND ${outstandingJobSql("j")}
+           AND a.state IN ('starting', 'active')`,
+      )
+      .all(gone.job, gone.pid),
+  );
 }
 
 export function abandonRunningJobs(db: DatabaseSync, card: number, at: number): void {

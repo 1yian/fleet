@@ -1,7 +1,8 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { idlePark } from "@fleet/protocol";
 import { quietSql } from "./attempts.ts";
-import { jobStateSql, launchedJobSql, loseSilentJobs, startedAtSql } from "./jobs.ts";
+import { jobStateSql, launchedJobSql, startedAtSql } from "./jobs.ts";
+import { lostJobs, type JobLossGrace } from "./job-loss.ts";
 import { chaseIntake, dueBatches, hasInFlightDelivery, remind } from "./deliveries.ts";
 import { escalationText, told, UNRECOVERABLE, unrecoverable } from "./incident-escalation.ts";
 import { liveStateSql } from "./incident-lifecycle.ts";
@@ -13,7 +14,7 @@ import { describe, labelOf, nextStep } from "./incident-text.ts";
 import { remaining } from "./incident-kinds.ts";
 import { replyNudges } from "./replies.ts";
 import { finishedOpen, idleNow, resting, type Finish } from "./status.ts";
-import { addEntry, getCard, loadOpenCards, mainLane, workerOf, type Loaded } from "./store.ts";
+import { loadOpenCards, mainLane, workerOf, type Loaded } from "./store.ts";
 import { type Timings } from "./timing.ts";
 import { actingLane, bundleMatches, minutesSince } from "./bundle.ts";
 import { firedSchedules } from "./schedules.ts";
@@ -252,50 +253,6 @@ function finishedCards(open: readonly Loaded[], t: Timings): Match[] {
     const finish = finishedOpen(entries);
     if (hold !== undefined || finish === undefined) return [];
     return finishedMatches({ ...own, since: standing.since }, finish, t.wall(), t);
-  });
-}
-
-export const MISSED_HEARTBEATS = 3;
-
-export interface JobLossGrace {
-  firstCheckAt?: number;
-  until: number;
-}
-
-function jobLossHeld(grace: JobLossGrace, now: number, heartbeat: number): boolean {
-  const started = grace.firstCheckAt;
-  if (started === undefined) return true;
-  return now - started < MISSED_HEARTBEATS * heartbeat || now < grace.until;
-}
-
-function lostJobs(db: DatabaseSync, now: number, t: Timings, grace: JobLossGrace): string[] {
-  if (jobLossHeld(grace, now, t.heartbeat)) return [];
-  return loseSilentJobs(db, now - MISSED_HEARTBEATS * t.heartbeat).flatMap((job) => {
-    const card = getCard(db, job.card);
-    const body = `job lost: job ${String(job.id)} (${job.label}) stopped reporting. It is not run again.`;
-    addEntry(
-      db,
-      {
-        card: card.id,
-        author: "check",
-        kind: "finding",
-        body,
-        fields: { condition: "job-lost", job: job.id },
-      },
-      [card.lane],
-    );
-    const worker = workerOf(db, card.id);
-    const heard = worker === undefined ? [] : [worker];
-    if (worker !== undefined) {
-      const fields = { job: job.id, label: job.label, lost: true };
-      const note = "no heartbeat arrived. It is not run again.";
-      addEntry(
-        db,
-        { card: card.id, author: `job:${String(job.id)}`, kind: "job-result", body: note, fields },
-        heard,
-      );
-    }
-    return worker === undefined ? [card.lane] : [card.lane, worker];
   });
 }
 

@@ -162,10 +162,10 @@ test("a genuine registered-wrapper loss retires fence eligibility even when the 
   proxy.callFault("job.running", { error: "injected exact read failure" });
   const mark = proxy.activities.length;
   const wrapper = Number(jl.wrapperPid());
-  process.kill(wrapper, "SIGSTOP");
+  jl.probe.silence(wrapper);
   const resume = (): void => {
     try {
-      process.kill(wrapper, "SIGCONT");
+      jl.probe.resume(wrapper);
     } catch {
       return;
     }

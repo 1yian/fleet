@@ -265,7 +265,7 @@ test("a delayed positive job list cannot restore a wait after confirmed loss", a
   holdList = true;
   disconnect();
   const releaseList = await snapshot.promise;
-  process.kill(wrapper, "SIGSTOP");
+  jl.probe.silence(wrapper);
   try {
     const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
     try {
@@ -294,6 +294,6 @@ test("a delayed positive job list cannot restore a wait after confirmed loss", a
     );
   } finally {
     clearInterval(beat);
-    process.kill(wrapper, "SIGCONT");
+    jl.probe.resume(wrapper);
   }
 });
