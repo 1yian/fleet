@@ -30,6 +30,10 @@ esac`;
 
 function wrapperIsGone(hosts: Hosts, { job, host, pid, launch }: SilentWrapper): Promise<boolean> {
   return new Promise((resolve) => {
+    if (host === "local" && !Object.hasOwn(hosts, "local")) {
+      resolve(false);
+      return;
+    }
     let route: readonly string[];
     try {
       route = routeFor(hosts, host);
