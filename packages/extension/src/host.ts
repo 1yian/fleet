@@ -41,8 +41,6 @@ export class AgentStartRefused extends Error {}
 
 export class AgentReadinessTimedOut extends Error {}
 
-export class AgentReadinessTimedOut extends Error {}
-
 const startRefused = (code: unknown): boolean =>
   code === "agent_pane_busy" || code === "agent_name_taken" || code === "server_not_running";
 
@@ -375,15 +373,6 @@ async function herdrText(
       replay,
     );
   });
-}
-
-function startError(
-  error: Record<string, unknown>,
-  reply: Record<string, unknown>,
-  message: string,
-): Error | undefined {
-  if (startRefused(error["code"])) return new AgentStartRefused(message);
-  return readinessTimeout(reply) ? new AgentReadinessTimedOut(message) : undefined;
 }
 
 function startError(
