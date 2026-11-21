@@ -359,7 +359,6 @@ export const OPS = {
     args: Type.Object({ card: Type.Integer() }),
     result: Type.Object({
       ...AttemptPlan.properties,
-      generation: Type.Integer(),
       process: Nullable(Type.String()),
     }),
   },

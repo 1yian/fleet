@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
+import { isRecord, parseRecord } from "./json.ts";
 
 const [marker = "", command = ""] = process.argv.slice(2);
 const starts = `${marker}.starts`;
@@ -15,7 +16,8 @@ const refusal = {
   },
 };
 if (replacement) {
-  if (mode === "refuse") {
+  if (mode === "refuse" || mode === "refuse-occupied") {
+    if (mode === "refuse-occupied") writeFileSync(`${marker}.refused`, "refused\n");
     process.stdout.write(JSON.stringify(refusal));
     process.stderr.write("fixture transport warning --fleet-token transport-fixture-secret\n");
     process.exit(1);
@@ -45,6 +47,15 @@ if (mode !== "visible" && mode !== "contain-fail" && afterStart && processInfo) 
   while (!existsSync(released)) await delay(20);
 }
 const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+if (mode === "refuse-occupied" && existsSync(`${marker}.refused`) && processInfo) {
+  rmSync(`${marker}.refused`);
+  const info = parseRecord(result.stdout);
+  const body = isRecord(info["result"]) ? info["result"]["process_info"] : undefined;
+  const foreground = isRecord(body) ? body["foreground_processes"] : undefined;
+  if (Array.isArray(foreground)) foreground.push({ pid: 2147483646, name: "pi" });
+  process.stdout.write(JSON.stringify(info));
+  process.exit(0);
+}
 if (replacement) {
   while (!existsSync(released)) await delay(20);
   const timeout = { error: { code: "timeout", message: "timed out waiting for agent startup" } };
