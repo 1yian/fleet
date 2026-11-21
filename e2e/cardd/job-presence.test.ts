@@ -96,12 +96,12 @@ test("a wrapper pid that now belongs to an unrelated process does not keep a job
   assert.equal(lostFindings(), 1);
 });
 
-test("an unreadable or partial probe keeps a job waiting, and the loss lands once the wrapper is confirmed gone", async () => {
+test("an unreadable, unreadable-identity, or partial probe keeps a job waiting, and the loss lands once the wrapper is confirmed gone", async () => {
   probe.say("offline");
   const doomed = await registered("unknown");
   process.kill(-doomed.pid, "SIGKILL");
 
-  for (const kind of ["offline", "partial", "missing"] as const) {
+  for (const kind of ["offline", "partial", "hidden", "exit1", "missing"] as const) {
     probe.say(kind);
     const seen = probe.count(kind);
     await until(() => (probe.count(kind) >= seen + 3 ? true : undefined), `three ${kind} probes`);

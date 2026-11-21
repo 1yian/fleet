@@ -2,13 +2,15 @@ import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "./run-root.ts";
 
-type Verdict = "live" | "absent" | "offline" | "partial" | "missing";
+type Verdict = "live" | "absent" | "offline" | "partial" | "hidden" | "exit1" | "missing";
 
 const SCRIPT = `mode=$(cat "$FLEET_PROBE_MODE" 2>/dev/null); mode=\${mode:-live}; printf '%s\\n' "$mode" >> "$FLEET_PROBE_LOG"
 case "$mode" in
-  absent) exit 1 ;;
+  absent) echo "fleet-probe absent"; exit 0 ;;
   offline) exit 255 ;;
-  partial) exit 0 ;;
+  exit1) exit 1 ;;
+  hidden) echo "fleet-probe unknown"; exit 0 ;;
+  partial) echo "ps: could not read the process table"; exit 0 ;;
   missing) exit 127 ;;
 esac
 exec sh -c "$1"`;
