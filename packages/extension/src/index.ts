@@ -22,7 +22,8 @@ import { Failures } from "./failure.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
 import { closeMerged, isMergedReport } from "./auto-close.ts";
 import { registerIntake } from "./intake.ts";
-import { Jobs, registerDropJob } from "./jobs.ts";
+import { registerDropJob } from "./job-tools.ts";
+import { Jobs } from "./jobs.ts";
 import { enableCodemode } from "./codemode.ts";
 import type { Bws, BwsConfig } from "./bws.ts";
 import {

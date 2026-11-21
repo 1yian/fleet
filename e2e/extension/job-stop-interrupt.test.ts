@@ -49,8 +49,15 @@ test("a legacy stop reply that crosses the job's exit does not interrupt a same-
   const { pi, proxy, shim, done } = await legacyGate(t);
   const stopReply = Promise.withResolvers<undefined>();
   const captured = Promise.withResolvers<ServerMessage>();
-  t.after(() => stopReply.resolve(undefined));
-  proxy.callFault("job.stop", { hold: stopReply.promise, seen: (m) => captured.resolve(m) });
+  t.after(() => {
+    stopReply.resolve(undefined);
+  });
+  proxy.callFault("job.stop", {
+    hold: stopReply.promise,
+    seen: (m) => {
+      captured.resolve(m);
+    },
+  });
   jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
   jl.h.onModel(() => ({ text: "The stop reply arrived" }));
   pi.prompt("Stop the gate job");
@@ -162,8 +169,15 @@ test("a stop that overtakes the legacy start receipt signals no same-named decoy
   await makeDecoy();
   const startSeen = Promise.withResolvers<ServerMessage>();
   const stopAnswered = Promise.withResolvers<undefined>();
-  t.after(() => stopAnswered.resolve(undefined));
-  proxy.callFault("job.start", { hold: stopAnswered.promise, seen: (m) => startSeen.resolve(m) });
+  t.after(() => {
+    stopAnswered.resolve(undefined);
+  });
+  proxy.callFault("job.start", {
+    hold: stopAnswered.promise,
+    seen: (m) => {
+      startSeen.resolve(m);
+    },
+  });
   proxy.callFault("job.stop", { gate: startSeen.promise });
   jl.h.onModel(() => ({
     tool: "run_long",
@@ -208,7 +222,9 @@ test("a stop from a replacement worker refuses a legacy job it cannot prove it o
 test("a stop whose receipt never arrives signals nothing and reports the failure", async (t) => {
   const { pi, proxy, shim } = await legacyGate(t);
   const never = Promise.withResolvers<undefined>();
-  t.after(() => never.resolve(undefined));
+  t.after(() => {
+    never.resolve(undefined);
+  });
   proxy.callFault("job.stop", { hold: never.promise });
   jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
   jl.h.onModel(() => ({ text: "The stop receipt never arrived" }));

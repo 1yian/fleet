@@ -297,7 +297,9 @@ test("a delayed generic stop reply for a lost job cannot discard a revival that 
   const captured = Promise.withResolvers<ServerMessage>();
   proxy.callFault("job.stop", {
     hold: stopReply.promise,
-    seen: (message) => captured.resolve(message),
+    seen: (message) => {
+      captured.resolve(message);
+    },
   });
   const quiet = proxy.activities.length;
   const base = jl.h.events.filter((event) => event["type"] === "settled").length;

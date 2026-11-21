@@ -93,7 +93,9 @@ for (const [name, times, runs] of [
 
 test("the cutover command never prints ready for a reply that is both a success and a failure", async (t) => {
   const scratch = new Scratch("cutover-envelope");
-  t.after(() => scratch.dispose());
+  t.after(() => {
+    scratch.dispose();
+  });
   const serve = async (body: unknown): Promise<string> => {
     const server: Server = createServer((req, res) => {
       req.resume();

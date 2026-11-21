@@ -125,7 +125,10 @@ for (const [name, heartbeatMs, runs] of [
     const wrapper = fileURLToPath(new URL("../../packages/extension/src/job.ts", import.meta.url));
     const finished = await run("node", [wrapper, input]).then(
       () => 0,
-      (error: { code?: number }) => error.code ?? 1,
+      (error: unknown) => {
+        const code: unknown = Reflect.get(Object(error), "code");
+        return typeof code === "number" ? code : 1;
+      },
     );
     assert.equal(existsSync(marker), runs);
     assert.equal(finished === 0, runs);

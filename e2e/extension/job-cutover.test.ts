@@ -23,6 +23,11 @@ const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const EXTENSION = "packages/extension/src/index.ts";
 const READY = { state: "ready", blockers: [] };
 
+const cleanup: { printers: HerdrLab[]; stoppers: { stop(): unknown }[]; scratches: Scratch[] } = {
+  printers: [],
+  stoppers: [],
+  scratches: [],
+};
 let workerCode: Scratch;
 let daemonCode: Scratch;
 let h: Harness;
@@ -33,7 +38,9 @@ let mainToken: string;
 
 beforeEach(async () => {
   workerCode = new Scratch("worker-code");
+  cleanup.scratches.push(workerCode);
   daemonCode = new Scratch("daemon-code");
+  cleanup.scratches.push(daemonCode);
   const tree = git(workerCode.root, "rev-parse", "HEAD^{tree}");
   git(workerCode.root, "fetch", "-q", REPO, LEGACY);
   const base = tip(workerCode.root, "FETCH_HEAD");
@@ -46,8 +53,12 @@ beforeEach(async () => {
   ownWorkspacePackages(workerCode.root);
   ownWorkspacePackages(daemonCode.root);
   h = await Harness.start();
+  cleanup.stoppers.push(h);
   lab = await HerdrLab.start({});
+  cleanup.printers.push(lab);
+  cleanup.stoppers.push(lab);
   cardd = await Cardd.underKeepAlive(daemonCode.root);
+  cleanup.stoppers.push(cardd);
   const admin = (...args: string[]) =>
     execFileSync(
       process.execPath,
@@ -68,10 +79,9 @@ beforeEach(async () => {
 });
 
 afterEach(async (t) => {
-  await lab?.printIfFailed(t);
-  const stopped = await Promise.allSettled([lab?.stop(), h?.stop(), cardd?.stop()]);
-  workerCode?.dispose();
-  daemonCode?.dispose();
+  for (const each of cleanup.printers.splice(0)) await each.printIfFailed(t);
+  const stopped = await Promise.allSettled(cleanup.stoppers.splice(0).map((each) => each.stop()));
+  for (const each of cleanup.scratches.splice(0)) each.dispose();
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
@@ -128,7 +138,7 @@ const waitTabClosed = (workspace: string, job: number, label: string) =>
     return tabs.some((tab) => tab["label"] === `job-${String(job)}-${label}`) ? undefined : true;
   }, `${label} wrapper to close its tab`);
 
-async function upgrade(): Promise<void> {
+function upgrade(): void {
   const old = tip(workerCode.root);
   git(workerCode.root, "push", "-q", "origin", `${next}:refs/heads/main`);
   const workerUpdate = parseRecord(workerCode.fleet(["update"]));
@@ -137,6 +147,22 @@ async function upgrade(): Promise<void> {
   assert.equal(tip(workerCode.root), next);
   assert.equal(tip(daemonCode.root), old);
 }
+
+async function newWorkspace(): Promise<string> {
+  const created = await lab.run(["workspace", "create", "--no-focus"]);
+  const workspace = records([created["workspace"]])[0]?.["workspace_id"];
+  assert.equal(typeof workspace, "string");
+  return String(workspace);
+}
+
+const workerEnv = (token: string, workspace: string): Record<string, string> => ({
+  ...lab.env,
+  FLEET_URL: cardd.url,
+  FLEET_TOKEN: token,
+  FLEET_ROLE: "worker",
+  HERDR_SESSION: lab.name,
+  HERDR_WORKSPACE_ID: workspace,
+});
 
 async function upgradeDaemon(): Promise<void> {
   const old = tip(daemonCode.root);
@@ -167,19 +193,10 @@ test("an updated worker cannot signal an inherited legacy job after reload and c
   const main = await cardd.connect(mainToken);
   const card = await newCard(main, "Stop a legacy job after reload");
   const token = await begin(main, card, "run the legacy job", "local");
-  const created = await lab.run(["workspace", "create", "--no-focus"]);
-  const workspace = records([created["workspace"]])[0]?.["workspace_id"];
-  assert.equal(typeof workspace, "string");
-  await upgrade();
+  const workspace = await newWorkspace();
+  upgrade();
   assert.equal(check(VersionSchema, await (await fetch(version())).json()).commit, LEGACY);
-  const env = {
-    ...lab.env,
-    FLEET_URL: cardd.url,
-    FLEET_TOKEN: token,
-    FLEET_ROLE: "worker",
-    HERDR_SESSION: lab.name,
-    HERDR_WORKSPACE_ID: String(workspace),
-  };
+  const env = workerEnv(token, workspace);
   const ready = join(h.dir, "legacy-ready");
   const finish = join(h.dir, "legacy-finish");
   const run = `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid)); setInterval(() => { if (fs.existsSync(${JSON.stringify(finish)})) process.exit(0); }, 50)`;
@@ -203,7 +220,7 @@ test("an updated worker cannot signal an inherited legacy job after reload and c
   writeFileSync(finish, "");
   assert.equal((await waitResult(card.id, 1, 0)).fields["exitCode"], 0);
   await waitGroupExit(pid);
-  await waitTabClosed(String(workspace), 1, "legacy");
+  await waitTabClosed(workspace, 1, "legacy");
   const jobs = await cardd.post(token, "jobs", {});
   assert.deepEqual(check(HttpOutcomeSchema, jobs.body), { ok: true, value: [] });
   await pi.kill();
@@ -261,21 +278,37 @@ test("an updated worker cannot signal an inherited legacy job after reload and c
   );
 });
 
+async function handOverToFresh(
+  env: Record<string, string>,
+  card: number,
+  token: string,
+  job: number,
+): Promise<void> {
+  const beforeFresh = h.events.filter(fleetConnected).length;
+  launch("registered", "echo from-the-new-wrapper", "fresh");
+  const fresh = h.startPi("c-1-a1", { ...env, FLEET_FAKE_AGENT: "fresh" }, [
+    join(workerCode.root, EXTENSION),
+  ]);
+  await h.waitForNth(fleetConnected, beforeFresh + 1, "the new worker to connect");
+  fresh.prompt("Run a registered job after handover");
+  assert.equal((await waitResult(card, job, 0)).body, "from-the-new-wrapper");
+  assert.deepEqual(cutover(0, "status"), READY);
+  const legacy = await cardd.post(token, "job.start", {
+    label: "no-loophole",
+    command: "true",
+    launch: crypto.randomUUID(),
+  });
+  assert.equal(legacy.status, 400);
+  const denied = check(HttpOutcomeSchema, legacy.body);
+  assert.equal(denied.ok, false);
+}
+
 test("old host and cardd CLIs pull the additive stage without stranding either legacy wrapper; seal blocks until confirmed drain", async () => {
   const main = await cardd.connect(mainToken);
   const card = await newCard(main, "Drain the old wrappers");
   const token = await begin(main, card, "keep the old wrapper running", "local");
-  const created = await lab.run(["workspace", "create", "--no-focus"]);
-  const workspace = records([created["workspace"]])[0]?.["workspace_id"];
-  assert.equal(typeof workspace, "string");
-  const env = {
-    ...lab.env,
-    FLEET_URL: cardd.url,
-    FLEET_TOKEN: token,
-    FLEET_ROLE: "worker",
-    HERDR_SESSION: lab.name,
-    HERDR_WORKSPACE_ID: String(workspace),
-  };
+  const workspace = await newWorkspace();
+  const env = workerEnv(token, workspace);
   const natural = join(h.dir, "natural-ready");
   const go = join(h.dir, "natural-go");
   const interrupt = join(h.dir, "interrupt-ready");
@@ -292,7 +325,7 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
   const pi = h.startPi("c-1-a1", env, [join(workerCode.root, EXTENSION)]);
   await file(natural);
   await h.waitForCall(1);
-  await upgrade();
+  upgrade();
 
   const waitScript = `require('node:fs').writeFileSync(${JSON.stringify(interrupt)}, String(process.pid)); setInterval(() => {}, 1000)`;
   launch("interrupt", `exec node -e ${quote(waitScript)}`);
@@ -322,7 +355,7 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
 
   writeFileSync(go, "");
   assert.equal((await waitResult(card.id, first.job, 17)).body, "drained");
-  await waitTabClosed(String(workspace), first.job, first.label);
+  await waitTabClosed(workspace, first.job, first.label);
   const helperPid = Number(readFileSync(natural, "utf8"));
   const helperIdentity = groupIdentity(helperPid);
   assert.ok(helperIdentity, "the detached helper survived its wrapper and command");
@@ -340,7 +373,7 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
   const pid = Number(readFileSync(interrupt, "utf8"));
   assert.ok(Number.isInteger(pid) && pid > 1);
   await waitGroupExit(pid);
-  await waitTabClosed(String(workspace), second.job, second.label);
+  await waitTabClosed(workspace, second.job, second.label);
   const remaining = cutover(
     1,
     "confirm-stop",
@@ -366,21 +399,5 @@ test("old host and cardd CLIs pull the additive stage without stranding either l
   );
 
   await pi.kill();
-  const beforeFresh = h.events.filter(fleetConnected).length;
-  launch("registered", "echo from-the-new-wrapper", "fresh");
-  const fresh = h.startPi("c-1-a1", { ...env, FLEET_FAKE_AGENT: "fresh" }, [
-    join(workerCode.root, EXTENSION),
-  ]);
-  await h.waitForNth(fleetConnected, beforeFresh + 1, "the new worker to connect");
-  fresh.prompt("Run a registered job after handover");
-  assert.equal((await waitResult(card.id, second.job + 1, 0)).body, "from-the-new-wrapper");
-  assert.deepEqual(cutover(0, "status"), READY);
-  const legacy = await cardd.post(token, "job.start", {
-    label: "no-loophole",
-    command: "true",
-    launch: crypto.randomUUID(),
-  });
-  assert.equal(legacy.status, 400);
-  const denied = check(HttpOutcomeSchema, legacy.body);
-  assert.equal(denied.ok, false);
+  await handOverToFresh(env, card.id, token, second.job + 1);
 });

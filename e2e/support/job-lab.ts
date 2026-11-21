@@ -21,6 +21,7 @@ import { quote } from "@fleet/protocol/route";
 import { WebSocket, WebSocketServer } from "ws";
 import { begin, newCard, startFleet, type Fleet } from "./fleet.ts";
 import { Harness, rawText, type Pi } from "./harness.ts";
+import { pairSockets } from "./job-env.ts";
 import { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
 import { until } from "./live-fleet.ts";
@@ -232,7 +233,7 @@ exec ${quote(herdr)} "$@"
   }
 
   holdHerdr(path: string) {
-    execFileSync("mkfifo", [path]);
+    execFileSync("sh", ["-c", 'mkfifo "$0"', path]);
     return {
       held: until(
         () => (existsSync(`${path}.log`) ? true : undefined),
@@ -312,7 +313,9 @@ exec ${quote(herdr)} "$@"
       const ops = new Map<number, string>();
       state.clients.add(client);
       client.pause();
-      upstream.on("open", () => client.resume());
+      upstream.on("open", () => {
+        client.resume();
+      });
       client.on("message", (raw) => {
         const text = rawText(raw);
         const message = parseClientMessage(text);
@@ -345,10 +348,7 @@ exec ${quote(herdr)} "$@"
         deliver(client, message, rewriteResult(message, text, fault), fault);
         if (op !== undefined) state.replied.push(op);
       });
-      upstream.on("error", () => client.terminate());
-      upstream.on("close", () => client.terminate());
-      client.on("error", () => upstream.terminate());
-      client.on("close", () => upstream.terminate());
+      pairSockets(client, upstream);
     });
     return sockets;
   }
@@ -387,9 +387,16 @@ exec ${quote(herdr)} "$@"
       holdPrepare: () => {
         const reached = Promise.withResolvers<string>();
         const release = Promise.withResolvers<undefined>();
-        t.after(() => release.resolve(undefined));
+        t.after(() => {
+          release.resolve(undefined);
+        });
         state.prepare = { reached, release: release.promise };
-        return { reached: reached.promise, release: () => release.resolve(undefined) };
+        return {
+          reached: reached.promise,
+          release: () => {
+            release.resolve(undefined);
+          },
+        };
       },
       push: (id: number, fields: Record<string, unknown>): void => {
         const message = JSON.stringify({

@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { check, HttpOutcomeSchema, OPS } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
-import { wakeMate } from "../../packages/extension/src/wake.ts";
 import { spawnGuarded } from "../support/guarded.ts";
 import { JobLab } from "../support/job-lab.ts";
 import { until } from "../support/live-fleet.ts";
@@ -90,7 +89,9 @@ test("a redirected job.register is never forwarded, and the honest retry still r
 test("the cutover command never forwards its body to a redirect target, and an honest daemon still answers", async (t) => {
   const redirected = await sink(t);
   const scratch = new Scratch("cutover-redirect");
-  t.after(() => scratch.dispose());
+  t.after(() => {
+    scratch.dispose();
+  });
   const serve = async (respond: Parameters<typeof createServer>[1]): Promise<string> => {
     const server = createServer(respond);
     server.listen(0, "127.0.0.1");
@@ -191,7 +192,9 @@ test("a legacy-launched wrapper's heartbeats and result still reach cardd throug
 
 test("fleet wake still follows a same-origin redirect", async (t) => {
   const scratch = new Scratch("wake-redirect");
-  t.after(() => scratch.dispose());
+  t.after(() => {
+    scratch.dispose();
+  });
   const server = createServer((req, res) => {
     req.resume();
     if (req.url === "/call") res.writeHead(307, { location: "/call-followed" }).end();
@@ -209,5 +212,5 @@ test("fleet wake still follows a same-origin redirect", async (t) => {
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   configureMain(scratch, `ws://127.0.0.1:${String(address.port)}/session`, "token");
-  assert.equal(await wakeMate(scratch.root, { note: "check in" }), 7);
+  assert.equal(scratch.fleet(["wake", "main", "check in"]).trim(), "main: woken");
 });

@@ -17,7 +17,11 @@ const STARTUP_EXPIRED = {
   outputTail: "could not start: wrapper did not register before the startup deadline",
 };
 
-type JobResult = { exitCode: number; outputTail: string; commandNotStarted?: true };
+interface JobResult {
+  exitCode: number;
+  outputTail: string;
+  commandNotStarted?: true;
+}
 
 export const jobStateSql = (column: string, state: JobState): string => `${column} = '${state}'`;
 

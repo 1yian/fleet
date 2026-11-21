@@ -9,20 +9,8 @@ import {
 } from "@fleet/protocol";
 import { requireCommentsRead } from "./deliveries.ts";
 import { beginAttempt, localLanding, nameBranch, resumeAttempt } from "./attempts.ts";
-import { jobCutover } from "./job-cutover.ts";
-import {
-  dropLostJob,
-  finishJob,
-  hasJobWait,
-  prepareJob,
-  recordJobResult,
-  registerJob,
-  isJobRunning,
-  runningJobs,
-  startJob,
-  stopJob,
-  touchJob,
-} from "./jobs.ts";
+import { hasJobWait } from "./jobs.ts";
+import { JOB_HANDLERS } from "./job-ops.ts";
 import { boardFor, cardView } from "./board.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
@@ -48,7 +36,6 @@ import {
 } from "./holds.ts";
 import { ensurePersonalProject } from "./personal.ts";
 import { loadPlan } from "./plans.ts";
-import { requireReviewDecision } from "./reviews.ts";
 import { doneStands } from "./status.ts";
 import { emptyLocalBranch } from "./empty-branch.ts";
 import { recordReportedPr, type Hosts } from "./pulls.ts";
@@ -130,7 +117,7 @@ function reportRecipients(
   db: DatabaseSync,
   session: Session,
   card: Card,
-  args: Omit<OpArgs<"report">, "status"> & { status: ReportStatus },
+  args: ReportArgs,
   unwatched: boolean,
 ): string[] {
   if (args.replyTo === undefined)
@@ -274,75 +261,6 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
     const args = check(OPS["branch.name"].args, raw);
     return { value: nameBranch(db, session.id, args.name), notify: [] };
   },
-  "job.start": (db, session, raw, timing) => {
-    const args = check(OPS["job.start"].args, raw);
-    requireReviewDecision(db, session, args.command);
-    const job = startJob(db, session.id, { label: args.label, command: args.command });
-    return { value: { job, heartbeatMs: timing.heartbeat }, notify: [] };
-  },
-  "job.prepare": (db, session, raw, timing) => {
-    const args = check(OPS["job.prepare"].args, raw);
-    requireReviewDecision(db, session, args.command);
-    return { value: prepareJob(db, session.id, args, timing.heartbeat), notify: [] };
-  },
-  "job.register": (db, session, raw) => ({
-    value: { registered: registerJob(db, session.id, check(OPS["job.register"].args, raw)) },
-    notify: [],
-  }),
-  "job.cutover": (db, session, raw) => {
-    if (session.lane !== mainLane(db)) throw new Error("only main can control job cutover");
-    return { value: jobCutover(db, check(OPS["job.cutover"].args, raw)), notify: [] };
-  },
-  "job.alive": (db, session, raw) => {
-    const args = check(OPS["job.alive"].args, raw);
-    const { running, revived } = touchJob(db, session.id, args.job);
-    if (revived === undefined || session.card === null) return { value: { running }, notify: [] };
-    const fields = { job: args.job, label: revived.label, revived: true };
-    const body = "its process is alive again, so it is running again.";
-    const entry = {
-      card: session.card,
-      author: `job:${String(args.job)}`,
-      kind: "job-result",
-      body,
-      fields,
-    };
-    addEntry(db, entry, [session.id]);
-    return { value: { running }, notify: [session.id] };
-  },
-  "job.finish": (db, session, raw) => {
-    const args = check(OPS["job.finish"].args, raw);
-    const finished = finishJob(db, session.id, {
-      id: args.job,
-      exitCode: args.exitCode,
-      outputTail: args.outputTail,
-      ...(args.beforeRegistration === undefined
-        ? {}
-        : { beforeRegistration: args.beforeRegistration }),
-    });
-    if (finished === undefined || session.card === null)
-      return { value: { recorded: false }, notify: [] };
-    return {
-      value: { recorded: true },
-      notify: recordJobResult(db, session, args.job, finished.label, args, finished.fencedLaunch),
-    };
-  },
-  "job.stop": (db, session, raw) => {
-    const args = check(OPS["job.stop"].args, raw);
-    const { label, running, result, launch } = stopJob(db, session.id, args.job);
-    if (result === undefined) return { value: { label, running }, notify: [] };
-    return {
-      value: { label, running, cancelled: true },
-      notify: recordJobResult(db, session, args.job, label, result, launch),
-    };
-  },
-  "job.drop": (db, session, raw) => {
-    const args = check(OPS["job.drop"].args, raw);
-    const owner = session.role === "mate" ? { lane: session.lane } : { session: session.id };
-    const dropped = dropLostJob(db, args.job, owner);
-    if (dropped === undefined)
-      throw new Error(`job ${String(args.job)} is not one of yours: nothing was dropped`);
-    return { value: dropped, notify: [] };
-  },
   "replies.owed": (db, session) => ({
     value:
       session.card === null || ["done", "dropped"].includes(getCard(db, session.card).status)
@@ -359,12 +277,7 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
     const { status, attention, until } = loadCard(db, session.card).standing;
     return { value: { status, attention, until }, notify: [] };
   },
-  "job.idle": (db, session) => ({ value: { idle: !hasJobWait(db, session.id) }, notify: [] }),
-  "job.running": (db, session, raw) => {
-    const { job } = check(OPS["job.running"].args, raw);
-    return { value: { running: isJobRunning(db, session.id, job) }, notify: [] };
-  },
-  jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
+  ...JOB_HANDLERS,
   "incident.report": (db, session, raw, timing) =>
     reportFailure(db, session, check(OPS["incident.report"].args, raw), timing),
   "incident.clear": (db, session, raw) =>
@@ -400,35 +313,54 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
       args.merged === true
         ? withdrawMerge(db, card, "merged")
         : rework(db, card, args.status, emptyBranch);
-    const fields = {
-      status: args.status,
-      key: args.key,
-      until: args.until,
-      replyTo: args.replyTo,
-      evidence: args.evidence,
-      emptyBranch,
-      ...landingOf(db, card, args, emptyBranch),
-      ...(note === undefined ? {} : { prNote: note }),
-    };
     const report: Draft = {
       card: card.id,
       author: `worker:${session.id}`,
       kind: "report",
       body: args.text,
-      fields,
+      fields: reportFields(db, card, args, emptyBranch, note),
     };
-    const asked =
-      args.status === "done" && args.merged !== true
-        ? mergeQuestion(db, card, [report])
-        : undefined;
-    const statusAfter = statusWith(db, card, asked === undefined ? [report] : [report, asked]);
-    addEntry(db, { ...report, fields: { ...fields, statusAfter } }, to);
-    const merge = asked === undefined ? [] : writeMergeQuestion(db, card, asked);
+    const merge = recordReport(db, card, args, report, to);
     const advice = unwatched ? { advice: NOTHING_RUNS } : {};
     const value = { ...getCard(db, card.id), ...advice };
     return { value, notify: [...to, ...withdrawn, ...merge] };
   },
 };
+
+type ReportArgs = Omit<OpArgs<"report">, "status"> & { status: ReportStatus };
+
+function reportFields(
+  db: DatabaseSync,
+  card: Card,
+  args: ReportArgs,
+  emptyBranch: true | undefined,
+  note: string | undefined,
+): Record<string, unknown> {
+  return {
+    status: args.status,
+    key: args.key,
+    until: args.until,
+    replyTo: args.replyTo,
+    evidence: args.evidence,
+    emptyBranch,
+    ...landingOf(db, card, args, emptyBranch),
+    ...(note === undefined ? {} : { prNote: note }),
+  };
+}
+
+function recordReport(
+  db: DatabaseSync,
+  card: Card,
+  args: ReportArgs,
+  report: Draft,
+  to: string[],
+): string[] {
+  const asked =
+    args.status === "done" && args.merged !== true ? mergeQuestion(db, card, [report]) : undefined;
+  const statusAfter = statusWith(db, card, asked === undefined ? [report] : [report, asked]);
+  addEntry(db, { ...report, fields: { ...report.fields, statusAfter } }, to);
+  return asked === undefined ? [] : writeMergeQuestion(db, card, asked);
+}
 
 function openCardWithPr(db: DatabaseSync, id: number, pr: string | undefined): Card {
   requireOpen(db, getCard(db, id));

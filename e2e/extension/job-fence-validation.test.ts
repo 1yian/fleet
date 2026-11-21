@@ -42,7 +42,9 @@ test("incomplete or unbound startup fences leave the wait, wrapper input, and ta
   ];
   const before = jl.deliveredCount();
   const mark = proxy.activities.length;
-  variants.forEach((fields, index) => proxy.push(1001 + index, fields));
+  variants.forEach((fields, index) => {
+    proxy.push(1001 + index, fields);
+  });
   await jl.h.waitForNth(
     (event) => event["type"] === "fleet_delivered",
     before + variants.length,
@@ -256,7 +258,9 @@ test("malformed ordinary notices cannot retire fence eligibility or touch the wa
   const before = jl.deliveredCount();
   const mark = proxy.activities.length;
   const reads = proxy.calls.length;
-  notices.forEach((fields, index) => proxy.push(3001 + index, fields));
+  notices.forEach((fields, index) => {
+    proxy.push(3001 + index, fields);
+  });
   await jl.h.waitForNth(
     (event) => event["type"] === "fleet_delivered",
     before + notices.length,

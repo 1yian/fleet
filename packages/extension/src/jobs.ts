@@ -2,62 +2,23 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { check, JobResultFields, OPS, StartupFenceFields, type Entry } from "@fleet/protocol";
-import { quote } from "@fleet/protocol/route";
-import Type from "typebox";
+import { JobResultFields, StartupFenceFields, type Entry } from "@fleet/protocol";
 import type { Static } from "typebox";
 import Value from "typebox/value";
 import { joinContained } from "./containment.ts";
 import { field, herdr, records } from "./host.ts";
 import { JobFiles } from "./job-files.ts";
-import { jobHandshake } from "./job-http.ts";
+import {
+  CALL_DEADLINE_MS,
+  closeJobTab,
+  createJobTab,
+  present,
+  prepareJob,
+  runWrapper,
+} from "./job-launch.ts";
 import type { Link } from "./link.ts";
-import { forwardedEnvironment } from "./scratch.ts";
-
-const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
-const DEFAULT_TIMEOUT_MINUTES = 60;
-const PREPARE_ATTEMPTS = 3;
-const CALL_DEADLINE_MS = 5000;
-const TAB_CLOSE_ATTEMPTS = 3;
-
-const RunLongParams = Type.Object({
-  label: Type.String({ pattern: "^[A-Za-z0-9._-]+$", description: "A short name, such as tests" }),
-  command: Type.String({
-    minLength: 1,
-    description:
-      "Runs in bash -o pipefail without errexit. Pipelines fail if any stage fails. WARNING: a command list returns its last command's status: 'false; true' succeeds. Use 'suite && formatter', or 'suite; code=$?; formatter; exit \"$code\"'. Intentional recovery with || and if keeps normal Bash semantics. Nested shells own their failure policy.",
-  }),
-  timeout_minutes: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 120 })),
-});
-
-const StopJobParams = Type.Object({
-  job: Type.Integer({ description: "The number of one of your own run_long jobs" }),
-});
-
-const DropJobParams = Type.Object({
-  job: Type.Integer({ description: "The number of a lost job" }),
-});
-
-export function registerDropJob(pi: ExtensionAPI, link: Link): void {
-  pi.registerTool({
-    name: "drop_job",
-    label: "Drop job",
-    description:
-      "Drops one lost job by its number, so its reminders stop. A worker drops its own lost job. A mate drops a lost job of a card in its lane. The job stays recorded as lost. A job that is running is refused: use stop_job. Dropping twice is safe.",
-    parameters: DropJobParams,
-    execute: async (_id, params) => {
-      const { label, state, dropped } = await link.call("job.drop", { job: params.job });
-      const named = `job ${String(params.job)} (${label})`;
-      const text = dropped
-        ? `${named} is dropped. It stays recorded as lost, and its reminders stop.`
-        : `${named} is ${state}, not lost: nothing to drop.`;
-      return { content: [{ type: "text", text }], details: {} };
-    },
-  });
-}
+import { registerJobTools } from "./job-tools.ts";
 
 const tabName = (job: number, label: string): string => `job-${String(job)}-${label}`;
 
@@ -79,11 +40,32 @@ interface Preparing {
   readonly fences: Map<number, Entry>;
 }
 
-function present(value: string | undefined, what: string): string {
-  if (value === undefined || value.trim() === "")
-    throw new Error(`herdr did not return the job ${what}`);
-  return value;
+interface LaunchResult {
+  job: number;
+  tab: string;
+  started: boolean;
 }
+
+interface Reservation {
+  id: string;
+  command: string;
+  job: number;
+  heartbeatMs: number;
+  registeredLaunch: boolean;
+}
+
+interface LaunchRun extends Reservation {
+  workspace: string;
+  options: JobOptions;
+  file: string;
+  tab: string;
+  pending: PendingDispatch | undefined;
+  launching: { unstarted: boolean; ran: boolean; legacy: boolean };
+  dispatched: boolean;
+}
+
+const supersededReply = (named: string): string =>
+  `${named}: no interrupt was sent, and this reply was superseded by newer news about the job.`;
 
 export class Jobs {
   private readonly preparing = new Map<string, Preparing>();
@@ -183,30 +165,35 @@ export class Jobs {
       this.warn(`Ignored an incomplete job result (entry ${String(entry.id)})`);
   }
 
+  private noteLaunching(fields: Static<typeof JobResultFields>): void {
+    const { job, exitCode, commandNotStarted } = fields;
+    const launching = this.launching.get(job);
+    if (launching === undefined) return;
+    if (commandNotStarted === true) launching.unstarted = true;
+    else if (typeof exitCode === "number" && (!launching.legacy || exitCode !== 127))
+      launching.ran = true;
+  }
+
   private applyResult(id: number, fields: Static<typeof JobResultFields>): void {
-    const { job, exitCode, lost, revived, commandNotStarted } = fields;
+    const { job, exitCode, lost, revived } = fields;
     if ((this.lastResult.get(job) ?? 0) >= id) return;
     if (lost === true || revived === true) this.launches.delete(job);
     this.lastResult.set(job, id);
-    if (typeof exitCode === "number") {
+    const finished = typeof exitCode === "number";
+    if (finished) {
       this.advance(job);
       this.unresolved.delete(job);
     }
-    if (lost === true || typeof exitCode === "number") this.files.settleLaunchFile(job);
-    const launching = this.launching.get(job);
-    if (launching !== undefined && commandNotStarted === true) launching.unstarted = true;
-    else if (
-      launching !== undefined &&
-      typeof exitCode === "number" &&
-      (!launching.legacy || exitCode !== 127)
-    )
-      launching.ran = true;
-    if (typeof exitCode === "number") {
-      this.launches.delete(job);
-      this.clearPending(job);
-      this.running.delete(job);
-      this.forgetTab(job);
-    } else void this.reconcile(job);
+    if (lost === true || finished) this.files.settleLaunchFile(job);
+    this.noteLaunching(fields);
+    if (!finished) {
+      void this.reconcile(job);
+      return;
+    }
+    this.launches.delete(job);
+    this.clearPending(job);
+    this.running.delete(job);
+    this.forgetTab(job);
   }
 
   private forgetTab(job: number): void {
@@ -253,54 +240,8 @@ export class Jobs {
     this.files.removeFile(job, pending.file);
   }
 
-  private async closeStartupTab(job: number, tab: string): Promise<void> {
-    for (let attempt = 1; attempt <= TAB_CLOSE_ATTEMPTS; attempt += 1) {
-      try {
-        await herdr("local", ["tab", "close", tab]);
-        return;
-      } catch (error) {
-        if (attempt === TAB_CLOSE_ATTEMPTS) {
-          const why = error instanceof Error ? error.message : String(error);
-          this.warn(
-            `Job ${String(job)} did not start, but its tab ${tab} could not be closed: ${why}`,
-          );
-        } else await delay(200);
-      }
-    }
-  }
-
-  private async prepare(
-    id: string,
-    label: string,
-    command: string,
-  ): Promise<{ job: number; heartbeatMs: number; registeredLaunch: boolean }> {
-    const args = { launch: id, label, command };
-    for (let attempt = 0; attempt < PREPARE_ATTEMPTS; attempt += 1) {
-      const receipt = await jobHandshake(this.endpoint, "job.prepare", args)
-        .then((reply) =>
-          reply.ok ? { ...reply, value: check(OPS["job.prepare"].result, reply.value) } : reply,
-        )
-        .catch(() => undefined);
-      if (receipt === undefined) continue;
-      if (receipt.ok) {
-        if ("unavailable" in receipt.value)
-          throw new Error(
-            `Job ${String(receipt.value.job)} cannot start: ${receipt.value.unavailable}`,
-          );
-        return { ...receipt.value, registeredLaunch: true };
-      }
-      if (
-        attempt === 0 &&
-        receipt.status === 400 &&
-        receipt.error === "unknown operation job.prepare"
-      )
-        return {
-          ...(await this.link.call("job.start", { label, command }, CALL_DEADLINE_MS)),
-          registeredLaunch: false,
-        };
-      throw new Error(receipt.error);
-    }
-    throw new Error(`Could not confirm the reservation for ${label}; no command was launched`);
+  private closeStartupTab(job: number, tab: string): Promise<void> {
+    return closeJobTab(this.warn, job, tab);
   }
 
   private async bindTab(
@@ -329,24 +270,14 @@ export class Jobs {
     return { tabId, pane };
   }
 
-  async launch(
-    label: string,
-    command: string,
-    options: JobOptions,
-  ): Promise<{ job: number; tab: string; started: boolean }> {
-    const workspace = process.env["HERDR_WORKSPACE_ID"];
-    if (workspace === undefined) throw new Error(`${label} needs a worker inside a herdr pane`);
-    this.files.resumeLaunchCleanup();
+  private async reserve(label: string, command: string): Promise<Reservation> {
     const id = randomUUID();
     const preparing: Preparing = { fences: new Map() };
     this.preparing.set(id, preparing);
-    const { job, heartbeatMs, registeredLaunch } = await this.prepare(id, label, command).catch(
-      (error: unknown) => {
-        this.preparing.delete(id);
-        throw error;
-      },
-    );
-    this.preparing.delete(id);
+    const prepared = await prepareJob(this.endpoint, this.link, id, label, command).finally(() => {
+      this.preparing.delete(id);
+    });
+    const { job, registeredLaunch } = prepared;
     if (registeredLaunch) this.launches.set(job, id);
     const early = preparing.fences.get(job);
     if (early !== undefined) {
@@ -355,104 +286,182 @@ export class Jobs {
     }
     if (registeredLaunch && this.cancelledJobs.has(job))
       throw new Error(`Job ${String(job)} cannot start: it was stopped before dispatch`);
+    return { ...prepared, id, command };
+  }
+
+  private begin(
+    reservation: Reservation,
+    label: string,
+    workspace: string,
+    options: JobOptions,
+  ): LaunchRun {
+    const { id, job, registeredLaunch } = reservation;
     const file = join(
       resolve(tmpdir()),
       registeredLaunch ? `fleet-job-${String(job)}-${id}.json` : this.files.legacyLaunchName(job),
     );
-    const tab = tabName(job, label);
-    const pending: PendingDispatch | undefined = registeredLaunch
-      ? { file, dispatched: false, fenced: false }
-      : undefined;
     const launching = { unstarted: false, ran: false, legacy: !registeredLaunch };
     this.launching.set(job, launching);
     if (launching.legacy && !this.lastResult.has(job)) this.running.add(job);
-    let dispatched = false;
-    try {
-      const { timeoutMs, tailLines, lineChars } = options;
-      const body = {
-        ...this.endpoint,
-        job,
-        ...(registeredLaunch ? { launch: { id, command } } : { command }),
-        timeoutMs,
-        heartbeatMs,
-        tailLines,
-        lineChars,
-      };
-      if (!registeredLaunch) this.files.remember(job, file);
-      writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
-      if (pending !== undefined) this.pending.set(job, pending);
-      const created = await herdr("local", [
-        "tab",
-        "create",
-        "--workspace",
-        workspace,
-        "--cwd",
-        process.cwd(),
-        "--label",
-        tab,
-        "--no-focus",
-        ...forwardedEnvironment(process.env).flatMap((pair) => ["--env", pair]),
-      ]);
-      const { tabId, pane } = await this.bindTab(job, created, workspace, pending);
-      await joinContained("local", pane, process.cwd());
-      if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced before dispatch`);
-      if (launching.legacy && this.lastResult.has(job))
-        throw new Error(`Job ${String(job)} was reported lost before dispatch; nothing was run`);
-      if (pending !== undefined) pending.dispatched = true;
-      dispatched = true;
-      if (pending !== undefined) this.dispatchPanes.set(job, pane);
-      const paneFailure = await herdr("local", [
-        "pane",
-        "run",
-        pane,
-        `node ${quote(WRAPPER)} ${quote(file)}`,
-      ]).then(
-        () => undefined,
-        (error: unknown) => (error instanceof Error ? error : new Error(String(error))),
+    return {
+      ...reservation,
+      workspace,
+      options,
+      file,
+      tab: tabName(job, label),
+      pending: registeredLaunch ? { file, dispatched: false, fenced: false } : undefined,
+      launching,
+      dispatched: false,
+    };
+  }
+
+  private writeLaunchFile(run: LaunchRun): void {
+    const { job, id, command, heartbeatMs, registeredLaunch, file, pending, options } = run;
+    const body = {
+      ...this.endpoint,
+      job,
+      ...(registeredLaunch ? { launch: { id, command } } : { command }),
+      timeoutMs: options.timeoutMs,
+      heartbeatMs,
+      tailLines: options.tailLines,
+      lineChars: options.lineChars,
+    };
+    if (!registeredLaunch) this.files.remember(job, file);
+    writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
+    if (pending !== undefined) this.pending.set(job, pending);
+  }
+
+  private assertDispatchable(run: LaunchRun): void {
+    const { job, pending, launching } = run;
+    if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced before dispatch`);
+    if (launching.legacy && this.lastResult.has(job))
+      throw new Error(`Job ${String(job)} was reported lost before dispatch; nothing was run`);
+  }
+
+  private assertStarted(run: LaunchRun, paneFailure: Error | undefined): void {
+    const { job, pending, launching } = run;
+    if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced during dispatch`);
+    if (launching.unstarted)
+      throw new Error(
+        `Job ${String(job)} did not start: its wrapper reported that the command never ran`,
       );
-      if (paneFailure === undefined && this.ownedTabs.get(job) === tabId)
-        this.dispatchPanes.set(job, pane);
-      if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced during dispatch`);
-      if (launching.unstarted)
-        throw new Error(
-          `Job ${String(job)} did not start: its wrapper reported that the command never ran`,
-        );
-      if (paneFailure !== undefined) throw paneFailure;
-    } catch (error) {
-      const why = error instanceof Error ? error.message : String(error);
-      if (startupFenced(pending) || launching.unstarted) throw error;
-      if (launching.ran) return { job, tab, started: true };
-      if (dispatched)
-        throw new Error(
-          `Could not confirm dispatch for job ${String(job)}; its result, loss, or failed startup arrives as a [fleet] message: ${why}`,
-          { cause: error },
-        );
-      if (launching.legacy) {
-        this.files.settleLaunchFile(job);
-        this.running.delete(job);
-        throw error;
-      }
-      this.files.removeFile(job, file);
-      const outputTail = `could not start: ${why}`;
+    if (paneFailure !== undefined) throw paneFailure;
+  }
+
+  private async dispatch(run: LaunchRun): Promise<void> {
+    const { job, pending, file, workspace } = run;
+    this.writeLaunchFile(run);
+    const created = await createJobTab(workspace, run.tab);
+    const { tabId, pane } = await this.bindTab(job, created, workspace, pending);
+    await joinContained("local", pane, process.cwd());
+    this.assertDispatchable(run);
+    if (pending !== undefined) {
+      pending.dispatched = true;
+      this.dispatchPanes.set(job, pane);
+    }
+    run.dispatched = true;
+    const paneFailure = await runWrapper(pane, file);
+    if (paneFailure === undefined && this.ownedTabs.get(job) === tabId)
+      this.dispatchPanes.set(job, pane);
+    this.assertStarted(run, paneFailure);
+  }
+
+  private async recordStartFailure(run: LaunchRun, why: string): Promise<void> {
+    const { job, id, file, pending } = run;
+    this.files.removeFile(job, file);
+    const outputTail = `could not start: ${why}`;
+    this.running.delete(job);
+    const finished = await this.link
+      .call(
+        "job.finish",
+        { job, exitCode: 127, outputTail, beforeRegistration: id },
+        CALL_DEADLINE_MS,
+      )
+      .catch(() => undefined);
+    if (finished?.recorded !== true) return;
+    this.advance(job);
+    this.unresolved.delete(job);
+    if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
+    if (pending !== undefined) this.confirmStartupFence(job);
+  }
+
+  private async failLaunch(run: LaunchRun, error: unknown): Promise<LaunchResult> {
+    const { job, tab, pending, launching } = run;
+    const why = error instanceof Error ? error.message : String(error);
+    if (startupFenced(pending) || launching.unstarted) throw error;
+    if (launching.ran) return { job, tab, started: true };
+    if (run.dispatched)
+      throw new Error(
+        `Could not confirm dispatch for job ${String(job)}; its result, loss, or failed startup arrives as a [fleet] message: ${why}`,
+        { cause: error },
+      );
+    if (launching.legacy) {
+      this.files.settleLaunchFile(job);
       this.running.delete(job);
-      const finished = await this.link
-        .call(
-          "job.finish",
-          { job, exitCode: 127, outputTail, beforeRegistration: id },
-          CALL_DEADLINE_MS,
-        )
-        .catch(() => undefined);
-      if (finished?.recorded === true) {
-        this.advance(job);
-        this.unresolved.delete(job);
-        if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
-        if (pending !== undefined) this.confirmStartupFence(job);
-      }
-      throw error;
+    } else await this.recordStartFailure(run, why);
+    throw error;
+  }
+
+  async launch(label: string, command: string, options: JobOptions): Promise<LaunchResult> {
+    const workspace = process.env["HERDR_WORKSPACE_ID"];
+    if (workspace === undefined) throw new Error(`${label} needs a worker inside a herdr pane`);
+    this.files.resumeLaunchCleanup();
+    const reservation = await this.reserve(label, command);
+    const run = this.begin(reservation, label, workspace, options);
+    const { job, tab, launching } = run;
+    try {
+      await this.dispatch(run);
+    } catch (error) {
+      return await this.failLaunch(run, error);
     } finally {
       if (this.launching.get(job) === launching) this.launching.delete(job);
     }
     return { job, tab, started: launching.ran };
+  }
+
+  private settleIdleStop(
+    job: number,
+    cancelled: boolean,
+    stale: () => boolean,
+  ): { current: boolean } {
+    const current = cancelled || !stale();
+    if (!current) return { current };
+    this.advance(job);
+    if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
+    this.running.delete(job);
+    const pending = this.pending.get(job);
+    if (cancelled) this.confirmStartupFence(job);
+    else if (pending !== undefined) pending.dispatched = false;
+    if (this.pending.has(job)) this.unresolved.add(job);
+    else this.unresolved.delete(job);
+    return { current };
+  }
+
+  private async interrupt(
+    job: number,
+    workspace: string,
+    named: string,
+    stale: () => boolean,
+  ): Promise<string> {
+    const superseded = supersededReply(named);
+    if (stale()) return superseded;
+    const tab = this.ownedTabs.get(job);
+    const dispatched = this.dispatchPanes.get(job);
+    const refusal = (): string =>
+      this.launching.has(job)
+        ? `${named} is still starting in this worker, so nothing was signalled.`
+        : `${named} has no verified tab ID in this worker session, so nothing was signalled. After a worker replacement its tab cannot be proven, and a tab name is never used as proof.`;
+    if (tab === undefined || dispatched === undefined) return refusal();
+    const panes = records(
+      (await herdr("local", ["pane", "list", "--workspace", workspace]))["panes"],
+    );
+    if (stale()) return superseded;
+    if (this.ownedTabs.get(job) !== tab || this.dispatchPanes.get(job) !== dispatched)
+      return refusal();
+    if (!panes.some((each) => each["tab_id"] === tab && each["pane_id"] === dispatched))
+      return `${named} is no longer in the tab this worker created for it, so nothing was signalled. The job may still be running.`;
+    await herdr("local", ["pane", "send-keys", dispatched, "ctrl+c"]);
+    return `Sent a stop to ${named}. Its result arrives as a [fleet] message, exited 130 when the stop took.`;
   }
 
   async stop(job: number): Promise<string> {
@@ -463,76 +472,20 @@ export class Jobs {
     const stale = (): boolean =>
       this.revisions.get(job) !== before || this.lastResult.get(job) !== noticed;
     const receipt = await this.link.call("job.stop", { job }, CALL_DEADLINE_MS);
-    const { label, running } = receipt;
-    const cancelled = "cancelled" in receipt && receipt.cancelled === true;
-    if (running) this.launches.delete(job);
-    const named = `job ${String(job)} (${label})`;
-    const superseded = `${named}: no interrupt was sent, and this reply was superseded by newer news about the job.`;
-    if (cancelled) this.cancelledJobs.add(job);
-    if (!running) {
-      const current = cancelled || !stale();
-      if (current) {
-        this.advance(job);
-        if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
-        this.running.delete(job);
-        const pending = this.pending.get(job);
-        if (cancelled) this.confirmStartupFence(job);
-        else if (pending !== undefined) pending.dispatched = false;
-        if (this.pending.has(job)) this.unresolved.add(job);
-        else this.unresolved.delete(job);
-      }
-      if (cancelled)
-        return `${named} was stopped before wrapper registration. Its command will not run.`;
-      return current ? `${named} is not running: nothing to stop.` : superseded;
+    const named = `job ${String(job)} (${receipt.label})`;
+    if (receipt.running) {
+      this.launches.delete(job);
+      return this.interrupt(job, workspace, named, stale);
     }
-    if (stale()) return superseded;
-    const tab = this.ownedTabs.get(job);
-    const dispatched = this.dispatchPanes.get(job);
-    const ready = (): boolean =>
-      this.ownedTabs.get(job) === tab && this.dispatchPanes.get(job) === dispatched;
-    const refusal = (): string =>
-      this.launching.has(job)
-        ? `${named} is still starting in this worker, so nothing was signalled.`
-        : `${named} has no verified tab ID in this worker session, so nothing was signalled. After a worker replacement its tab cannot be proven, and a tab name is never used as proof.`;
-    if (tab === undefined || dispatched === undefined) return refusal();
-    const panes = records(
-      (await herdr("local", ["pane", "list", "--workspace", workspace]))["panes"],
-    );
-    if (stale()) return superseded;
-    if (!ready()) return refusal();
-    if (!panes.some((each) => each["tab_id"] === tab && each["pane_id"] === dispatched))
-      return `${named} is no longer in the tab this worker created for it, so nothing was signalled. The job may still be running.`;
-    await herdr("local", ["pane", "send-keys", dispatched, "ctrl+c"]);
-    return `Sent a stop to ${named}. Its result arrives as a [fleet] message, exited 130 when the stop took.`;
+    const cancelled = receipt.cancelled === true;
+    if (cancelled) this.cancelledJobs.add(job);
+    const { current } = this.settleIdleStop(job, cancelled, stale);
+    if (cancelled)
+      return `${named} was stopped before wrapper registration. Its command will not run.`;
+    return current ? `${named} is not running: nothing to stop.` : supersededReply(named);
   }
 
   register(pi: ExtensionAPI): void {
-    pi.registerTool({
-      name: "run_long",
-      label: "Run long",
-      description:
-        "Runs a long command in its own herdr tab and returns at once. The result arrives later as a [fleet] message. You may end your run while it runs. It stops the command after timeout_minutes (default 60 minutes, maximum 120 minutes / 2 hours), so never wrap the command in timeout or gtimeout.",
-      parameters: RunLongParams,
-      execute: async (_id, params) => {
-        const { label, command } = params;
-        const timeoutMs = (params.timeout_minutes ?? DEFAULT_TIMEOUT_MINUTES) * 60_000;
-        const { job, tab, started } = await this.launch(label, command, { timeoutMs });
-        const text = started
-          ? `Started job ${String(job)} (${label}) in tab ${tab}. Its result arrives as a [fleet] message; you may end this run.`
-          : `Dispatched job ${String(job)} (${label}) in tab ${tab}; its startup is not yet confirmed. Its result, or a failure to start, arrives as a [fleet] message; you may end this run.`;
-        return { content: [{ type: "text", text }], details: {} };
-      },
-    });
-    pi.registerTool({
-      name: "stop_job",
-      label: "Stop job",
-      description:
-        "Stops one of your own run_long jobs by its number. The job's wrapper ends only that job's processes, and its result arrives later as a [fleet] message. A job that is not yours is refused and nothing is signalled. Never stop anything with pkill, killall, or a pgrep list: other workers share the host.",
-      parameters: StopJobParams,
-      execute: async (_id, params) => ({
-        content: [{ type: "text", text: await this.stop(params.job) }],
-        details: {},
-      }),
-    });
+    registerJobTools(pi, this);
   }
 }

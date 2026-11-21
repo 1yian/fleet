@@ -255,9 +255,9 @@ async function register(job: Job, launch: string): Promise<boolean> {
 }
 
 const job = readJob(process.argv[2] ?? "");
-let stopped = false;
+const stop = { requested: false };
 const stopBeforeRun = (): void => {
-  stopped = true;
+  stop.requested = true;
 };
 for (const signal of STOP_SIGNALS) process.on(signal, stopBeforeRun);
 const heartbeat = setInterval(() => {
@@ -265,7 +265,7 @@ const heartbeat = setInterval(() => {
 }, job.heartbeatMs);
 const confirmed = job.launch === undefined || (await register(job, job.launch));
 for (const signal of STOP_SIGNALS) process.off(signal, stopBeforeRun);
-const result: JobResult = stopped
+const result: JobResult = stop.requested
   ? { exitCode: INTERRUPTED_EXIT, outputTail: "interrupted", commandNotStarted: true }
   : confirmed
     ? await run(job)

@@ -49,22 +49,30 @@ const scenarios: {
   {
     name: "the launch's tab creation failed",
     connections: 1,
-    setup: (_proxy, shim) => writeFileSync(shim.failTab, ""),
+    setup: (_proxy, shim) => {
+      writeFileSync(shim.failTab, "");
+    },
   },
   {
     name: "the legacy start receipt was lost",
     connections: 2,
-    setup: (proxy) => proxy.callFault("job.start", { lose: true }),
+    setup: (proxy) => {
+      proxy.callFault("job.start", { lose: true });
+    },
   },
   {
     name: "the tab receipt carried a blank tab ID",
     connections: 1,
-    setup: (_proxy, shim) => writeFileSync(shim.blankTabId, ""),
+    setup: (_proxy, shim) => {
+      writeFileSync(shim.blankTabId, "");
+    },
   },
   {
     name: "the tab receipt carried no tab ID",
     connections: 1,
-    setup: (_proxy, shim) => writeFileSync(shim.noTabId, ""),
+    setup: (_proxy, shim) => {
+      writeFileSync(shim.noTabId, "");
+    },
   },
 ];
 
@@ -209,7 +217,9 @@ for (const modern of [true, false])
 test("a startup failure whose finish reply never arrives still ends the launch and leaves the fence as cleanup authority", async (t) => {
   const proxy = await jl.proxy(t);
   const never = Promise.withResolvers<undefined>();
-  t.after(() => never.resolve(undefined));
+  t.after(() => {
+    never.resolve(undefined);
+  });
   proxy.callFault("job.finish", { hold: never.promise });
   const shim = jl.installShim();
   writeFileSync(shim.failTab, "");
@@ -224,7 +234,9 @@ test("a startup failure whose finish reply never arrives still ends the launch a
 test("a legacy start whose receipt never arrives ends the launch without a retry or a tab", async (t) => {
   const proxy = await legacyProxy(t);
   const never = Promise.withResolvers<undefined>();
-  t.after(() => never.resolve(undefined));
+  t.after(() => {
+    never.resolve(undefined);
+  });
   proxy.callFault("job.start", { hold: never.promise });
   const shim = jl.installShim();
   jl.h.onModel(() => ({ tool: "run_long", args: { label: "gate", command: "echo gate" } }));
