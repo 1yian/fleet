@@ -157,13 +157,22 @@ function heldReason(home: string): string | undefined {
   return text === undefined ? undefined : text.trim() || "stopped";
 }
 
+const lifecycleText = (home: string): string =>
+  JSON.stringify([
+    readState(stoppedFile(home), "state/stopped") ?? null,
+    readState(startsFile(home), "state/starts") ?? null,
+  ]);
+
 async function statusOf(info: LaneHome): Promise<Status> {
   const { lane, home } = info;
   try {
+    const before = lifecycleText(home);
     const reason = heldReason(home);
     recentStarts(home, Date.now());
-    if ((await workspaceOf(info, "liveness"))?.state === "running")
-      return { lane, state: "running" };
+    const observed = await workspaceOf(info, "liveness");
+    if (lifecycleText(home) !== before)
+      throw new HostUnread(`${lane} lifecycle state changed while its status was being read`);
+    if (observed?.state === "running") return { lane, state: "running" };
     return reason === undefined ? { lane, state: "down" } : { lane, state: "stopped", reason };
   } catch (error) {
     if (error instanceof HostUnread) return { lane, state: "unknown", reason: error.message };

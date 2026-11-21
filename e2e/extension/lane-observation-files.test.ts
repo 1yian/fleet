@@ -8,11 +8,13 @@ import {
   addLane,
   idlePane,
   here,
+  faultLog,
   fleet,
   fleetEnv,
   legacyMaintenance,
   maintain,
   typedMaintenance,
+  untilRunning,
   workspace,
   action,
 } from "../support/lane-observation-lab.ts";
@@ -419,6 +421,22 @@ test("a profile input that stops being a regular file leaves only that lane unre
     [],
   );
   assert.equal(await workspace("fix"), undefined);
+});
+
+test("a stop that lands between status's lifecycle read and its workspace listing makes the state unknown", async () => {
+  const home = lane();
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  const stop = `${process.execPath} ${here.launch} stop ops`;
+  const rows: unknown = JSON.parse(fleet(["status", "--json"], "stop-lane", stop));
+  assert.ok(existsSync(`${faultLog()}.stopped`));
+  assert.equal(readFileSync(join(home, "state", "stopped"), "utf8"), "stopped by hand\n");
+  assert.equal(await workspace("ops"), undefined);
+  assert.equal(records(rows)[0]?.["state"], "unknown");
+  assert.match(String(records(rows)[0]?.["reason"]), /lifecycle state changed/);
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"])), [
+    { lane: "ops", state: "stopped", reason: "stopped by hand" },
+  ]);
 });
 
 test("a malformed legacy row does not hide a valid current-title workspace", async () => {
