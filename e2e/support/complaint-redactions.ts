@@ -8,6 +8,10 @@ export const REDACTED_COMPLAINTS = [
     "Opened https://localhost/\u{1F9ED}?password=paper failed",
     "Opened https://localhost/\u{1F9ED}?password=[hidden] failed",
   ],
+  [
+    "Callback https://localhost/cb?password=paper, then retry",
+    "Callback https://localhost/cb?password=[hidden], then retry",
+  ],
   ["password: ``paper ``` canoe ` sail``, next=visible", "password: [hidden], next=visible"],
   ["password: Basic paper\n canoe harbor\nnext: visible", "password: [hidden] next: visible"],
   ["password:\n paper canoe\n harbor\nnext: visible", "password: [hidden] next: visible"],
@@ -117,6 +121,18 @@ export const REDACTED_COMPLAINTS = [
   ],
   [
     String.raw`{"url":"https://localhost/callback?password=pa\u0009per"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    "Callback https://localhost/callback?password=pa,\tper failed",
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    "Callback https://localhost/callback?password=pa;\nper failed",
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    "Callback https://localhost/callback?password=pa,per failed",
     "[URL withheld: credential boundaries unclear]",
   ],
   [
