@@ -18,6 +18,7 @@ import {
   maintain,
   workspace,
   untilRunning,
+  useSteadyPi,
   action,
   idlePane,
 } from "../support/lane-observation-lab.ts";
@@ -97,6 +98,7 @@ test("a legacy split listed first cannot mask the current-title lane", async () 
 });
 
 test("an omitted current title cannot authorize a legacy start, hold, or close", async () => {
+  useSteadyPi();
   assert.deepEqual(maintain(), action("ops", "started"));
   await untilRunning("ops");
   const home = `${here.root}.worktrees/lane-ops`;
@@ -160,6 +162,7 @@ test("a pane disappearing between list and process info leaves the lane unread",
 });
 
 test("maintenance returns a completed start even when the next lane cannot be read", async () => {
+  useSteadyPi();
   addLane("zz");
   assert.deepEqual(JSON.parse(fleet(["up", "zz", "--json"])), action("zz", "started"));
   const ws = await workspace("zz");

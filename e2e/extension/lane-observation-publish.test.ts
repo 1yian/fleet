@@ -15,6 +15,7 @@ import {
   typedMaintenance,
   workspace,
   untilRunning,
+  useSteadyPi,
 } from "../support/lane-observation-lab.ts";
 
 const ops = (): string => `${here.root}.worktrees/lane-ops`;
@@ -128,6 +129,18 @@ test("a same-group foreground child never clears a hold or lets restart-all repl
   assert.equal((await workspace("ops"))?.["workspace_id"], before["workspace_id"]);
 });
 
+test("a readable Pi beside a Git child missing argv leaves the lane unknown", async () => {
+  const root = await idlePane("ops", ops());
+  assert.deepEqual(JSON.parse(fleet(["status", "--json"], "partial-git-child", root)), [
+    {
+      lane: "ops",
+      state: "unknown",
+      reason: `herdr returned an incomplete process list for pane ${root}`,
+    },
+  ]);
+  assert.deepEqual(maintain("partial-git-child", root), action("ops", "unread"));
+});
+
 const heldWithReply = (name: string, fault: string): void => {
   test(name, async () => {
     const root = await idlePane("ops", ops());
@@ -197,6 +210,7 @@ test("a confirmed start followed by a failed final discovery blocks recovery", (
 });
 
 test("a confirmed lane whose workspace closes while a later lane is read blocks recovery but keeps both outcomes", async () => {
+  useSteadyPi();
   assert.deepEqual(maintain(), action("ops", "started"));
   await untilRunning("ops");
   const id = (await workspace("ops"))?.["workspace_id"];

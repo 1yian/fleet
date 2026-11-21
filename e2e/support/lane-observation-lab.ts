@@ -130,6 +130,11 @@ case "$1 $2:$HERDR_FAULT" in
       printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1,"foreground_processes":[{"pid":2,"name":"pi","argv":["pi"]},{"pid":3,"name":"sleep","argv":["sleep","60"]}]}}}'
       exit 0
     fi ;;
+  'pane process-info:partial-git-child')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]},{"pid":2,"name":"git"}]}}}'
+      exit 0
+    fi ;;
   'pane process-info:shared-group-child')
     if [ "$4" = "$FAULT_PANE" ]; then
       printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1,"foreground_processes":[{"pid":2,"name":"sleep","argv":["sleep","60"]}]}}}'
@@ -362,6 +367,16 @@ function addLane(lane: string): string {
     token: cardd.addLane(lane, "main"),
     args: mateArgs(h),
   });
+}
+
+export function useSteadyPi(): void {
+  writeFileSync(
+    join(bin, "pi"),
+    '#!/usr/bin/env node\nprocess.title = "pi";\nprocess.stdin.resume();\n',
+    {
+      mode: 0o755,
+    },
+  );
 }
 
 const faultLog = () => join(bin, "observations");
