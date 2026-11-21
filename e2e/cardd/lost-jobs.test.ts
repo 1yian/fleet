@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
@@ -11,10 +13,11 @@ import {
   startFleet,
   type Fleet,
 } from "../support/fleet.ts";
+import { ProbeRoute } from "../support/probe-route.ts";
 
 let fleet: Fleet;
 beforeEach(async () => {
-  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001" });
+  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001" }, ["--hosts", new ProbeRoute().hosts]);
   viewer = fleet.main;
 });
 afterEach(async () => {
@@ -22,6 +25,14 @@ afterEach(async () => {
 });
 
 let viewer: Session;
+
+async function exitedPid(): Promise<number> {
+  const child = spawn("true", { stdio: "ignore" });
+  await once(child, "exit");
+  if (child.pid === undefined) throw new Error("the stand-in wrapper did not start");
+  return child.pid;
+}
+
 const findings = async (card: Card): Promise<Entry[]> =>
   check(CardViewSchema, await viewer.call("card", { card: card.id })).entries.filter(
     (entry) => entry.kind === "finding" && entry.author === "check",
@@ -107,10 +118,10 @@ test("a lost job is superseded by the same-label job that registered later, what
   assert.ok(reservedSecond.job > reservedFirst.job);
   const register = (run: { job: number; launch: string }, pid: number) =>
     worker.call("job.register", { job: run.job, launch: run.launch, pid });
-  assert.deepEqual(await register(reservedSecond, 4400), { registered: true });
+  assert.deepEqual(await register(reservedSecond, await exitedPid()), { registered: true });
   const secondRegistered = registeredAt(fleet.cardd, reservedSecond.job);
   pastClock(secondRegistered);
-  assert.deepEqual(await register(reservedFirst, 4401), { registered: true });
+  assert.deepEqual(await register(reservedFirst, await exitedPid()), { registered: true });
   assert.ok(registeredAt(fleet.cardd, reservedFirst.job) > secondRegistered);
 
   const reminders = async (job: number): Promise<Entry[]> =>

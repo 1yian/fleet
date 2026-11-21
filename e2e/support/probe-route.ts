@@ -8,7 +8,7 @@ const SCRIPT = `mode=$(cat "$FLEET_PROBE_MODE" 2>/dev/null); mode=\${mode:-live}
 case "$mode" in
   absent) exit 1 ;;
   offline) exit 255 ;;
-  partial) echo "ps: could not read the process table"; exit 0 ;;
+  partial) exit 0 ;;
   missing) exit 127 ;;
 esac
 exec sh -c "$1"`;

@@ -9,23 +9,24 @@ import { transaction } from "./store.ts";
 const PROBE_TIMEOUT_MS = 10_000;
 const NO_SUCH_PROCESS = 1;
 
-type Presence = "present" | "absent" | "unknown";
+const SCRIPT = `[ "$(ps -p $$ -o pid= 2>/dev/null | tr -d ' ')" = "$$" ] || exit 3
+exec ps -ww -p "$1" -o args= 2>/dev/null`;
 
-function probeWrapper(hosts: Hosts, { host, pid }: SilentWrapper): Promise<Presence> {
+function wrapperIsGone(hosts: Hosts, { job, host, pid, launch }: SilentWrapper): Promise<boolean> {
   return new Promise((resolve) => {
     let route: readonly string[];
     try {
       route = routeFor(hosts, host);
     } catch {
-      resolve("unknown");
+      resolve(false);
       return;
     }
-    const [file = "ps", ...args] = routed(route, ["ps", "-p", String(pid), "-o", "pid="]);
+    const token = `fleet-job-${String(job)}-${launch}.json`;
+    const [file = "sh", ...args] = routed(route, ["sh", "-c", SCRIPT, "probe", String(pid)]);
     runOnTransport(file, args, { timeout: PROBE_TIMEOUT_MS }, (error, stdout, stderr) => {
-      if (error === null) resolve(stdout.trim() === String(pid) ? "present" : "unknown");
-      else if (error.code === NO_SUCH_PROCESS && stdout.trim() === "" && stderr.trim() === "")
-        resolve("absent");
-      else resolve("unknown");
+      const argv = stdout.trim();
+      if (error === null) resolve(argv !== "" && !argv.includes(token));
+      else resolve(error.code === NO_SUCH_PROCESS && argv === "" && stderr.trim() === "");
     });
   });
 }
@@ -38,9 +39,9 @@ export async function loseGoneJobs(
 ): Promise<string[]> {
   const silent = silentWrappers(db, before);
   const probed = await Promise.all(
-    silent.map(async (wrapper) => ({ wrapper, presence: await probeWrapper(hosts, wrapper) })),
+    silent.map(async (wrapper) => ({ wrapper, gone: await wrapperIsGone(hosts, wrapper) })),
   );
-  const confirmed = probed.filter(({ presence }) => presence === "absent");
+  const confirmed = probed.filter(({ gone }) => gone);
   return transaction(db, () =>
     confirmed.flatMap(({ wrapper }) => lose(loseGoneWrapper(db, wrapper))),
   );

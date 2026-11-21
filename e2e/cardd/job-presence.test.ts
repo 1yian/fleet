@@ -36,21 +36,22 @@ afterEach(async () => {
   await cardd.stop();
 });
 
-function liveProcess(): number {
-  const child = spawnOwned("sleep", ["600"], { stdio: "ignore" });
+function liveProcess(name: string): number {
+  const child = spawnOwned("sh", ["-c", "sleep 600; :", name], { stdio: "ignore" });
   if (child.pid === undefined) throw new Error("the stand-in wrapper did not start");
   wrappers.push(child.pid);
   return child.pid;
 }
 
-async function registered(label: string, pid: number): Promise<number> {
+async function registered(label: string, named = true): Promise<{ job: number; pid: number }> {
   const launch = randomUUID();
   const { job } = check(
     OPS["job.prepare"].result,
     await worker.call("job.prepare", { label, command: `run ${label}`, launch }),
   );
+  const pid = liveProcess(named ? `fleet-job-${String(job)}-${launch}.json` : "unrelated");
   assert.deepEqual(await worker.call("job.register", { job, launch, pid }), { registered: true });
-  return job;
+  return { job, pid };
 }
 
 const running = async (job: number): Promise<boolean> =>
@@ -66,40 +67,49 @@ const lostFindings = (): number =>
   main.entries.filter(({ entry }) => entry.fields["condition"] === "job-lost").length;
 
 test("a registered job that goes silent while its wrapper lives is not lost, and one whose wrapper is gone is", async () => {
-  const alive = await registered("alive", liveProcess());
-  const doomed = liveProcess();
-  const gone = await registered("gone", doomed);
-  process.kill(-doomed, "SIGKILL");
+  const alive = await registered("alive");
+  const doomed = await registered("gone");
+  process.kill(-doomed.pid, "SIGKILL");
 
-  await lostFinding(gone);
-  assert.equal(await running(gone), false);
-  assert.equal(await running(alive), true);
+  await lostFinding(doomed.job);
+  assert.equal(await running(doomed.job), false);
+  assert.equal(await running(alive.job), true);
   assert.equal(lostFindings(), 1);
   const told = await worker.waitForEntry(
-    (entry) => entry.fields["job"] === gone && entry.fields["lost"] === true,
+    (entry) => entry.fields["job"] === doomed.job && entry.fields["lost"] === true,
     "the worker's loss notice",
   );
   assert.match(told.body, /its wrapper process is gone/);
   assert.equal(
-    worker.entries.some(({ entry }) => entry.fields["job"] === alive && entry.fields["lost"]),
+    worker.entries.some(({ entry }) => entry.fields["job"] === alive.job && entry.fields["lost"]),
     false,
   );
 });
 
+test("a wrapper pid that now belongs to an unrelated process does not keep a job running", async () => {
+  const reused = await registered("reused", false);
+  const alive = await registered("alive");
+
+  await lostFinding(reused.job);
+  assert.equal(await running(reused.job), false);
+  assert.equal(await running(alive.job), true);
+  assert.equal(lostFindings(), 1);
+});
+
 test("an unreadable or partial probe keeps a job waiting, and the loss lands once the wrapper is confirmed gone", async () => {
-  const doomed = liveProcess();
-  const job = await registered("unknown", doomed);
-  process.kill(-doomed, "SIGKILL");
+  probe.say("offline");
+  const doomed = await registered("unknown");
+  process.kill(-doomed.pid, "SIGKILL");
 
   for (const kind of ["offline", "partial", "missing"] as const) {
     probe.say(kind);
     const seen = probe.count(kind);
     await until(() => (probe.count(kind) >= seen + 3 ? true : undefined), `three ${kind} probes`);
-    assert.equal(await running(job), true, `a ${kind} read lost the job`);
+    assert.equal(await running(doomed.job), true, `a ${kind} read lost the job`);
     assert.equal(lostFindings(), 0);
   }
 
   probe.say("live");
-  await lostFinding(job);
-  assert.equal(await running(job), false);
+  await lostFinding(doomed.job);
+  assert.equal(await running(doomed.job), false);
 });

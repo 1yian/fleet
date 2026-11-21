@@ -364,12 +364,13 @@ export interface SilentWrapper {
   readonly job: number;
   readonly host: string;
   readonly pid: number;
+  readonly launch: string;
 }
 
 export function silentWrappers(db: DatabaseSync, before: number): SilentWrapper[] {
   return db
     .prepare(
-      `SELECT j.id AS id, j.wrapper_pid AS pid, a.host AS host FROM jobs j JOIN attempts a ON a.id = j.attempt
+      `SELECT j.id AS id, j.wrapper_pid AS pid, j.launch_id AS launch, a.host AS host FROM jobs j JOIN attempts a ON a.id = j.attempt
        WHERE j.launch_id IS NOT NULL AND j.wrapper_pid IS NOT NULL AND ${outstandingJobSql("j")}
          AND j.updated_at < ? AND a.state IN ('starting', 'active')
        ORDER BY j.id`,
@@ -379,6 +380,7 @@ export function silentWrappers(db: DatabaseSync, before: number): SilentWrapper[
       job: numberOf(row["id"], "id"),
       host: textOf(row["host"], "host"),
       pid: numberOf(row["pid"], "wrapper_pid"),
+      launch: textOf(row["launch"], "launch_id"),
     }));
 }
 
@@ -388,10 +390,10 @@ export function loseGoneWrapper(db: DatabaseSync, gone: SilentWrapper): LostJob[
     db
       .prepare(
         `SELECT j.id AS id, j.label AS label, a.card AS card FROM jobs j JOIN attempts a ON a.id = j.attempt
-         WHERE j.id = ? AND j.wrapper_pid = ? AND ${outstandingJobSql("j")}
+         WHERE j.id = ? AND j.wrapper_pid = ? AND j.launch_id = ? AND ${outstandingJobSql("j")}
            AND a.state IN ('starting', 'active')`,
       )
-      .all(gone.job, gone.pid),
+      .all(gone.job, gone.pid, gone.launch),
   );
 }
 
