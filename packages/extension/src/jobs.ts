@@ -160,20 +160,19 @@ export class Jobs {
 
   observeResult(entry: Entry): void {
     const { job, startupFenced, startupLaunch, exitCode, lost, revived } = entry.fields;
-    if (typeof job !== "number" || (this.lastResult.get(job) ?? 0) >= entry.id) return;
+    if (!Number.isInteger(job) || typeof job !== "number") return;
+    if ((this.lastResult.get(job) ?? 0) >= entry.id) return;
     if (startupFenced !== true && typeof exitCode !== "number" && lost !== true && revived !== true)
       return;
+    const fence = startupFenced === true ? this.fenceLaunch(job, startupLaunch) : undefined;
+    if (startupFenced === true && fence === undefined) return;
     this.lastResult.set(job, entry.id);
     if (startupFenced === true || typeof exitCode === "number") {
       this.advance(job);
       this.unresolved.delete(job);
     }
     if (startupFenced === true) {
-      this.confirmStartupFence(
-        job,
-        typeof startupLaunch === "string" ? startupLaunch : undefined,
-        entry.body,
-      );
+      this.confirmStartupFence(job, fence, entry.body);
       return;
     }
     if (lost === true || typeof exitCode === "number") this.files.settleLaunchFile(job);
@@ -197,13 +196,22 @@ export class Jobs {
     this.ownedTabs.delete(job);
   }
 
+  private fenceLaunch(job: number, launch: unknown): string | undefined {
+    try {
+      const id = check(OPS["job.register"].args.properties.launch, launch);
+      const pending = this.pending.get(job);
+      return pending === undefined || pending.launch === id ? id : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private confirmStartupFence(job: number, launch?: string, detail = "startup was fenced"): void {
     if (launch !== undefined) {
       const preparing = this.preparing.get(launch);
       if (preparing !== undefined) preparing.fence = { job, detail };
     }
     const pending = this.pending.get(job);
-    if (pending !== undefined && launch !== undefined && pending.launch !== launch) return;
     this.running.delete(job);
     if (pending === undefined) return;
     pending.fenced = true;
