@@ -48,7 +48,7 @@ case "$1 $2:$HERDR_FAULT" in
     fi ;;
   'workspace list:swap-final')
     printf 'x\\n' >> "$HERDR_FAULT_LOG.lists"
-    if [ "$(wc -l < "$HERDR_FAULT_LOG.lists")" -eq 5 ]; then
+    if [ "$(wc -l < "$HERDR_FAULT_LOG.lists")" -eq 6 ]; then
       : > "$FAULT_PANE.swapped"
       cp "$FAULT_PANE.next" "$FAULT_PANE.swap" && mv "$FAULT_PANE.swap" "$FAULT_PANE"
     fi ;;
@@ -192,6 +192,14 @@ case "$1 $2:$HERDR_FAULT" in
       console.log(JSON.stringify(reply));
     '
     exit $? ;;
+  'pane list:rename-final')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    printf 'x\\n' >> "$HERDR_FAULT_LOG.panes"
+    if [ "$(wc -l < "$HERDR_FAULT_LOG.panes")" -eq 3 ]; then
+      "$REAL_HERDR" workspace rename "$4" fleet-utility --session "$HERDR_SESSION" >/dev/null || exit $?
+    fi
+    printf '%s' "$reply"
+    exit 0 ;;
   'pane list:split-utility-flip')
     reply=$("$REAL_HERDR" "$@") || exit $?
     if [ ! -e "$HERDR_FAULT_LOG.utility" ]; then

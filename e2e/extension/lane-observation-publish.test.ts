@@ -10,7 +10,9 @@ import {
   fleet,
   here,
   idlePane,
+  lab,
   maintain,
+  workspace,
   untilRunning,
 } from "../support/lane-observation-lab.ts";
 
@@ -72,4 +74,20 @@ test("placement refuses a lane whose claim is replaced during the final workspac
     /ops claim changed or became ambiguous/,
   );
   assert.ok(existsSync(`${config}.swapped`));
+});
+
+test("a workspace renamed during the confirming pane read is neither stopped nor marked", async () => {
+  const root = await idlePane("ops", ops());
+  const before = await workspace("ops");
+  assert.ok(typeof before?.["workspace_id"] === "string");
+  assert.throws(
+    () => fleet(["stop", "ops"], "rename-final", root),
+    /herdr workspace candidates changed for ops/,
+  );
+  assert.equal(existsSync(join(ops(), "state", "stopped")), false);
+  const after = records((await lab.run(["workspace", "list"]))["workspaces"]);
+  assert.equal(
+    after.find((row) => row["workspace_id"] === before["workspace_id"])?.["label"],
+    "fleet-utility",
+  );
 });

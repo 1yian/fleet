@@ -317,13 +317,17 @@ export async function workspaceOf(
   )
     throw changed();
   const final = await read();
+  const stable = (before: Listed, after: Listed): boolean =>
+    sameRows(before.current, after.current) &&
+    (again.viaCurrent || sameRows(before.legacy, after.legacy));
   if (
-    !sameRows(last.current, final.current) ||
-    (!again.viaCurrent && !sameRows(last.legacy, final.legacy)) ||
+    !stable(last, final) ||
     !(await sameEvidence(again.obs.checks, [...final.current, ...final.legacy], deadline))
   )
     throw changed();
-  if (seen !== undefined) seen.roster = final;
+  const end = await read();
+  if (!stable(final, end)) throw changed();
+  if (seen !== undefined) seen.roster = end;
   return decided.found;
 }
 
