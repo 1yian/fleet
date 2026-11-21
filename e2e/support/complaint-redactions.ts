@@ -32,6 +32,22 @@ export const REDACTED_COMPLAINTS = [
   ],
   ["8080: connection refused", "8080: connection refused"],
   [
+    "Callback https://localhost/callback?access%5Ftoken=paper failed",
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    "Callback https://localhost/callback#pass%77ord=paper failed",
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    "Callback https://localhost/callback?next=1&client%255Fsecret=paper failed",
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    "Callback https://localhost/callback?next%5Fstep=2 failed",
+    "Callback https://localhost/callback?next%5Fstep=2 failed",
+  ],
+  [
     "12:00:01.000001 8080: network timeout\n12:00:02.000002 8091: connection refused",
     "12:00:01.000001 8080: network timeout 12:00:02.000002 8091: connection refused",
   ],

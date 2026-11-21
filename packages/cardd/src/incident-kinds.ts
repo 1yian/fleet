@@ -3,6 +3,7 @@ import { VERSIONED_ENVELOPE } from "./http-envelope.ts";
 import {
   hasBrowserUserinfo,
   hasCookieRecord,
+  hasEncodedCredentialParam,
   hasEscapedCredentialKey,
   logicalView,
   normalizeInput,
@@ -315,6 +316,12 @@ function yamlSplicesDisagree(source: string): boolean {
   return neutralAuthorization(physical) !== redactYamlScalars(neutralAuthorization(logical));
 }
 
+function withheldCommand(text: string): string | undefined {
+  if (curlCredentialOption(text)) return CURL_WITHHELD;
+  if ([text, logicalView(text)].some(hasEncodedCredentialParam)) return URL_WITHHELD;
+  return undefined;
+}
+
 function redactNormalized(source: string, scope: "public" | "diagnostic"): string {
   const views = [source, logicalView(source)];
   const unclear = views.some((v) => hasCredentialCollection(v) || hasEscapedCredentialKey(v));
@@ -324,7 +331,8 @@ function redactNormalized(source: string, scope: "public" | "diagnostic"): strin
   if ([yaml, logicalView(yaml)].some(hasUnboundedSecret)) return YAML_WITHHELD;
   const urls = redactUrlUserinfo(yaml);
   if (urls === URL_WITHHELD) return urls;
-  if (curlCredentialOption(urls)) return CURL_WITHHELD;
+  const refused = withheldCommand(urls);
+  if (refused) return refused;
   if (hasCookieRecord(urls)) return RECORD_WITHHELD;
   if (hasUnprovenValue(urls)) return YAML_WITHHELD;
   const structured = redactContinued(redactContinued(urls, SHELL_SECRET), STRUCTURED_SECRET);

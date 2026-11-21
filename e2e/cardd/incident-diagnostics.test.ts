@@ -323,6 +323,14 @@ for (const [name, diagnostic] of [
   ["a tab inside userinfo", "Browser URL https://demo:pa\tper@localhost/api failed"],
   ["no authority separators", "Browser URL https:demo:paper@localhost/api failed"],
   ["excess authority separators", "Browser URL https:////demo:paper@localhost/api failed"],
+  [
+    "an encoded query parameter name",
+    "Callback https://localhost/callback?access%5Ftoken=paper failed",
+  ],
+  [
+    "an encoded fragment parameter name",
+    "Callback https://localhost/callback#pass%77ord=paper failed",
+  ],
   ["an escaped at sign", String.raw`{"url":"https:demo:paper\u0040localhost/api"}`],
 ] as const) {
   test(`a browser-equivalent URL with ${name} is withheld`, async () => {
