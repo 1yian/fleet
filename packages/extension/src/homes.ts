@@ -284,7 +284,12 @@ function confirmClaim(root: string, info: LaneHome): void {
     throw new HostUnread(`${info.lane} claim changed or became ambiguous after it was checked`);
 }
 
-async function createConfirmedPane(info: LaneHome, deadline: number | undefined): Promise<string> {
+async function createConfirmedPane(
+  info: LaneHome,
+  deadline: number | undefined,
+  confirm: (info: LaneHome) => void,
+): Promise<string> {
+  confirm(info);
   const pane = await createMatePane(info, deadline);
   await confirmTarget(info, pane, deadline);
   return pane;
@@ -302,8 +307,7 @@ async function start(
   const history = recentStarts(info.home, Date.now());
   syncHome(root, info.home, launchDeadline);
   await confirmTarget(info, existingPane, launchDeadline);
-  confirm(info);
-  const pane = existingPane ?? (await createConfirmedPane(info, launchDeadline));
+  const pane = existingPane ?? (await createConfirmedPane(info, launchDeadline, confirm));
   confirm(info);
   const pi = ["pi", "--continue", TRUST_ARG, ...mateStartArgs(info.config.args, info.config.tier)];
   const { direnv } = info.config;

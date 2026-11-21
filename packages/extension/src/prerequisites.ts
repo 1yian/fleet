@@ -192,12 +192,14 @@ function strictSettings(home: string): Record<string, unknown> | undefined {
     if (isAbsent(file, error)) return undefined;
     throw error;
   }
+  let found: unknown;
   try {
-    const found: unknown = JSON.parse(text);
-    return isRecord(found) ? found : {};
+    found = JSON.parse(text);
   } catch {
-    return {};
+    throw new Error("config/optchat.json is not valid JSON");
   }
+  if (!isRecord(found)) throw new Error("config/optchat.json is not a JSON object");
+  return found;
 }
 
 function memoryProblem(

@@ -318,6 +318,36 @@ test("unreadable optchat settings leave only that lane unread while a healthy si
   assert.equal(typeof ops?.["workspace_id"], "string");
 });
 
+test("truncated or non-object optchat settings are unread even when the default profile is complete", async () => {
+  const fix = addLane("fix");
+  const profile = join(fix, "data", "optchat", "profiles");
+  mkdirSync(profile, { recursive: true });
+  writeFileSync(join(profile, "AGENTS.md"), "profile\n");
+  writeFileSync(join(profile, "config.json"), "{}\n");
+  for (const text of ['{"secret-marker":', '"secret-marker"']) {
+    writeFileSync(join(fix, "config", "optchat.json"), text);
+    const reply: unknown = JSON.parse(fleet(typedMaintenance));
+    assert.ok(isRecord(reply));
+    assert.deepEqual(reply["expected"], ["ops", "fix"]);
+    assert.match(
+      String(reply["failed"]),
+      /lane fix could not be read: optchat settings could not be read: config\/optchat\.json is not /,
+    );
+    assert.doesNotMatch(String(reply["failed"]), /secret-marker/);
+    assert.deepEqual(
+      records(reply["outcomes"]).filter((row) => row["lane"] === "fix"),
+      [],
+    );
+    assert.equal(await workspace("fix"), undefined);
+    assert.equal(existsSync(join(fix, "state", "starts")), false);
+  }
+  writeFileSync(join(fix, "config", "optchat.json"), "{}");
+  const repaired: unknown = JSON.parse(fleet(typedMaintenance));
+  assert.ok(isRecord(repaired));
+  assert.equal(repaired["failed"], undefined);
+  assert.equal(typeof (await workspace("fix"))?.["workspace_id"], "string");
+});
+
 test("a malformed legacy row does not hide a valid current-title workspace", async () => {
   const home = lane();
   await idlePane("ops", home);
