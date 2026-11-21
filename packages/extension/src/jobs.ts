@@ -11,7 +11,7 @@ import Type from "typebox";
 import type { Static } from "typebox";
 import Value from "typebox/value";
 import { joinContained } from "./containment.ts";
-import { field, herdr, records, rootPane } from "./host.ts";
+import { field, herdr, records } from "./host.ts";
 import { JobFiles } from "./job-files.ts";
 import { jobHandshake } from "./job-http.ts";
 import type { Link } from "./link.ts";
@@ -20,6 +20,7 @@ import { forwardedEnvironment } from "./scratch.ts";
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
 const DEFAULT_TIMEOUT_MINUTES = 60;
 const PREPARE_ATTEMPTS = 3;
+const CALL_DEADLINE_MS = 5000;
 const TAB_CLOSE_ATTEMPTS = 3;
 
 const RunLongParams = Type.Object({
@@ -130,7 +131,7 @@ export class Jobs {
     const retry = Promise.all([...this.unresolved].map((job) => this.reconcile(job)));
     const before = new Map(this.revisions);
     try {
-      const jobs = await this.link.call("jobs", {}, 5000);
+      const jobs = await this.link.call("jobs", {}, CALL_DEADLINE_MS);
       const wasWaiting = this.waiting;
       for (const { id } of jobs) {
         if (this.revisions.get(id) !== before.get(id)) continue;
@@ -154,7 +155,7 @@ export class Jobs {
     const result = this.lastResult.get(job);
     let running: boolean;
     try {
-      running = (await this.link.call("job.running", { job }, 5000)).running;
+      running = (await this.link.call("job.running", { job }, CALL_DEADLINE_MS)).running;
     } catch {
       return;
     }
@@ -294,12 +295,38 @@ export class Jobs {
         receipt.error === "unknown operation job.prepare"
       )
         return {
-          ...(await this.link.call("job.start", { label, command })),
+          ...(await this.link.call("job.start", { label, command }, CALL_DEADLINE_MS)),
           registeredLaunch: false,
         };
       throw new Error(receipt.error);
     }
     throw new Error(`Could not confirm the reservation for ${label}; no command was launched`);
+  }
+
+  private async bindTab(
+    job: number,
+    created: Record<string, unknown>,
+    workspace: string,
+    pending: PendingDispatch | undefined,
+  ): Promise<{ tabId: string; pane: string }> {
+    const tabId = present(field(records([created["tab"]])[0], "tab_id"), "tab ID");
+    const pane = field(records([created["root_pane"]])[0], "pane_id");
+    if (pane === undefined || pane.trim() === "") {
+      if (pending?.fenced === true) void this.closeStartupTab(job, tabId);
+      else this.ownedTabs.set(job, tabId);
+      throw new Error("herdr did not return the job pane ID");
+    }
+    const listed = records(
+      (await herdr("local", ["pane", "list", "--workspace", workspace]))["panes"],
+    );
+    if (!listed.some((each) => each["pane_id"] === pane && each["tab_id"] === tabId))
+      throw new Error("herdr returned a root pane outside the job tab");
+    if (pending?.fenced === true) {
+      void this.closeStartupTab(job, tabId);
+      throw new Error(`Job ${String(job)} was fenced before dispatch`);
+    }
+    this.ownedTabs.set(job, tabId);
+    return { tabId, pane };
   }
 
   async launch(
@@ -366,13 +393,7 @@ export class Jobs {
         "--no-focus",
         ...forwardedEnvironment(process.env).flatMap((pair) => ["--env", pair]),
       ]);
-      const tabId = present(field(records([created["tab"]])[0], "tab_id"), "tab ID");
-      if (pending?.fenced === true) {
-        void this.closeStartupTab(job, tabId);
-        throw new Error(`Job ${String(job)} was fenced before dispatch`);
-      }
-      this.ownedTabs.set(job, tabId);
-      const pane = present(rootPane(created), "pane ID");
+      const { tabId, pane } = await this.bindTab(job, created, workspace, pending);
       await joinContained("local", pane, process.cwd());
       if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced before dispatch`);
       if (launching.legacy && this.lastResult.has(job))
@@ -415,12 +436,11 @@ export class Jobs {
       const outputTail = `could not start: ${why}`;
       this.running.delete(job);
       const finished = await this.link
-        .call("job.finish", {
-          job,
-          exitCode: 127,
-          outputTail,
-          beforeRegistration: id,
-        })
+        .call(
+          "job.finish",
+          { job, exitCode: 127, outputTail, beforeRegistration: id },
+          CALL_DEADLINE_MS,
+        )
         .catch(() => undefined);
       if (finished?.recorded === true) {
         this.advance(job);
@@ -442,7 +462,7 @@ export class Jobs {
     const noticed = this.lastResult.get(job);
     const stale = (): boolean =>
       this.revisions.get(job) !== before || this.lastResult.get(job) !== noticed;
-    const receipt = await this.link.call("job.stop", { job });
+    const receipt = await this.link.call("job.stop", { job }, CALL_DEADLINE_MS);
     const { label, running } = receipt;
     const cancelled = "cancelled" in receipt && receipt.cancelled === true;
     if (running) this.launches.delete(job);

@@ -204,3 +204,19 @@ test("a stop from a replacement worker refuses a legacy job it cannot prove it o
   assert.equal(existsSync(shim.keys), false);
   assert.ok(await gateTab());
 });
+
+test("a stop whose receipt never arrives signals nothing and reports the failure", async (t) => {
+  const { pi, proxy, shim } = await legacyGate(t);
+  const never = Promise.withResolvers<undefined>();
+  t.after(() => never.resolve(undefined));
+  proxy.callFault("job.stop", { hold: never.promise });
+  jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
+  jl.h.onModel(() => ({ text: "The stop receipt never arrived" }));
+  pi.prompt("Stop the gate job");
+  const stopped = await jl.h.waitFor(
+    (event) => event["type"] === "stop_result",
+    "the stop whose receipt never arrived",
+  );
+  assert.equal(stopped["isError"], true);
+  assert.equal(existsSync(shim.keys), false);
+});

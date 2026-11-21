@@ -174,6 +174,7 @@ export class JobLab {
       holdContain: join(this.jobDir, "hold-contain"),
       holdRun: join(this.jobDir, "hold-run"),
       blankPaneId: join(this.jobDir, "blank-pane-id"),
+      foreignPane: join(this.jobDir, "foreign-pane"),
       noTabId: join(this.jobDir, "no-tab-id"),
       blankTabId: join(this.jobDir, "blank-tab-id"),
       release: join(this.jobDir, "release-dispatch"),
@@ -192,6 +193,11 @@ fi
 if [ "$1 $2" = 'tab create' ]; then
   echo tab >> ${quote(logs.creates)}
   if [ -e ${quote(logs.failTab)} ]; then echo 'tab create refused' >&2; exit 1; fi
+  if [ -e ${quote(logs.foreignPane)} ]; then
+    out=$(${quote(herdr)} "$@") || exit $?
+    echo "$out" | sed 's/"pane_id": *"[^"]*"/"pane_id":"'"$(cat ${quote(logs.foreignPane)})"'"/g'
+    exit 0
+  fi
   if [ -e ${quote(logs.blankPaneId)} ]; then
     out=$(${quote(herdr)} "$@") || exit $?
     echo "$out" | sed 's/"pane_id": *"[^"]*"/"pane_id":""/g'

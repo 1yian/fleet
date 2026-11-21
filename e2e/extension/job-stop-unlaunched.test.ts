@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import { JobLab } from "../support/job-lab.ts";
+import { records } from "../support/json.ts";
 import { until } from "../support/live-fleet.ts";
 
 let jl: JobLab;
@@ -169,4 +170,67 @@ test("a modern launch whose pane ID is blank closes its exact tab and never disp
   assert.deepEqual(await jl.jobResults(), [
     [1, 127, "could not start: herdr did not return the job pane ID"],
   ]);
+});
+
+for (const modern of [true, false])
+  test(`a ${modern ? "modern" : "legacy"} launch whose root pane belongs to another tab never dispatches and closes nothing`, async (t) => {
+    jl.env["PROBE_STOP_RESULT"] = "1";
+    if (modern) await jl.proxy(t);
+    else await legacyProxy(t);
+    const shim = jl.installShim();
+    const panes = await jl.lab.run([
+      "pane",
+      "list",
+      "--workspace",
+      jl.env["HERDR_WORKSPACE_ID"] ?? "",
+    ]);
+    const unrelated = String(records(panes["panes"])[0]?.["pane_id"]);
+    writeFileSync(shim.foreignPane, unrelated);
+    jl.h.onModel(() => ({ tool: "run_long", args: { label: "gate", command: "echo gate" } }));
+    jl.h.onModel(() => ({ text: "The launch was refused" }));
+    jl.worker();
+    await jl.h.waitFor((event) => event["type"] === "settled", "the refused launch to settle");
+    assert.equal(existsSync(shim.runs), false);
+    assert.equal(existsSync(shim.keys), false);
+    assert.equal(existsSync(shim.closes), false);
+    assert.ok(
+      records(
+        (await jl.lab.run(["pane", "list", "--workspace", jl.env["HERDR_WORKSPACE_ID"] ?? ""]))[
+          "panes"
+        ],
+      ).some((pane) => pane["pane_id"] === unrelated),
+    );
+    if (modern)
+      assert.deepEqual(await jl.jobResults(), [
+        [1, 127, "could not start: herdr returned a root pane outside the job tab"],
+      ]);
+  });
+
+test("a startup failure whose finish reply never arrives still ends the launch and leaves the fence as cleanup authority", async (t) => {
+  const proxy = await jl.proxy(t);
+  const never = Promise.withResolvers<undefined>();
+  t.after(() => never.resolve(undefined));
+  proxy.callFault("job.finish", { hold: never.promise });
+  const shim = jl.installShim();
+  writeFileSync(shim.failTab, "");
+  jl.h.onModel(() => ({ tool: "run_long", args: { label: "gate", command: "echo gate" } }));
+  jl.h.onModel(() => ({ text: "The launch ended without its finish reply" }));
+  jl.worker();
+  await jl.h.waitFor((event) => event["type"] === "settled", "the launch to end");
+  assert.ok(proxy.replied.includes("job.finish"));
+  assert.equal(existsSync(shim.runs), false);
+});
+
+test("a legacy start whose receipt never arrives ends the launch without a retry or a tab", async (t) => {
+  const proxy = await legacyProxy(t);
+  const never = Promise.withResolvers<undefined>();
+  t.after(() => never.resolve(undefined));
+  proxy.callFault("job.start", { hold: never.promise });
+  const shim = jl.installShim();
+  jl.h.onModel(() => ({ tool: "run_long", args: { label: "gate", command: "echo gate" } }));
+  jl.h.onModel(() => ({ text: "The start receipt never arrived" }));
+  jl.worker();
+  await jl.h.waitFor((event) => event["type"] === "settled", "the launch to end");
+  assert.equal(proxy.calls.filter((op) => op === "job.start").length, 1);
+  assert.equal(existsSync(shim.creates), false);
 });
