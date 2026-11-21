@@ -5,6 +5,7 @@ import { arrangeHere } from "./arrange.ts";
 import { homeTransport } from "./home-transport.ts";
 import {
   codeRoot,
+  discoverLanes,
   existingHome,
   homeOf,
   laneHomes,
@@ -21,10 +22,15 @@ import { isRecord, parseLaneConfig, readLaneConfig, strings } from "./lane-confi
 import { checkLaneSecrets } from "./lane-secrets.ts";
 import { costRows } from "./cost.ts";
 import { setUpMemory } from "./memory.ts";
+import {
+  MAINTENANCE_OUTCOMES_CAPABILITY,
+  MAINTENANCE_OUTCOMES_OPTION,
+  MAINTENANCE_SWEEP_MS,
+} from "./maintenance-budget.ts";
 import { scratchLines } from "./scratch-command.ts";
 import { migrate, undoMigration } from "./migrate.ts";
-import { convergeSharedPreferences } from "./standing.ts";
-import { hostProblems } from "./prerequisites.ts";
+import { convergeSharedPreferences, PRESERVED_PREFIX } from "./standing.ts";
+import { eligibleLanes, hostProblems, newSnapshot, type SweepSnapshot } from "./prerequisites.ts";
 import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 
@@ -68,7 +74,21 @@ if (process.argv.slice(2).some((arg) => arg === "--token" || arg.startsWith("--t
   process.exit(2);
 }
 
-const cliArgs = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+if (rawArgs.length === 1 && rawArgs[0] === MAINTENANCE_OUTCOMES_OPTION) {
+  console.log(MAINTENANCE_OUTCOMES_CAPABILITY);
+  process.exit(0);
+}
+const offset = Number(rawArgs[4]);
+const typedMaintenance =
+  rawArgs.length === 5 &&
+  /^(?:0|[1-9]\d*)$/.test(rawArgs[4] ?? "") &&
+  Number.isSafeInteger(offset) &&
+  rawArgs[0] === "up" &&
+  rawArgs[1] === "--maintenance" &&
+  rawArgs[2] === "--json" &&
+  rawArgs[3] === MAINTENANCE_OUTCOMES_OPTION;
+const cliArgs = typedMaintenance ? rawArgs.slice(0, 3) : rawArgs;
 const placement =
   cliArgs.length === 3 &&
   cliArgs[0] === "status" &&
@@ -139,7 +159,6 @@ function parseCommandLine() {
 
 const { values, positionals } = parse();
 const [command, ...rest] = positionals;
-const root = codeRoot();
 
 const json = (text: string | undefined): unknown =>
   text === undefined ? undefined : JSON.parse(text);
@@ -213,6 +232,7 @@ function show(outcomes: readonly Outcome[]): void {
       running: `already running in ${mateTitle(lane)}`,
       held: `held: ${detail ?? ""}`,
       stopped: `stopped: ${detail ?? ""}`,
+      unread: "unknown (could not read the lane)",
     }[action];
     console.log(`${lane}: ${text}`);
   }
@@ -224,18 +244,53 @@ function lane(): string {
   return name;
 }
 
-if (command === "up" || command === "restart") {
+const maintenance = command === "up" && values.maintenance === true;
+const maintenanceDeadline = maintenance ? performance.now() + MAINTENANCE_SWEEP_MS : undefined;
+
+function checkLaunchPrerequisites(root: string, snapshot?: SweepSnapshot): void {
   if (values.host !== undefined) {
     console.error(USAGE);
     process.exit(2);
   }
-  const problems = hostProblems(root, values.maintenance !== true);
+  const problems = hostProblems(root, values.maintenance !== true, maintenanceDeadline, snapshot);
   if (problems.length > 0) {
+    if (typedMaintenance) throw new Error(problems.join("\n"));
     console.error(problems.join("\n"));
     process.exit(1);
   }
 }
 
+const writeReply = (text: string): Promise<void> =>
+  new Promise((resolve) => {
+    process.stdout.write(`${text}\n`, () => {
+      resolve();
+    });
+  });
+
+async function showTypedMaintenance(): Promise<void> {
+  const retained: string[] = [];
+  const withRetained = (failed: string | undefined): { failed?: string } => {
+    const all = [...(failed === undefined ? [] : [failed]), ...retained].join("\n");
+    return all === "" ? {} : { failed: all };
+  };
+  try {
+    const root = codeRoot(maintenanceDeadline);
+    const snapshot = newSnapshot(retained, discoverLanes(root));
+    checkLaunchPrerequisites(root, snapshot);
+    const result = await up(root, rest[0], maintenanceDeadline, offset, eligibleLanes(snapshot));
+    await writeReply(JSON.stringify({ ...result, ...withRetained(result.failed) }));
+  } catch (error) {
+    const failed = error instanceof Error ? error.message : String(error);
+    await writeReply(JSON.stringify({ ...withRetained(failed), expected: [], outcomes: [] }));
+  }
+}
+
+if (typedMaintenance) {
+  await showTypedMaintenance();
+  process.exit(0);
+}
+
+const root = codeRoot(maintenanceDeadline);
 switch (command ?? "") {
   case "status": {
     if (placement) {
@@ -251,17 +306,32 @@ switch (command ?? "") {
         );
     break;
   }
-  case "up":
-    show(await up(root, rest[0]));
+  case "up": {
+    checkLaunchPrerequisites(root);
+    const result = await up(root, rest[0], maintenanceDeadline);
+    const { outcomes, failed } = result;
+    if (maintenance && values.json === true) {
+      if (failed !== undefined) throw new Error(failed);
+      if (outcomes.some(({ action }) => action === "unread"))
+        throw new Error("maintenance could not read every lane");
+    }
+    show(outcomes);
+    if (failed !== undefined) throw new Error(failed);
     break;
+  }
   case "shared": {
     if (values.absent !== true && values.content === undefined) throw new Error(USAGE);
     const bytes =
       values.absent === true
         ? undefined
         : Buffer.from(values.content ?? "", "base64").toString("utf8");
-    for (const { lane: name, result } of convergeSharedPreferences(root, bytes))
+    const { results, failures, preserved } = convergeSharedPreferences(root, bytes);
+    for (const { lane: name, result } of results)
       console.log(`${name}: shared preferences ${result}`);
+    if (failures.length > 0)
+      throw new Error(
+        [...failures, ...preserved.map((line) => `${PRESERVED_PREFIX}${line}`)].join("\n"),
+      );
     break;
   }
   case "arrange": {
@@ -283,6 +353,7 @@ switch (command ?? "") {
     console.log(`${lane()}: stopped`);
     break;
   case "restart":
+    checkLaunchPrerequisites(root);
     show(await restart(root, rest[0]));
     break;
   case "home": {

@@ -83,8 +83,10 @@ test("a lane that runs is never reported as held for an old crash loop, and a la
   const pane = await heldThenStartedByHand();
 
   assert.equal(rowOf(["up"])?.["action"], "running");
-  assert.equal(stateOf(), "running");
-  assert.equal(rowOf(["status"])?.["reason"], undefined);
+  await until(() => {
+    const row = rowOf(["status"]);
+    return row?.["state"] === "running" && row["reason"] === undefined ? true : undefined;
+  }, "loopy to be reported running with no reason");
 
   const info = records([(await lab.run(["pane", "process-info", "--pane", pane]))["process_info"]]);
   process.kill(-Number(info[0]?.["foreground_process_group_id"]), "SIGKILL");

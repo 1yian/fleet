@@ -2,6 +2,7 @@ import { hostname } from "node:os";
 import { fleetHostName, routed } from "@fleet/protocol/route";
 import { type Detach, runOnTransport } from "@fleet/protocol/transport";
 import { spawnDetached } from "./detached.ts";
+import { remainingMs } from "./maintenance-budget.ts";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -9,6 +10,23 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 export class HostUnreachable extends Error {}
 
 export class NoTransport extends HostUnreachable {}
+
+export class HostCommandFailed extends Error {
+  readonly exitCode: number;
+  readonly hasOutput: boolean;
+
+  constructor(message: string, exitCode: number, hasOutput: boolean) {
+    super(message);
+    this.exitCode = exitCode;
+    this.hasOutput = hasOutput;
+  }
+}
+
+export class HostUnread extends Error {}
+
+class LaneServerMissing extends Error {}
+
+type LaneCommand = "observe" | "mutate";
 
 export class TimedOut extends Error {}
 
@@ -86,8 +104,9 @@ const serverMissing = (error: unknown): boolean =>
 
 let starting: Promise<void> | undefined;
 
-function startServer(session: string | undefined): Promise<void> {
+function startServer(session: string | undefined, limit?: number): Promise<void> {
   starting ??= (async () => {
+    if (remainingMs(limit) === 0) throw new HostUnread("maintenance deadline reached");
     const select = session === undefined ? [] : ["--session", session];
     const server = spawnDetached(
       "sh",
@@ -101,15 +120,21 @@ function startServer(session: string | undefined): Promise<void> {
     server.once("exit", () => {
       child.exited = true;
     });
-    const deadline = Date.now() + SERVER_WAIT_MS;
-    while (Date.now() < deadline) {
-      const up = await herdrOnce("local", ["workspace", "list"], true).then(
-        () => true,
-        (error: unknown) => !serverMissing(error),
-      );
+    const deadline = Math.min(performance.now() + SERVER_WAIT_MS, limit ?? Infinity);
+    while (remainingMs(deadline) > 0) {
+      const args = ["workspace", "list"];
+      const up = await (limit === undefined
+        ? herdrOnce("local", args, true).then(
+            () => true,
+            (error: unknown) => !serverMissing(error),
+          )
+        : laneHerdrOnce(args, "observe", deadline).then(
+            () => true,
+            () => false,
+          ));
       if (up) return;
       if (child.exited) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, Math.min(100, remainingMs(deadline))));
     }
     throw new Error("herdr server did not start");
   })().finally(() => {
@@ -132,6 +157,76 @@ export async function herdr(
   }
 }
 
+export async function laneHerdr(
+  args: readonly string[],
+  mode: LaneCommand,
+  deadline?: number,
+): Promise<Record<string, unknown>> {
+  try {
+    return await laneHerdrOnce(args, mode, deadline);
+  } catch (error) {
+    if (!(error instanceof LaneServerMissing)) throw error;
+    try {
+      await startServer(process.env["HERDR_SESSION"], deadline);
+      return await laneHerdrOnce(args, mode, deadline);
+    } catch (failure) {
+      if (mode === "observe" && failure instanceof Error && !(failure instanceof HostUnread))
+        throw new HostUnread(failure.message);
+      throw failure;
+    }
+  }
+}
+
+async function laneHerdrOnce(
+  args: readonly string[],
+  mode: LaneCommand,
+  deadline?: number,
+): Promise<Record<string, unknown>> {
+  const out = await herdrText("local", args, mode === "observe", mode, deadline);
+  if (mode === "mutate" && out.trim() === "") return {};
+  const reply = jsonRecord(out);
+  const refusal = laneRefusal(reply, args);
+  if (refusal !== undefined) throw refusal;
+  const result = reply?.["result"];
+  if (isRecord(result) && reply?.["error"] === undefined && acceptsLaneResult(args, mode, result))
+    return result;
+  const message = `herdr ${args.slice(0, 2).join(" ")} returned no complete result`;
+  throw mode === "observe" ? new HostUnread(message) : new Error(message);
+}
+
+const acceptsLaneResult = (
+  [noun, verb]: readonly string[],
+  mode: LaneCommand,
+  result: Record<string, unknown>,
+): boolean => mode !== "mutate" || noun !== "pane" || verb !== "run" || result["type"] === "ok";
+
+function jsonRecord(out: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(out);
+    return isRecord(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function laneRefusal(
+  reply: Record<string, unknown> | undefined,
+  [, verb]: readonly string[],
+): Error | undefined {
+  const error = reply?.["error"];
+  if (!isRecord(error) || reply?.["result"] !== undefined) return undefined;
+  if (typeof error["message"] !== "string" || error["message"].trim() === "") return undefined;
+  const message = scrub(error["message"]);
+  switch (error["code"]) {
+    case "pane_not_found":
+      return verb === "process-info" ? new HostUnread(message) : undefined;
+    case "server_not_running":
+      return new LaneServerMissing(message);
+    default:
+      return undefined;
+  }
+}
+
 async function herdrOnce(
   host: string,
   args: readonly string[],
@@ -143,7 +238,31 @@ async function herdrOnce(
 export const paneText = (host: string, pane: string): Promise<string> =>
   herdrText(host, ["pane", "read", pane, "--source", "recent-unwrapped", "--lines", "200"], false);
 
-async function herdrText(host: string, args: readonly string[], probe: boolean): Promise<string> {
+function laneTransportFailure(
+  lane: LaneCommand,
+  args: readonly string[],
+  error: { code?: unknown; signal?: unknown },
+  out: string,
+  err: string,
+): Error {
+  const refusal =
+    error.code === 1 ? laneRefusal(jsonRecord(out.trim() === "" ? err : out), args) : undefined;
+  if (refusal !== undefined) return refusal;
+  const message = scrub(
+    `herdr ${args.slice(0, 2).join(" ")} failed: ${err.trim() || exitStatus(error)}`,
+  );
+  return lane === "observe" ? new HostUnread(message) : new Error(message);
+}
+
+async function herdrText(
+  host: string,
+  args: readonly string[],
+  probe: boolean,
+  lane?: LaneCommand,
+  deadline?: number,
+): Promise<string> {
+  const timeout = Math.min(probe ? PROBE_TIMEOUT_MS : 120_000, remainingMs(deadline));
+  if (timeout === 0) throw new HostUnread("maintenance deadline reached");
   const session = process.env["HERDR_SESSION"];
   const split = args.includes("--") ? args.indexOf("--") : args.length;
   const select = session === undefined ? [] : ["--session", session];
@@ -154,9 +273,11 @@ async function herdrText(host: string, args: readonly string[], probe: boolean):
     runOnTransport(
       file,
       rest,
-      { timeout: probe ? PROBE_TIMEOUT_MS : 120_000 },
+      { timeout, ...(deadline === undefined ? {} : { detach: ownGroup, sharedRetryBudget: true }) },
       (error, out, err) => {
-        if (error !== null && out.trim() === "") {
+        if (error !== null && lane !== undefined) {
+          reject(laneTransportFailure(lane, args, error, out, err));
+        } else if (error !== null && out.trim() === "") {
           const message = `herdr ${args[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
           reject(failure(via, error, scrub(message), probe));
         } else resolve(out);
@@ -191,6 +312,7 @@ async function run(
   spawned: readonly string[],
   detach?: Detach,
   grace?: number,
+  sharedRetryBudget = false,
 ): Promise<string> {
   const via = transport(host);
   const [file = "", ...rest] = routed(via, spawned);
@@ -203,6 +325,7 @@ async function run(
         maxBuffer: 16 * 1024 * 1024,
         ...(detach === undefined ? {} : { detach }),
         ...(grace === undefined ? {} : { grace }),
+        sharedRetryBudget,
       },
       (error, out, err) => {
         if (error === null) resolve(out);
@@ -214,15 +337,24 @@ async function run(
           );
         else {
           const message = `${argv[0] ?? ""} on ${host} failed: ${err.trim() || exitStatus(error)}`;
-          reject(failure(via, error, scrub(message), false));
+          const failed = failure(via, error, scrub(message), false);
+          reject(
+            failed instanceof HostUnreachable || typeof error.code !== "number"
+              ? failed
+              : new HostCommandFailed(failed.message, error.code, out.trim() !== ""),
+          );
         }
       },
     );
   });
 }
 
-export const onHost = (host: string, argv: readonly string[], timeout = 600_000): Promise<string> =>
-  run(host, argv, timeout, argv);
+export const onHost = (
+  host: string,
+  argv: readonly string[],
+  timeout = 600_000,
+  hard = false,
+): Promise<string> => run(host, argv, timeout, argv, hard ? ownGroup : undefined, undefined, hard);
 
 export const onHelper = (
   host: string,
@@ -239,8 +371,9 @@ export function onFleetRoot(
   root: string | undefined,
   args: readonly string[],
   timeout?: number,
+  hard = false,
 ): Promise<string> {
-  return onHost(host, ["sh", "-c", FLEET_ON_ROOT, "fleet", root ?? "", ...args], timeout);
+  return onHost(host, ["sh", "-c", FLEET_ON_ROOT, "fleet", root ?? "", ...args], timeout, hard);
 }
 
 export const records = (value: unknown): Record<string, unknown>[] =>
@@ -306,7 +439,7 @@ async function foreground(
   };
 }
 
-function isPi(process: Record<string, unknown>): boolean {
+export function isPi(process: Record<string, unknown>): boolean {
   const argv = Array.isArray(process["argv"]) ? process["argv"] : [];
   const script = typeof argv[1] === "string" ? argv[1] : "";
   return (
@@ -336,8 +469,4 @@ export async function shellPid(host: string, pane: string): Promise<number | und
 export async function shellIdle(host: string, pane: string): Promise<boolean> {
   const { group, shell } = await foreground(host, pane);
   return group !== undefined && group === shell;
-}
-
-export async function paneMissing(host: string, pane: string): Promise<boolean> {
-  return (await foreground(host, pane)).missing;
 }

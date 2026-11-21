@@ -1,32 +1,22 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import Type from "typebox";
 import { costLine, DAY_MS, type CostRow } from "./cost.ts";
 import { DISK_CLEARED, DISK_MESSAGE, diskWatch, type Alert } from "./disk-alarm.ts";
-import { HostUnreachable, onFleetRoot, onHost, records } from "./host.ts";
+import { HostUnread, HostUnreachable, records } from "./host.ts";
 import { sidebarHostName } from "./arrange.ts";
 import type { Link } from "./link.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
-import { readShared } from "./standing.ts";
+import { fleet, maintenanceResult } from "./lane-maintenance-client.ts";
+import { PRESERVED_PREFIX, readShared } from "./standing.ts";
 import type { LaneRow } from "./views.ts";
 
-const LAUNCH = fileURLToPath(new URL("./launch.ts", import.meta.url));
-const REMOTE_WAIT_MS = 90_000;
+export { fleet } from "./lane-maintenance-client.ts";
+
 const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 
 export const hostsOf = (config: LaneConfig): string[] => ["local", ...Object.keys(config.hosts)];
-
-export async function fleet(
-  config: LaneConfig,
-  host: string,
-  args: readonly string[],
-  wait = REMOTE_WAIT_MS,
-): Promise<string> {
-  if (host === "local") return onHost(host, [process.execPath, LAUNCH, ...args], wait);
-  return onFleetRoot(host, config.roots[host], args, wait);
-}
 
 async function rows(
   config: LaneConfig,
@@ -126,6 +116,15 @@ const preservedLines = (host: string, out: string): string[] =>
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+function sharedFailure(host: string, error: unknown): { notes: string[]; failure: string } {
+  const lines = messageOf(error).split("\n");
+  const kept = (line: string): boolean => line.startsWith(PRESERVED_PREFIX);
+  return {
+    notes: lines.filter(kept).map((line) => `${line.slice(PRESERVED_PREFIX.length)} (on ${host})`),
+    failure: lines.filter((line) => !kept(line)).join("\n"),
+  };
+}
+
 export async function publishShared(home: string): Promise<string | undefined> {
   const config = readLaneConfig(home);
   if (config === undefined) return undefined;
@@ -135,7 +134,9 @@ export async function publishShared(home: string): Promise<string | undefined> {
     try {
       notes.push(...preservedLines(host, await fleet(config, host, sharedArgs(home))));
     } catch (error) {
-      failures.push(`${host}: ${messageOf(error)}`);
+      const { notes: kept, failure } = sharedFailure(host, error);
+      notes.push(...kept);
+      failures.push(`${host}: ${failure}`);
     }
   }
   if (failures.length > 0) notes.push(`Shared preferences did not reach ${failures.join("; ")}`);
@@ -188,9 +189,7 @@ async function restartAll(config: LaneConfig): Promise<string[]> {
     try {
       for (const row of await rows(config, host, ["restart"])) lines.push(describe(host, row));
     } catch (error) {
-      lines.push(
-        `${host}: cannot be reached - ${error instanceof Error ? error.message : String(error)}`,
-      );
+      lines.push(`${host}: cannot be reached - ${messageOf(error)}`);
     }
   }
   return lines.length === 0 ? ["No lanes are configured."] : lines;
@@ -353,6 +352,8 @@ function keepRunning(
   ctx: ExtensionContext,
 ): void {
   const unreachable = new Set<string>();
+  const maintenanceFailures = new Map<string, string>();
+  const sweepOffsets = new Map<string, number>();
   const unshared = new Set<string>();
   const supervising = new Set<string>();
   let shutDown = false;
@@ -367,22 +368,33 @@ function keepRunning(
       if (unshared.delete(host)) tell([`shared preferences reach ${host} again`], false);
     } catch (error) {
       if (error instanceof HostUnreachable) throw error;
+      const { notes, failure } = sharedFailure(host, error);
+      tell(notes, false);
       if (unshared.has(host)) return;
       unshared.add(host);
-      tell([`shared preferences did not reach ${host}: ${messageOf(error)}`], false);
+      tell([`shared preferences did not reach ${host}: ${failure}`], false);
     }
   };
   const watchDisk = diskWatcher(pi, config, ctx, isDown);
-  const reportDown = (host: string, error: unknown): void => {
-    if (unreachable.has(host)) return;
-    unreachable.add(host);
-    const why = error instanceof HostUnreachable ? "cannot be reached" : "failed";
-    tell([`${host} ${why}: ${messageOf(error)}`], true);
+  const reportDown = (host: string, error: unknown, failures: Map<string, string>): void => {
+    if (error instanceof HostUnread) return;
+    const message = messageOf(error);
+    if (error instanceof HostUnreachable) {
+      if (unreachable.has(host)) return;
+      unreachable.add(host);
+      tell([`${host} cannot be reached: ${message}`], true);
+    } else if (failures.get(host) !== message) {
+      failures.set(host, message);
+      tell([`${host} failed: ${message}`], true);
+    }
   };
   const maintain = async (host: string): Promise<void> => {
     await share(host);
-    const out = await rows(config, host, ["up", "--maintenance"]);
-    if (unreachable.delete(host)) tell([`${host} can be reached again`], false);
+    const { results: out, failed } = await maintenanceResult(config, host, sweepOffsets);
+    if (failed === undefined && out.every((row) => row["action"] !== "unread")) {
+      maintenanceFailures.delete(host);
+      if (unreachable.delete(host)) tell([`${host} can be reached again`], false);
+    }
     const of = (action: string) => out.filter((row) => text(row, "action") === action);
     tell(
       of("started").map((row) => `${text(row, "lane")} started on ${host}`),
@@ -391,18 +403,22 @@ function keepRunning(
     const held = (row: Record<string, unknown>) =>
       `${text(row, "lane")} on ${host} is held: ${text(row, "detail")}`;
     tell(of("held").map(held), true);
+    if (failed !== undefined) throw new Error(failed);
   };
   const checkHost = async (host: string): Promise<void> => {
     try {
       await maintain(host);
     } catch (error) {
-      reportDown(host, error);
+      reportDown(host, error, maintenanceFailures);
       if (error instanceof HostUnreachable) return;
     }
     try {
       await watchDisk(host);
     } catch (error) {
-      reportDown(host, error);
+      if (unreachable.has(host)) return;
+      unreachable.add(host);
+      const why = error instanceof HostUnreachable ? "cannot be reached" : "failed";
+      tell([`${host} ${why}: ${messageOf(error)}`], true);
     }
   };
   const superviseHost = async (host: string): Promise<void> => {

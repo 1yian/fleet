@@ -30,8 +30,9 @@ async function mergedReport(url: string): Promise<{ card: Card; report: Entry }>
     CardSchema,
     await main.call("card.new", { title: "ship it", kind: "ship", project: "cnp" }),
   );
-  const worker = await cardd.connect(await begin(main, card, "the task", "maverick"));
-  await worker.call("report", { status: "merged", text: "merged", pr: url });
+  const token = await begin(main, card, "the task", "maverick");
+  const response = await cardd.post(token, "report", { status: "merged", text: "merged", pr: url });
+  assert.equal(response.status, 200);
   const report = await main.waitForEntry(
     (entry) => entry.card === card.id && entry.kind === "report",
     "the report",
@@ -53,6 +54,22 @@ test("a merged report is verified on a host whose ssh master refuses file descri
     [false, true],
   );
   assert.equal(ssh.calls()[0]?.command, ssh.calls()[1]?.command);
+});
+
+test("merge verification gives the direct SSH fallback its full timeout", async () => {
+  const pr = "https://github.com/cnp/site/pull/4";
+  cardd.gh.setPr(pr, "MERGED");
+  ssh.mode = "wedged";
+  ssh.delayBothAttempts(32_000);
+
+  const { report } = await mergedReport(pr);
+
+  assert.equal(report.fields["status"], "merged");
+  assert.equal(report.fields["merged"], true);
+  assert.deepEqual(
+    ssh.calls().map((call) => call.direct),
+    [false, true],
+  );
 });
 
 test("a merged report is not replayed when ssh fell back to a direct connection by itself and the connection then dropped", async () => {

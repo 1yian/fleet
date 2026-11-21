@@ -5,6 +5,16 @@ import { pathWithout } from "./tool-stubs.ts";
 const [marker = "", command = ""] = process.argv.slice(2);
 const faults = existsSync(marker) ? readFileSync(marker, "utf8").split("\n") : [];
 const env = { ...process.env };
+if (command.includes("'status' '--placement'")) {
+  if (faults.includes("placement-object")) {
+    console.log("{}");
+    process.exit(0);
+  }
+  if (faults.includes("placement-non-record")) {
+    console.log("[null]");
+    process.exit(0);
+  }
+}
 if (faults.includes("restart-lacks-direnv") && command.includes("'restart'"))
   env["PATH"] = pathWithout("direnv");
 if (faults.includes("arrange-lacks-session") && command.includes("'arrange'"))

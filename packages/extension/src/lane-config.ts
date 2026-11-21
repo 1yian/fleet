@@ -1,6 +1,14 @@
-import { readFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { isUuid, type BwsConfig } from "./bws.ts";
 
 export interface CarddConfig {
@@ -141,7 +149,8 @@ export function parseLaneConfig(file: string, config: unknown): LaneConfig {
   if (!isRecord(config)) throw new Error(`${file} is not a JSON object`);
   const { lane, url } = config;
   const secrets = credentials(file, config);
-  if (typeof lane !== "string" || typeof url !== "string") throw new Error(`${file} ${NEEDS}`);
+  if (typeof lane !== "string" || lane.trim() === "" || typeof url !== "string")
+    throw new Error(`${file} ${NEEDS}`);
   const folder = direnvFolder(file, config["direnv"]);
   const cardd = carddConfig(file, config["cardd"]);
   const own = ownHost(file, config["host"]);
@@ -166,15 +175,61 @@ export function exportHosts(lane: LaneConfig): void {
   process.env["FLEET_ROOTS"] ??= JSON.stringify(lane.roots);
 }
 
+export function isAbsent(file: string, error: unknown): boolean {
+  if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) return false;
+  try {
+    if (lstatSync(file, { throwIfNoEntry: false }) !== undefined) return false;
+    return hasReadableAncestor(file);
+  } catch {
+    return false;
+  }
+}
+
+function hasReadableAncestor(path: string): boolean {
+  const parent = dirname(path);
+  if (parent === path) return false;
+  const entry = lstatSync(parent, { throwIfNoEntry: false });
+  if (entry === undefined) return hasReadableAncestor(parent);
+  return entry.isSymbolicLink() ? statSync(parent).isDirectory() : entry.isDirectory();
+}
+
+export function readRegular(file: string): string {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const kind = fstatSync(fd);
+    if (!kind.isFile() && !kind.isDirectory())
+      throw Object.assign(new Error(`${file} is not a regular file`), { code: "ENOTREGULAR" });
+    return readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export function verifyRegular(file: string): void {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    if (!fstatSync(fd).isFile())
+      throw Object.assign(new Error(`${file} is not a regular file`), { code: "ENOTREGULAR" });
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function readLaneConfig(home: string): LaneConfig | undefined {
   const file = join(home, LANE_FILE);
   let text: string;
   try {
-    text = readFileSync(file, "utf8");
-  } catch {
-    return undefined;
+    text = readRegular(file);
+  } catch (error) {
+    if (isAbsent(file, error)) return undefined;
+    throw error;
   }
-  const config: unknown = JSON.parse(text);
+  let config: unknown;
+  try {
+    config = JSON.parse(text);
+  } catch {
+    throw new Error(`${file} is not valid JSON`);
+  }
   return parseLaneConfig(file, config);
 }
 
