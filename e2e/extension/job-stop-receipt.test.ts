@@ -108,8 +108,27 @@ test("a generic stop receipt for a lost job keeps the pending dispatch reconcila
     (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
     "the loss notice",
   );
+  await until(
+    () => (proxy.calls.includes("job.running") ? true : undefined),
+    "the loss notice's exact read to be sent and fail",
+  );
+  const settles = (): number => jl.h.events.filter((event) => event["type"] === "settled").length;
+  const checkFrom = proxy.activities.length;
+  const checkBase = settles();
+  jl.h.onModel(() => ({ text: "Still waiting on the lost job" }));
+  pi.prompt("Check the gate job");
+  await jl.h.waitForNth(
+    (event) => event["type"] === "settled",
+    checkBase + 1,
+    "the worker to settle after the failed exact read",
+  );
+  const before = await until(
+    () => proxy.activities.slice(checkFrom).findLast((state) => state !== "running"),
+    "the worker's settled activity before the stop",
+  );
+  assert.equal(before, "waiting");
   const quiet = proxy.activities.length;
-  const base = jl.h.events.filter((event) => event["type"] === "settled").length;
+  const base = settles();
   jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
   jl.h.onModel(() => ({ text: "The job is already lost" }));
   pi.prompt("Stop the gate job");

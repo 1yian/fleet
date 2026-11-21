@@ -55,6 +55,18 @@ function runsOf(db: DatabaseSync, card: number): Run[] {
     }));
 }
 
+function modernJobs(db: DatabaseSync, card: number): ReadonlySet<number> {
+  return new Set(
+    db
+      .prepare(
+        `SELECT j.id AS id FROM jobs j JOIN attempts a ON a.id = j.attempt
+         WHERE a.card = ? AND j.launch_id IS NOT NULL`,
+      )
+      .all(card)
+      .map((row) => Number(row["id"])),
+  );
+}
+
 function repeatedReports(entries: readonly Entry[]): ReadonlySet<number> {
   const repeated = new Set<number>();
   let before: unknown;
@@ -109,9 +121,12 @@ export function movementOf(db: DatabaseSync, { card, entries }: Loaded): Movemen
   const base = Math.max(card.createdAt, changed, progressAt(db, card.id));
   const unstarted = new Set(entries.filter(noStart).map((entry) => Number(entry.fields["job"])));
   const runs = runsOf(db, card.id).filter((run) => !unstarted.has(run.id));
-  const completions = entries.filter(
-    (entry) => completion(entry) && !unstarted.has(Number(entry.fields["job"])),
-  );
+  const modern = modernJobs(db, card.id);
+  const completions = entries.filter((entry) => {
+    const job = Number(entry.fields["job"]);
+    if (!completion(entry) || unstarted.has(job)) return false;
+    return !modern.has(job) || typeof entry.fields["exitCode"] === "number";
+  });
   const differs = changedExits(completions, runs);
   const exitAt = completions.findLast((entry) => differs.has(entry.id))?.createdAt ?? 0;
   const again = startedAgain(runs, Math.max(base, exitAt));

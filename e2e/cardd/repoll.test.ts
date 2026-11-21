@@ -252,6 +252,8 @@ test("a revival before a wrapper's no-start result does not advance card movemen
       entry.fields["revived"] === true,
     "the wrapper's revival",
   );
+  const revived = await pulseOf(card);
+  assert.equal(revived.movedAt, before.movedAt);
   await worker.call("job.finish", {
     job,
     exitCode: 127,
