@@ -4,7 +4,7 @@ import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { ghLogin, type GhRun } from "./gh-login.ts";
 import { discoverLanes, type Discovery } from "./lane-homes.ts";
-import { isRecord, readLaneConfig, readRegular } from "./lane-config.ts";
+import { isAbsent, isRecord, readLaneConfig, readRegular } from "./lane-config.ts";
 import { remainingMs } from "./maintenance-budget.ts";
 
 interface Tool {
@@ -174,7 +174,57 @@ export function profileOf(home: string, settings: Record<string, unknown>): stri
 
 export interface SweepSnapshot {
   readonly retained: string[];
+  readonly unreadable: Map<string, string>;
   readonly discovered: Discovery;
+}
+
+export const eligibleLanes = ({ discovered, unreadable }: SweepSnapshot): Discovery => ({
+  homes: discovered.homes.filter(({ lane }) => !unreadable.has(lane)),
+  unread: [...discovered.unread, ...[...unreadable].map(([lane, message]) => ({ lane, message }))],
+});
+
+function strictSettings(home: string): Record<string, unknown> | undefined {
+  const file = join(home, "config", "optchat.json");
+  let text: string;
+  try {
+    text = readRegular(file);
+  } catch (error) {
+    if (isAbsent(file, error)) return undefined;
+    throw error;
+  }
+  try {
+    const found: unknown = JSON.parse(text);
+    return isRecord(found) ? found : {};
+  } catch {
+    return {};
+  }
+}
+
+function memoryProblem(
+  root: string,
+  host: string,
+  home: { lane: string; home: string },
+  snapshot?: SweepSnapshot,
+): string[] {
+  let settings: Record<string, unknown> | undefined;
+  try {
+    settings = snapshot === undefined ? settingsOf(home.home) : strictSettings(home.home);
+  } catch (error) {
+    if (snapshot === undefined) throw error;
+    const why = error instanceof Error ? error.message : String(error);
+    if (home.home === root)
+      snapshot.retained.push(`optchat settings of lane ${home.lane} could not be read: ${why}`);
+    else snapshot.unreadable.set(home.lane, `optchat settings could not be read: ${why}`);
+    return [];
+  }
+  if (settings === undefined || settings["enabled"] === false) return [];
+  const profile = profileOf(home.home, settings);
+  const missing = PROFILE_FILES.filter((file) => !existsSync(join(profile, file)));
+  if (missing.length === 0) return [];
+  const fix = `Fix: ${join(root, "bin", "fleet")} home memory ${home.lane}`;
+  return [
+    `optchat of lane ${home.lane} has no ${missing.join(" and ")} in profile ${profile} on ${host}. ${fix}`,
+  ];
 }
 
 function memoryProblems(root: string, host: string, snapshot?: SweepSnapshot): string[] {
@@ -191,17 +241,7 @@ function memoryProblems(root: string, host: string, snapshot?: SweepSnapshot): s
     ...(main === undefined ? [] : [{ lane: main.lane, home: root }]),
     ...(snapshot?.discovered ?? discoverLanes(root)).homes,
   ];
-  return homes.flatMap(({ lane, home }) => {
-    const settings = settingsOf(home);
-    if (settings === undefined || settings["enabled"] === false) return [];
-    const profile = profileOf(home, settings);
-    const missing = PROFILE_FILES.filter((file) => !existsSync(join(profile, file)));
-    if (missing.length === 0) return [];
-    const fix = `Fix: ${join(root, "bin", "fleet")} home memory ${lane}`;
-    return [
-      `optchat of lane ${lane} has no ${missing.join(" and ")} in profile ${profile} on ${host}. ${fix}`,
-    ];
-  });
+  return homes.flatMap((each) => memoryProblem(root, host, each, snapshot));
 }
 
 export const bunProblems = (): string[] => [toolProblem(BUN, hostname(), false) ?? []].flat();

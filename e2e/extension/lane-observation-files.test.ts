@@ -285,6 +285,39 @@ test("a lane config that is a writerless FIFO is unread without blocking a healt
   assert.equal(await workspace("fix"), undefined);
 });
 
+test("unreadable optchat settings leave only that lane unread while a healthy sibling starts", async () => {
+  const fix = addLane("fix");
+  const settings = join(fix, "config", "optchat.json");
+  const missing = join(here.parent, "missing-settings");
+  for (const make of [
+    () => {
+      execFileSync("mkfifo", [settings]);
+    },
+    () => {
+      symlinkSync(missing, settings);
+    },
+  ]) {
+    rmSync(settings, { force: true });
+    make();
+    const reply: unknown = JSON.parse(fleet(typedMaintenance));
+    assert.ok(isRecord(reply));
+    assert.deepEqual(reply["expected"], ["ops", "fix"]);
+    assert.match(
+      String(reply["failed"]),
+      /lane fix could not be read: .*optchat settings could not be read/,
+    );
+    assert.doesNotMatch(String(reply["failed"]), /has no AGENTS\.md/);
+    assert.deepEqual(
+      records(reply["outcomes"]).filter((row) => row["lane"] === "fix"),
+      [],
+    );
+    assert.equal(await workspace("fix"), undefined);
+    assert.equal(existsSync(join(fix, "state", "starts")), false);
+  }
+  const ops = await workspace("ops");
+  assert.equal(typeof ops?.["workspace_id"], "string");
+});
+
 test("a malformed legacy row does not hide a valid current-title workspace", async () => {
   const home = lane();
   await idlePane("ops", home);

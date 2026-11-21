@@ -94,6 +94,9 @@ case "$1 $2:$HERDR_FAULT" in
       printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
+  'pane run:split-after-create'|'workspace close:split-after-create')
+    printf '%s %s\\n' "$1" "$2" >> "$HERDR_FAULT_LOG.mutations"
+    ;;
   'workspace create:split-after-create')
     reply=$("$REAL_HERDR" "$@") || exit $?
     pane=$(printf '%s' "$reply" | node -e '
@@ -336,6 +339,15 @@ async function workspace(lane: string): Promise<JsonRecord | undefined> {
   );
 }
 
+async function untilRunning(lane: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const rows: unknown = JSON.parse(fleet(["status", "--json"]));
+    if (records(rows).some((row) => row["lane"] === lane && row["state"] === "running")) return;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  assert.fail(`${lane} never became running`);
+}
+
 const action = (lane: string, value: string) => [{ lane, action: value }];
 
 async function idlePane(lane: string, home: string, title = `2ndmate-${lane}`): Promise<string> {
@@ -368,6 +380,7 @@ export {
   maintenanceOutcomes,
   maintain,
   workspace,
+  untilRunning,
   action,
   idlePane,
 };

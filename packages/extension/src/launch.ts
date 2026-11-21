@@ -30,7 +30,7 @@ import {
 import { scratchLines } from "./scratch-command.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 import { convergeSharedPreferences, PRESERVED_PREFIX } from "./standing.ts";
-import { hostProblems, type SweepSnapshot } from "./prerequisites.ts";
+import { eligibleLanes, hostProblems, type SweepSnapshot } from "./prerequisites.ts";
 import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 
@@ -275,9 +275,13 @@ async function showTypedMaintenance(): Promise<void> {
   };
   try {
     const root = codeRoot(maintenanceDeadline);
-    const snapshot = { retained, discovered: discoverLanes(root) };
+    const snapshot = {
+      retained,
+      unreadable: new Map<string, string>(),
+      discovered: discoverLanes(root),
+    };
     checkLaunchPrerequisites(root, snapshot);
-    const result = await up(root, rest[0], maintenanceDeadline, offset, snapshot.discovered);
+    const result = await up(root, rest[0], maintenanceDeadline, offset, eligibleLanes(snapshot));
     await writeReply(JSON.stringify({ ...result, ...withRetained(result.failed) }));
   } catch (error) {
     const failed = error instanceof Error ? error.message : String(error);

@@ -17,6 +17,7 @@ import {
   maintenanceOutcomes,
   maintain,
   workspace,
+  untilRunning,
   action,
   idlePane,
 } from "../support/lane-observation-lab.ts";
@@ -169,6 +170,7 @@ test("maintenance returns a completed start even when the next lane cannot be re
     ...action("ops", "started"),
     ...action("zz", "unread"),
   ]);
+  await untilRunning("ops");
   assert.deepEqual(maintain("server-missing", String(pane)), [
     ...action("ops", "running"),
     ...action("zz", "unread"),
