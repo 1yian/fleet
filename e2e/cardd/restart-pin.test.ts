@@ -68,3 +68,37 @@ for (const order of [
     assert.equal(await pinOf(), PIN_A);
   });
 }
+
+test("refunding an ordinary restart keeps the model pin a completed incident replacement set", async () => {
+  await fleet.main.call("attempt.begin", {
+    card: card.id,
+    host: "maverick",
+    task: "Review Spanish copy",
+    model: PIN_A,
+  });
+  const { token } = check(
+    OPS["attempt.resume"].result,
+    await fleet.main.call("attempt.resume", { card: card.id }),
+  );
+  const first = await fleet.cardd.connect(token);
+  const { incident } = check(
+    OPS["incident.report"].result,
+    await first.call("incident.report", { error: "unknown model failure" }),
+  );
+  await first.close();
+  await fleet.main.call("card.restart", {
+    card: card.id,
+    incident,
+    generation: 1,
+    mode: "replace",
+    key: "recovery",
+    model: PIN_C,
+  });
+  fleet.cardd.startNewProcess(token);
+  await fleet.cardd.connect(token);
+  assert.equal(await pinOf(), PIN_C);
+  const request = requestOf(await restartWithModel("ordinary", "tier/other"));
+  assert.equal(await pinOf(), "tier/other");
+  assert.deepEqual(await restartFailed("ordinary", request), { recorded: true });
+  assert.equal(await pinOf(), PIN_C);
+});

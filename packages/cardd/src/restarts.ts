@@ -127,7 +127,10 @@ function restorePin(db: DatabaseSync, lane: string, card: number, request: numbe
     )
     .all(card);
   if (!rows.some((row) => row["request"] === request && typeof row["to"] === "string")) return;
-  const refunded = new Set([request, ...rows.map((row) => row["refunded"])]);
+  const refunded = new Set<unknown>([
+    request,
+    ...rows.map((row) => row["refunded"]).filter((value) => typeof value === "number"),
+  ]);
   const pins = rows.filter((row) => typeof row["to"] === "string");
   const first = pins[0];
   const last = pins.findLast((row) => !refunded.has(row["request"]));
