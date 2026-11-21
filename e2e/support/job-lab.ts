@@ -172,7 +172,7 @@ export class JobLab {
       keys: join(this.jobDir, "pane-keys"),
       failTab: join(this.jobDir, "fail-tab-create"),
       holdContain: join(this.jobDir, "hold-contain"),
-      holdLookup: join(this.jobDir, "hold-lookup"),
+      noTabId: join(this.jobDir, "no-tab-id"),
       release: join(this.jobDir, "release-dispatch"),
     };
     const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
@@ -183,13 +183,17 @@ hold() {
   if mv "$1" "$1.taken" 2>/dev/null; then echo held >> "$1.log"; cat "$1.taken" > /dev/null; fi
 }
 if [ "$1 $2" = 'pane process-info' ]; then hold ${quote(logs.holdContain)}; fi
-if [ "$1 $2" = 'tab list' ]; then hold ${quote(logs.holdLookup)}; fi
 if [ "$1 $2" = 'tab close' ]; then
   echo "$3" >> ${quote(logs.closes)}
 fi
 if [ "$1 $2" = 'tab create' ]; then
   echo tab >> ${quote(logs.creates)}
   if [ -e ${quote(logs.failTab)} ]; then echo 'tab create refused' >&2; exit 1; fi
+  if [ -e ${quote(logs.noTabId)} ]; then
+    out=$(${quote(herdr)} "$@") || exit $?
+    echo "$out" | sed 's/"tab_id"/"tab_ref"/g'
+    exit 0
+  fi
 fi
 if [ "$1 $2" = 'pane send-keys' ]; then
   echo "$3" >> ${quote(logs.keys)}

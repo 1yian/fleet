@@ -13,7 +13,7 @@ import Value from "typebox/value";
 import { joinContained } from "./containment.ts";
 import { field, herdr, records, rootPane } from "./host.ts";
 import { JobFiles } from "./job-files.ts";
-import { confirmLegacyStop, jobHandshake } from "./job-http.ts";
+import { jobHandshake } from "./job-http.ts";
 import type { Link } from "./link.ts";
 import { forwardedEnvironment } from "./scratch.ts";
 
@@ -93,8 +93,6 @@ export class Jobs {
   private readonly files: JobFiles;
   private readonly cancelledJobs = new Set<number>();
   private readonly ownedTabs = new Map<number, string>();
-  private readonly localLegacy = new Set<number>();
-  private readonly legacyLabels = new Map<string, number>();
   private readonly dispatching = new Set<number>();
   private readonly link: Link;
   private readonly endpoint: { url: string; token: string };
@@ -290,24 +288,12 @@ export class Jobs {
         receipt.error === "unknown operation job.prepare"
       )
         return {
-          ...(await this.legacyStart(label, command)),
+          ...(await this.link.call("job.start", { label, command })),
           registeredLaunch: false,
         };
       throw new Error(receipt.error);
     }
     throw new Error(`Could not confirm the reservation for ${label}; no command was launched`);
-  }
-
-  private legacyStart(label: string, command: string) {
-    this.legacyLabels.set(label, (this.legacyLabels.get(label) ?? 0) + 1);
-    return this.link.call("job.start", { label, command });
-  }
-
-  private admitLegacy(job: number, label: string): void {
-    this.localLegacy.add(job);
-    const open = (this.legacyLabels.get(label) ?? 1) - 1;
-    if (open > 0) this.legacyLabels.set(label, open);
-    else this.legacyLabels.delete(label);
   }
 
   async launch(
@@ -329,7 +315,6 @@ export class Jobs {
     );
     this.preparing.delete(id);
     if (registeredLaunch) this.launches.set(job, id);
-    else this.admitLegacy(job, label);
     const early = preparing.fences.get(job);
     if (early !== undefined) {
       this.observeResult(early);
@@ -376,14 +361,12 @@ export class Jobs {
         ...forwardedEnvironment(process.env).flatMap((pair) => ["--env", pair]),
       ]);
       const tabId = field(records([created["tab"]])[0], "tab_id");
-      if (pending !== undefined) {
-        if (tabId === undefined) throw new Error("herdr did not return the job tab ID");
-        if (pending.fenced) {
-          void this.closeStartupTab(job, tabId);
-          throw new Error(`Job ${String(job)} was fenced before dispatch`);
-        }
+      if (tabId === undefined) throw new Error("herdr did not return the job tab ID");
+      if (pending?.fenced === true) {
+        void this.closeStartupTab(job, tabId);
+        throw new Error(`Job ${String(job)} was fenced before dispatch`);
       }
-      if (tabId !== undefined) this.ownedTabs.set(job, tabId);
+      this.ownedTabs.set(job, tabId);
       const pane = rootPane(created);
       await joinContained("local", pane, process.cwd());
       if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced before dispatch`);
@@ -450,13 +433,11 @@ export class Jobs {
     if (workspace === undefined) throw new Error("stop_job needs a worker inside a herdr pane");
     const before = this.revisions.get(job);
     const noticed = this.lastResult.get(job);
-    const known = this.ownedTabs.get(job);
     const stale = (): boolean =>
       this.revisions.get(job) !== before || this.lastResult.get(job) !== noticed;
     const receipt = await this.link.call("job.stop", { job });
     const { label, running } = receipt;
     const cancelled = "cancelled" in receipt && receipt.cancelled === true;
-    const legacy = "legacy" in receipt && receipt.legacy === true;
     if (running) this.launches.delete(job);
     const named = `job ${String(job)} (${label})`;
     const superseded = `${named}: no interrupt was sent, and this reply was superseded by newer news about the job.`;
@@ -478,36 +459,21 @@ export class Jobs {
       return current ? `${named} is not running: nothing to stop.` : superseded;
     }
     if (stale()) return superseded;
-    const starting = `${named} is still starting in this worker, so nothing was signalled.`;
-    const blocked = (): boolean =>
-      ((this.launching.has(job) || this.localLegacy.has(job)) && !this.dispatching.has(job)) ||
-      (this.ownedTabs.get(job) === undefined && this.legacyLabels.has(label));
-    if (blocked()) return starting;
-    let tab = known ?? this.ownedTabs.get(job);
-    if (tab === undefined) {
-      if (!legacy && !(await confirmLegacyStop(this.endpoint, job, label)))
-        return `${named} has no verified tab ID in this worker session, so nothing was signalled.`;
-      const tabs = records(
-        (await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"],
-      );
-      if (stale()) return superseded;
-      tab = this.ownedTabs.get(job);
-      if (tab === undefined) {
-        const matches = tabs.filter((each) => each["label"] === tabName(job, label));
-        if (matches.length > 1)
-          return `${named} has multiple matching tabs and no known tab ID, so nothing was signalled.`;
-        tab = field(matches[0], "tab_id");
-      }
-    }
+    const tab = this.ownedTabs.get(job);
+    const ready = (): boolean =>
+      tab !== undefined && this.ownedTabs.get(job) === tab && this.dispatching.has(job);
+    const refusal = (): string =>
+      this.launching.has(job)
+        ? `${named} is still starting in this worker, so nothing was signalled.`
+        : `${named} has no verified tab ID in this worker session, so nothing was signalled. After a worker replacement its tab cannot be proven, and a tab name is never used as proof.`;
+    if (!ready()) return refusal();
     const panes = records(
       (await herdr("local", ["pane", "list", "--workspace", workspace]))["panes"],
     );
     if (stale()) return superseded;
-    if (blocked()) return starting;
-    const owned = this.ownedTabs.get(job);
-    if (owned !== undefined && owned !== tab) return starting;
+    if (!ready()) return refusal();
     const pane = field(
-      panes.find((each) => tab !== undefined && each["tab_id"] === tab),
+      panes.find((each) => each["tab_id"] === tab),
       "pane_id",
     );
     if (pane === undefined)

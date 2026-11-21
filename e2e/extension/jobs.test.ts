@@ -2224,7 +2224,7 @@ test("a job keeps running across a worker restart, and its result arrives once",
 });
 
 for (const kind of ["legacy", "registered", "replaced connection"] as const) {
-  test(`stop after reload ${kind === "legacy" ? "still finds a confirmed legacy job" : `refuses a registered job without its exact tab ID (${kind})`}`, async (t) => {
+  test(`stop after reload refuses a ${kind} job without its exact tab ID`, async (t) => {
     const legacy = kind === "legacy";
     if (kind !== "registered") {
       await jobProxy(t, async (op, args) => {
@@ -2272,32 +2272,23 @@ for (const kind of ["legacy", "registered", "replaced connection"] as const) {
     h.onModel(() => ({ tool: "report", args: { status: "done", text: "Reload test finished" } }));
     pi.prompt("Stop the job after reloading");
     await h.waitForCall(3);
-    if (legacy) {
-      assert.ok(said("Sent a stop to job 1 (reload)"));
-      await h.waitForNth(
-        (event) => event["type"] === "fleet_delivered",
-        2,
-        "the legacy stop result",
-      );
-      assert.deepEqual(await jobResults(), [[1, 130, "interrupted"]]);
-    } else {
-      assert.ok(said("has no verified tab ID in this worker session, so nothing was signalled"));
-      assert.equal(said("Sent a stop to job 1 (reload)"), false);
-      assert.ok(
-        (await tabsInWorkspace()).some(
-          (each) => each["tab_id"] === tab && each["label"] === "actual-job",
-        ),
-      );
-      assert.ok((await tabsInWorkspace()).some((each) => each["label"] === "job-1-reload"));
-      assert.deepEqual(await jobResults(), []);
-      writeFileSync(go, "");
-      await h.waitForNth(
-        (event) => event["type"] === "fleet_delivered",
-        2,
-        "the untouched job's result",
-      );
-      assert.deepEqual(await jobResults(), [[1, 0, "late"]]);
-    }
+    assert.ok(said("has no verified tab ID in this worker session, so nothing was signalled"));
+    assert.equal(said("Sent a stop to job 1 (reload)"), false);
+    assert.ok(
+      (await tabsInWorkspace()).some(
+        (each) =>
+          each["tab_id"] === tab && each["label"] === (legacy ? "job-1-reload" : "actual-job"),
+      ),
+    );
+    assert.ok((await tabsInWorkspace()).some((each) => each["label"] === "job-1-reload"));
+    assert.deepEqual(await jobResults(), []);
+    writeFileSync(go, "");
+    await h.waitForNth(
+      (event) => event["type"] === "fleet_delivered",
+      2,
+      "the untouched job's result",
+    );
+    assert.deepEqual(await jobResults(), [[1, 0, "late"]]);
   });
 }
 

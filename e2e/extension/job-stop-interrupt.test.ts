@@ -151,9 +151,9 @@ const makeDecoy = () =>
     "--no-focus",
   ]);
 
-const STILL_STARTING = {
+const NO_TAB = {
   type: "text",
-  text: "job 1 (gate) is still starting in this worker, so nothing was signalled.",
+  text: "job 1 (gate) has no verified tab ID in this worker session, so nothing was signalled. After a worker replacement its tab cannot be proven, and a tab name is never used as proof.",
 };
 
 test("a stop that overtakes the legacy start receipt signals no same-named decoy", async (t) => {
@@ -179,23 +179,14 @@ test("a stop that overtakes the legacy start receipt signals no same-named decoy
   );
   stopAnswered.resolve(undefined);
   assert.equal(stopped["isError"], false);
-  assert.deepEqual(stopped["content"], [STILL_STARTING]);
+  assert.deepEqual(stopped["content"], [NO_TAB]);
   assert.equal(existsSync(shim.keys), false);
 });
 
-test("a stop from a replacement worker still interrupts the exact legacy pane", async (t) => {
+test("a stop from a replacement worker refuses a legacy job it cannot prove it owns", async (t) => {
   const { pi, shim } = await legacyGate(t);
-  const tab = await gateTab();
-  assert.ok(tab);
+  assert.ok(await gateTab());
   await pi.kill();
-  const panes = await jl.lab.run([
-    "pane",
-    "list",
-    "--workspace",
-    jl.env["HERDR_WORKSPACE_ID"] ?? "",
-  ]);
-  const pane = records(panes["panes"]).find((each) => each["tab_id"] === tab["tab_id"]);
-  assert.ok(pane);
   const second = jl.worker();
   await jl.h.waitForNth(
     (event) => event["type"] === "fleet_connected",
@@ -203,125 +194,14 @@ test("a stop from a replacement worker still interrupts the exact legacy pane", 
     "the replacement worker to connect",
   );
   jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
-  jl.h.onModel(() => ({ text: "The stop was sent" }));
+  jl.h.onModel(() => ({ text: "The stop was refused" }));
   second.prompt("Stop the gate job");
   const stopped = await jl.h.waitFor(
     (event) => event["type"] === "stop_result",
     "the replacement worker's stop",
   );
   assert.equal(stopped["isError"], false);
-  assert.deepEqual(readFileSync(shim.keys, "utf8").trim().split("\n"), [String(pane["pane_id"])]);
-});
-
-async function gatePane(): Promise<string> {
-  const tab = await gateTab();
-  assert.ok(tab);
-  const panes = await jl.lab.run([
-    "pane",
-    "list",
-    "--workspace",
-    jl.env["HERDR_WORKSPACE_ID"] ?? "",
-  ]);
-  const pane = records(panes["panes"]).find((each) => each["tab_id"] === tab["tab_id"]);
-  assert.ok(pane);
-  return String(pane["pane_id"]);
-}
-
-async function replacementOfGate(t: Parameters<typeof JobLab.prototype.proxy>[0]) {
-  const { pi, proxy, shim } = await legacyGate(t);
-  const pane = await gatePane();
-  await pi.kill();
-  const startSeen = Promise.withResolvers<ServerMessage>();
-  const startReleased = Promise.withResolvers<undefined>();
-  t.after(() => startReleased.resolve(undefined));
-  proxy.callFault("job.start", { hold: startReleased.promise, seen: (m) => startSeen.resolve(m) });
-  const second = jl.worker();
-  await jl.h.waitForNth(
-    (event) => event["type"] === "fleet_connected",
-    2,
-    "the replacement worker to connect",
-  );
-  return { second, proxy, shim, pane, startSeen, startReleased };
-}
-
-test("a stop for an inherited job is not blocked by a launch with another label", async (t) => {
-  const { second, proxy, shim, pane, startSeen, startReleased } = await replacementOfGate(t);
-  proxy.httpFault(
-    "job.prepare",
-    { status: 400, body: { ok: false, error: "unknown operation job.prepare" } },
-    1,
-  );
-  proxy.callFault("job.stop", { gate: startSeen.promise });
-  jl.h.onModel(() => ({
-    tool: "run_long",
-    args: { label: "other", command: "sleep 600" },
-    alongside: [{ tool: "stop_job", args: { job: 1 } }],
-  }));
-  jl.h.onModel(() => ({ text: "The other launch is still starting" }));
-  second.prompt("Launch the other job and stop the gate job");
-  const stopped = await jl.h.waitFor(
-    (event) => event["type"] === "stop_result",
-    "the inherited job's stop while another label starts",
-  );
-  startReleased.resolve(undefined);
-  assert.equal(stopped["isError"], false);
-  assert.deepEqual(stopped["content"], [
-    {
-      type: "text",
-      text: "Sent a stop to job 1 (gate). Its result arrives as a [fleet] message, exited 130 when the stop took.",
-    },
-  ]);
-  assert.deepEqual(readFileSync(shim.keys, "utf8").trim().split("\n"), [pane]);
-});
-
-test("a same-label launch that begins during the stop's tab lookup keeps the stop from signalling", async (t) => {
-  const { second, proxy, shim, pane, startReleased } = await replacementOfGate(t);
-  const lookup = jl.holdHerdr(shim.holdLookup);
-  const prepareGate = Promise.withResolvers<undefined>();
-  t.after(() => prepareGate.resolve(undefined));
-  proxy.httpFault(
-    "job.prepare",
-    {
-      status: 400,
-      body: { ok: false, error: "unknown operation job.prepare" },
-      after: prepareGate.promise,
-    },
-    1,
-  );
-  jl.h.onModel(() => ({
-    tool: "run_long",
-    args: { label: "gate", command: "sleep 600" },
-    alongside: [{ tool: "stop_job", args: { job: 1 } }],
-  }));
-  jl.h.onModel(() => ({ text: "The same-label launch is still starting" }));
-  second.prompt("Launch another gate job and stop the first");
-  await lookup.held;
-  prepareGate.resolve(undefined);
-  await until(
-    () => (proxy.replied.includes("job.start") ? true : undefined),
-    "the same-label start to be admitted by cardd",
-  );
-  await lookup.release();
-  const stopped = await jl.h.waitFor(
-    (event) => event["type"] === "stop_result",
-    "the stop that crossed the same-label launch",
-  );
-  assert.equal(stopped["isError"], false);
-  assert.deepEqual(stopped["content"], [STILL_STARTING]);
+  assert.deepEqual(stopped["content"], [NO_TAB]);
   assert.equal(existsSync(shim.keys), false);
-
-  startReleased.resolve(undefined);
-  await until(
-    async () => ((await jl.tabs()).some((tab) => tab["label"] === "job-2-gate") ? true : undefined),
-    "the same-label launch to create its tab",
-  );
-  jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
-  jl.h.onModel(() => ({ text: "The stop was sent" }));
-  second.prompt("Stop the first gate job");
-  await jl.h.waitForNth(
-    (event) => event["type"] === "stop_result",
-    2,
-    "the stop after the launch was admitted",
-  );
-  assert.deepEqual(readFileSync(shim.keys, "utf8").trim().split("\n"), [pane]);
+  assert.ok(await gateTab());
 });

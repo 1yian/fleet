@@ -163,7 +163,7 @@ async function upgradeDaemon(): Promise<void> {
   }, "the upgraded cardd to serve its exact commit");
 }
 
-test("an updated worker can stop its legacy job after reload but cannot hand off automatically against pre-registration cardd", async () => {
+test("an updated worker cannot signal an inherited legacy job after reload and cannot hand off automatically against pre-registration cardd", async () => {
   const main = await cardd.connect(mainToken);
   const card = await newCard(main, "Stop a legacy job after reload");
   const token = await begin(main, card, "run the legacy job", "local");
@@ -181,7 +181,8 @@ test("an updated worker can stop its legacy job after reload but cannot hand off
     HERDR_WORKSPACE_ID: String(workspace),
   };
   const ready = join(h.dir, "legacy-ready");
-  const run = `require('node:fs').writeFileSync(${JSON.stringify(ready)}, String(process.pid)); setInterval(() => {}, 1000)`;
+  const finish = join(h.dir, "legacy-finish");
+  const run = `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid)); setInterval(() => { if (fs.existsSync(${JSON.stringify(finish)})) process.exit(0); }, 50)`;
   launch("legacy", `exec node -e ${quote(run)}`);
   const pi = h.startPi("c-1-a1", env, [join(workerCode.root, EXTENSION)]);
   await file(ready);
@@ -191,10 +192,16 @@ test("an updated worker can stop its legacy job after reload but cannot hand off
   h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
   h.onModel(() => ({ text: "Stop attempted" }));
   pi.prompt("Stop the legacy job");
-  assert.match(toolResults(await h.waitForCall(3)).at(-1) ?? "", /Sent a stop to job 1 \(legacy\)/);
-  assert.equal((await waitResult(card.id, 1, 130)).body, "interrupted");
+  const refusal = toolResults(await h.waitForCall(3)).at(-1) ?? "";
+  assert.match(refusal, /job 1 \(legacy\) has no verified tab ID in this worker session/);
+  assert.match(refusal, /nothing was signalled/);
   const pid = Number(readFileSync(ready, "utf8"));
   assert.ok(Number.isInteger(pid) && pid > 1);
+  process.kill(pid, 0);
+  const live = check(HttpOutcomeSchema, (await cardd.post(token, "jobs", {})).body);
+  assert.ok(live.ok && Array.isArray(live.value) && live.value.length === 1);
+  writeFileSync(finish, "");
+  assert.equal((await waitResult(card.id, 1, 0)).fields["exitCode"], 0);
   await waitGroupExit(pid);
   await waitTabClosed(String(workspace), 1, "legacy");
   const jobs = await cardd.post(token, "jobs", {});
