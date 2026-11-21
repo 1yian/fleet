@@ -15,10 +15,8 @@ export const VERSIONED_ENVELOPE = {
     if (found === null) return null;
     const [line = "", status = "", reason = ""] = found;
     const hinted = INLINE_RETRY.exec(reason);
-    const lowered = (hinted?.[1] ?? reason).toLowerCase();
-    const mismatched = CODED_REASONS.some(
-      ([text, code]) => lowered.startsWith(text) && code !== status,
-    );
+    const lowered = (hinted?.[1] ?? reason).toLowerCase().replace(/[.\s]+$/, "");
+    const mismatched = CODED_REASONS.some(([text, code]) => lowered === text && code !== status);
     return mismatched ? null : [line, status, hinted?.[2]];
   },
 };

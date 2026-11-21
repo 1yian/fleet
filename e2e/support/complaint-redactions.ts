@@ -32,6 +32,10 @@ export const REDACTED_COMPLAINTS = [
   ],
   ["8080: connection refused", "8080: connection refused"],
   [
+    "12:00:01.000001 8080: i/o timeout\n12:00:02.000002 9090: connection refused",
+    "12:00:01.000001 8080: i/o timeout 12:00:02.000002 9090: connection refused",
+  ],
+  [
     "8080: network timeout\n8090: connection refused",
     "8080: network timeout 8090: connection refused",
   ],
@@ -225,6 +229,7 @@ export const COOKIE_COMPLAINTS = [
   '> Authorization: Digest username="demo", response="paper"',
   "> Proxy-Authorization: Basic cGFwZXI6Y2Fub2U=",
   "> X-Api-Key: paper",
+  String.raw`{"trace":"15:16:17.000001 0040: Y2Fu\r\n15:16:17.000002 0046: Y2Fu"}`,
   "0040: Y2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2Fu\n0080: Y2Fu",
   String.raw`{"trace":"0040: Y2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2FuY2Fu\r\n0080: Y2Fu"}`,
   "`0000: 43 6f 6f 6b 69 65 3a 20 73 69 64 3d 70 61 70 65 72`",

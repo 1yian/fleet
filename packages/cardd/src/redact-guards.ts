@@ -30,7 +30,7 @@ export function logicalView(text: string): string {
 }
 
 const TRACE_ROW = new RegExp(
-  String.raw`(?:^|[\n\u0001"'\u0060])[ \t>*+-]*(?:\d{2}:\d{2}:\d{2}(?:\.\d+)?[ \t]+)?([\da-f]{4}):[ \t]([^\n\u0001]*)`,
+  String.raw`(?:^|[\n\u0001"'\u0060])[ \t>*+-]*(?:(\d{2}:\d{2}:\d{2}(?:\.\d+)?)[ \t]+)?([\da-f]{4}):[ \t]([^\n\u0001]*)`,
   "gi",
 );
 const HTTP_TEXT = /HTTP\/|^(?:GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s|^[\w-]+:\s/i;
@@ -55,18 +55,33 @@ const decoded = (text: string): string =>
     .replace(CONTROL_ESCAPE, "\u0001")
     .replace(/\\+/g, "");
 
+interface Row {
+  readonly stamped: boolean;
+  readonly offset: number;
+  readonly rest: string;
+}
+
+function clippedAfter(prior: Row, row: Row): boolean {
+  const gap = row.offset - prior.offset;
+  const room = gap - prior.rest.length;
+  const stamped = row.stamped && prior.stamped && (room === 1 || room === 2);
+  return (prior.rest.length === 64 && gap === 64) || stamped;
+}
+
 function hasTraceRows(text: string): boolean {
-  const rows = Array.from(text.matchAll(TRACE_ROW), (row) => ({
-    offset: Number.parseInt(row[1] ?? "", 16),
-    rest: (row[2] ?? "").replace(/\r$/, ""),
+  const rows: Row[] = Array.from(text.matchAll(TRACE_ROW), (row) => ({
+    stamped: row[1] !== undefined,
+    offset: Number.parseInt(row[2] ?? "", 16),
+    rest: (row[3] ?? "").replace(/\r$/, ""),
   }));
-  const pairs = rows
-    .slice(1)
-    .map((row, at) => ({ gap: row.offset - (rows[at]?.offset ?? 0), prior: rows[at]?.rest ?? "" }));
-  const advanced = pairs.some(({ gap, prior }) => prior.length === 64 && gap === 64);
-  const rising = rows.length > 1 && pairs.every(({ gap }) => gap > 0);
+  const pairs = rows.flatMap((row, at) => {
+    const prior = rows[at - 1];
+    return prior === undefined ? [] : [[prior, row] as const];
+  });
+  const rising = pairs.length > 0 && pairs.every(([prior, row]) => row.offset > prior.offset);
   const http = rows.some((row) => HTTP_TEXT.test(row.rest));
-  return rows.some((row) => row.offset === 0) || advanced || (rising && http);
+  const clipped = pairs.some(([prior, row]) => clippedAfter(prior, row));
+  return rows.some((row) => row.offset === 0) || clipped || (rising && http);
 }
 
 export const hasCookieHeader = (text: string): boolean => {
