@@ -108,6 +108,7 @@ test("a generic stop receipt for a lost job keeps the pending dispatch reconcila
     (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
     "the loss notice",
   );
+  const quiet = proxy.activities.length;
   const base = jl.h.events.filter((event) => event["type"] === "settled").length;
   jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
   jl.h.onModel(() => ({ text: "The job is already lost" }));
@@ -124,12 +125,23 @@ test("a generic stop receipt for a lost job keeps the pending dispatch reconcila
     base + 1,
     "the worker to settle after the stop",
   );
+  assert.equal(jl.jobState(1), "lost");
+  const settledActivity = await until(
+    () => proxy.activities.slice(quiet).findLast((state) => state !== "running"),
+    "the stop turn's settled activity",
+  );
+  assert.equal(settledActivity, "idle");
+  const reads = proxy.calls.filter((op) => op === "job.running").length;
   const mark = proxy.activities.length;
   proxy.callFault("job.running", undefined);
   proxy.drop();
   await until(
-    () => (proxy.activities.slice(mark).includes("idle") ? true : undefined),
-    "the reconnect's exact read to end the wait",
+    () =>
+      proxy.calls.filter((op) => op === "job.running").length > reads &&
+      proxy.activities.slice(mark).includes("idle")
+        ? true
+        : undefined,
+    "the reconnect's exact retry to be sent while the worker stays idle",
   );
 });
 

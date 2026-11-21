@@ -446,7 +446,9 @@ export class Jobs {
         this.advance(job);
         if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
         this.running.delete(job);
+        const pending = this.pending.get(job);
         if (cancelled) this.confirmStartupFence(job);
+        else if (pending !== undefined) pending.dispatched = false;
         if (this.pending.has(job)) this.unresolved.add(job);
         else this.unresolved.delete(job);
       }

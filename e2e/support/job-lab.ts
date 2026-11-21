@@ -121,6 +121,15 @@ export class JobLab {
     }
   }
 
+  jobState(job: number): unknown {
+    const db = new DatabaseSync(this.fleet.cardd.db, { readOnly: true, timeout: 5000 });
+    try {
+      return db.prepare("SELECT state FROM jobs WHERE id = ?").get(job)?.["state"];
+    } finally {
+      db.close();
+    }
+  }
+
   wrapperPid(): unknown {
     const db = new DatabaseSync(this.fleet.cardd.db, { readOnly: true, timeout: 5000 });
     try {
