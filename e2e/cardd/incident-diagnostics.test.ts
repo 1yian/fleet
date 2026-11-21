@@ -339,6 +339,15 @@ for (const [name, diagnostic] of [
     "Callback https://localhost/callback#client+secret=paper failed",
   ],
   [
+    "an escaped ampersand before a parameter name",
+    String.raw`{"url":"https://localhost/callback?next=1\u0026password=paper"}`,
+  ],
+  ["an escaped query opener", String.raw`{"url":"https://localhost/callback\u003fpassword=paper"}`],
+  [
+    "an escaped assignment separator",
+    String.raw`{"url":"https://localhost/callback#next=1\u0026token\u003dpaper"}`,
+  ],
+  [
     "an encoded fragment parameter name",
     "Callback https://localhost/callback#pass%77ord=paper failed",
   ],

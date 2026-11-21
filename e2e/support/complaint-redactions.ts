@@ -48,6 +48,22 @@ export const REDACTED_COMPLAINTS = [
     "Callback https://localhost/callback?q=a+b=2 failed",
   ],
   [
+    String.raw`{"url":"https://localhost/callback?next=1\u0026password=paper"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    String.raw`{"url":"https://localhost/callback\u003fpassword=paper"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    String.raw`{"url":"https://localhost/callback#next=1\u0026token\u003dpaper"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    String.raw`{"url":"https://localhost/callback?next=1\u0026step=2"}`,
+    String.raw`{"url":"https://localhost/callback?next=1\u0026step=2"}`,
+  ],
+  [
     "Callback https://localhost/callback#pass%77ord=paper failed",
     "[URL withheld: credential boundaries unclear]",
   ],

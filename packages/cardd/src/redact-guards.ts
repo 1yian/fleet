@@ -106,7 +106,7 @@ export function hasEscapedCredentialKey(text: string): boolean {
   return false;
 }
 
-const PARAM_NAME = /[?&#;]([^=&\s#?]*(?:%[\da-f]{2}|\+)[^=&\s#?]*)=/gi;
+const PARAM_NAME = /[?&#;]([^=&\s#?]*)=/g;
 const PERCENT = /%([\da-f]{2})/gi;
 
 export function percentDecoded(name: string): string {
@@ -122,6 +122,7 @@ export function percentDecoded(name: string): string {
 }
 
 export const hasEncodedCredentialParam = (text: string): boolean =>
-  Array.from(decoded(text).matchAll(PARAM_NAME)).some(([, name = ""]) =>
-    CREDENTIAL_KEY.test(percentDecoded(name)),
-  );
+  Array.from(decoded(text).matchAll(PARAM_NAME)).some(([assignment = "", name = ""]) => {
+    const plain = percentDecoded(name);
+    return CREDENTIAL_KEY.test(plain) && (plain !== name || !text.includes(assignment));
+  });
