@@ -190,7 +190,7 @@ export class Jobs {
     else if (
       launching !== undefined &&
       typeof exitCode === "number" &&
-      (!launching.legacy || exitCode === 0)
+      (!launching.legacy || exitCode !== 127)
     )
       launching.ran = true;
     if (typeof exitCode === "number") {

@@ -186,5 +186,14 @@ test("a stop reply that is both a success and a failure leaves the held launch i
     "the cancelled launch's tab to close",
   );
   assert.equal(readFileSync(shim.closes, "utf8").trim(), tab);
+  await until(
+    async () => ((await jl.hasTab(tab)) ? undefined : true),
+    "Herdr to stop listing the cancelled launch's tab",
+  );
   assert.equal(existsSync(input), false);
+  await until(
+    async () => ((await jl.jobResults()).length > 0 ? true : undefined),
+    "cardd to record the cancellation",
+  );
+  assert.deepEqual(await jl.jobResults(), [[1, 130, "stopped before wrapper registration"]]);
 });
