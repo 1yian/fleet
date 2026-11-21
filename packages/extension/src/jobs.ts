@@ -94,7 +94,8 @@ export class Jobs {
   private readonly cancelledJobs = new Set<number>();
   private readonly ownedTabs = new Map<number, string>();
   private readonly localLegacy = new Set<number>();
-  private legacyStarts = 0;
+  private readonly legacyLabels = new Map<string, number>();
+  private readonly dispatching = new Set<number>();
   private readonly link: Link;
   private readonly endpoint: { url: string; token: string };
   private readonly warn: (text: string) => void;
@@ -205,6 +206,7 @@ export class Jobs {
 
   private forgetTab(job: number): void {
     this.ownedTabs.delete(job);
+    this.dispatching.delete(job);
   }
 
   private observeFence(entry: Entry): void {
@@ -296,13 +298,16 @@ export class Jobs {
     throw new Error(`Could not confirm the reservation for ${label}; no command was launched`);
   }
 
-  private async legacyStart(label: string, command: string) {
-    this.legacyStarts += 1;
-    try {
-      return await this.link.call("job.start", { label, command });
-    } finally {
-      this.legacyStarts -= 1;
-    }
+  private legacyStart(label: string, command: string) {
+    this.legacyLabels.set(label, (this.legacyLabels.get(label) ?? 0) + 1);
+    return this.link.call("job.start", { label, command });
+  }
+
+  private admitLegacy(job: number, label: string): void {
+    this.localLegacy.add(job);
+    const open = (this.legacyLabels.get(label) ?? 1) - 1;
+    if (open > 0) this.legacyLabels.set(label, open);
+    else this.legacyLabels.delete(label);
   }
 
   async launch(
@@ -324,6 +329,7 @@ export class Jobs {
     );
     this.preparing.delete(id);
     if (registeredLaunch) this.launches.set(job, id);
+    else this.admitLegacy(job, label);
     const early = preparing.fences.get(job);
     if (early !== undefined) {
       this.observeResult(early);
@@ -341,7 +347,6 @@ export class Jobs {
       : undefined;
     const launching = { unstarted: false, ran: false, legacy: !registeredLaunch };
     this.launching.set(job, launching);
-    if (launching.legacy) this.localLegacy.add(job);
     if (launching.legacy && !this.lastResult.has(job)) this.running.add(job);
     let dispatched = false;
     try {
@@ -386,6 +391,7 @@ export class Jobs {
         throw new Error(`Job ${String(job)} was reported lost before dispatch; nothing was run`);
       if (pending !== undefined) pending.dispatched = true;
       dispatched = true;
+      this.dispatching.add(job);
       const paneFailure = await herdr("local", [
         "pane",
         "run",
@@ -473,11 +479,12 @@ export class Jobs {
     }
     if (stale()) return superseded;
     const starting = `${named} is still starting in this worker, so nothing was signalled.`;
-    const unclaimed = (): boolean =>
-      this.launching.has(job) || this.localLegacy.has(job) || this.legacyStarts > 0;
+    const blocked = (): boolean =>
+      ((this.launching.has(job) || this.localLegacy.has(job)) && !this.dispatching.has(job)) ||
+      (this.ownedTabs.get(job) === undefined && this.legacyLabels.has(label));
+    if (blocked()) return starting;
     let tab = known ?? this.ownedTabs.get(job);
     if (tab === undefined) {
-      if (unclaimed()) return starting;
       if (!legacy && !(await confirmLegacyStop(this.endpoint, job, label)))
         return `${named} has no verified tab ID in this worker session, so nothing was signalled.`;
       const tabs = records(
@@ -486,7 +493,6 @@ export class Jobs {
       if (stale()) return superseded;
       tab = this.ownedTabs.get(job);
       if (tab === undefined) {
-        if (unclaimed()) return starting;
         const matches = tabs.filter((each) => each["label"] === tabName(job, label));
         if (matches.length > 1)
           return `${named} has multiple matching tabs and no known tab ID, so nothing was signalled.`;
@@ -497,9 +503,9 @@ export class Jobs {
       (await herdr("local", ["pane", "list", "--workspace", workspace]))["panes"],
     );
     if (stale()) return superseded;
+    if (blocked()) return starting;
     const owned = this.ownedTabs.get(job);
     if (owned !== undefined && owned !== tab) return starting;
-    if (known === undefined && owned === undefined && unclaimed()) return starting;
     const pane = field(
       panes.find((each) => tab !== undefined && each["tab_id"] === tab),
       "pane_id",

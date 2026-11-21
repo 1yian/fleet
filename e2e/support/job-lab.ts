@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -170,12 +171,19 @@ export class JobLab {
       runs: join(this.jobDir, "pane-runs"),
       keys: join(this.jobDir, "pane-keys"),
       failTab: join(this.jobDir, "fail-tab-create"),
+      holdContain: join(this.jobDir, "hold-contain"),
+      holdLookup: join(this.jobDir, "hold-lookup"),
       release: join(this.jobDir, "release-dispatch"),
     };
     const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
     writeFileSync(
       join(bin, "herdr"),
       `#!/bin/sh
+hold() {
+  if mv "$1" "$1.taken" 2>/dev/null; then echo held >> "$1.log"; cat "$1.taken" > /dev/null; fi
+}
+if [ "$1 $2" = 'pane process-info' ]; then hold ${quote(logs.holdContain)}; fi
+if [ "$1 $2" = 'tab list' ]; then hold ${quote(logs.holdLookup)}; fi
 if [ "$1 $2" = 'tab close' ]; then
   echo "$3" >> ${quote(logs.closes)}
 fi
@@ -197,6 +205,17 @@ exec ${quote(herdr)} "$@"
     );
     this.env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
     return logs;
+  }
+
+  holdHerdr(path: string) {
+    execFileSync("mkfifo", [path]);
+    return {
+      held: until(
+        () => (existsSync(`${path}.log`) ? true : undefined),
+        "the herdr command to be held",
+      ),
+      release: () => writeFile(`${path}.taken`, ""),
+    };
   }
 
   async holdDispatch(t: TestContext, command: string, swallowKeys = false) {
@@ -238,11 +257,12 @@ exec ${quote(herdr)} "$@"
           const fault = req.url === "/call" ? state.takeHttpFault(op) : undefined;
           if (fault !== undefined) {
             if ("redirect" in fault) res.writeHead(307, { location: fault.redirect }).end();
-            else if ("status" in fault)
+            else if ("status" in fault) {
+              await fault.after;
               res
                 .writeHead(fault.status, { "content-type": "application/json" })
                 .end(JSON.stringify(fault.body));
-            else
+            } else
               res
                 .writeHead(200, { "content-type": "application/json" })
                 .end(JSON.stringify({ ok: true, value: fault.value }));
@@ -378,7 +398,8 @@ function deliver(
   const send = (): void => {
     if (client.readyState === WebSocket.OPEN) client.send(payload);
   };
-  if (fault !== undefined && "hold" in fault) {
+  if (fault !== undefined && "lose" in fault) client.terminate();
+  else if (fault !== undefined && "hold" in fault) {
     fault.seen?.(message);
     void fault.hold.then(send);
   } else send();
@@ -390,6 +411,7 @@ function rewriteResult(message: ServerMessage, text: string, fault: CallFault | 
     fault === undefined ||
     "local" in fault ||
     "gate" in fault ||
+    "lose" in fault ||
     "hold" in fault
   )
     return text;
@@ -405,8 +427,12 @@ type CallFault =
   | { raw: Record<string, unknown> }
   | { local: Record<string, unknown> }
   | { gate: Promise<unknown> }
+  | { lose: true }
   | { hold: Promise<unknown>; seen?: (message: ServerMessage) => void };
-type HttpFault = { redirect: string } | { value: unknown } | { status: number; body: unknown };
+type HttpFault =
+  | { redirect: string }
+  | { value: unknown }
+  | { status: number; body: unknown; after?: Promise<unknown> };
 
 class ProxyState {
   readonly clients = new Set<WebSocket>();
