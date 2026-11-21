@@ -26,7 +26,22 @@ import {
   workspace,
   action,
   idlePane,
+  untilRunning,
 } from "../support/lane-observation-lab.ts";
+
+test("a stop marker that lands while a running mate is being sampled is neither cleared nor reported as a definite outcome", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  const marker = join(home, "state", "stopped");
+  const land = `printf 'stopped by hand\\n' > ${marker}`;
+  const reply: unknown = JSON.parse(fleet(typedMaintenance, "stop-lane", land));
+  assert.ok(existsSync(`${faultLog()}.stopped`));
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["outcomes"], action("ops", "unread"));
+  assert.equal(readFileSync(marker, "utf8"), "stopped by hand\n");
+  assert.ok((await workspace("ops")) !== undefined);
+});
 
 test("an unreadable lane config is reported safely while healthy lanes still converge and start", async () => {
   addLane("zz");
