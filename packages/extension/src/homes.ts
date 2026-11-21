@@ -152,7 +152,7 @@ function heldReason(home: string): string | undefined {
   return heldReasonOf(readState(stoppedFile(home), "state/stopped"));
 }
 
-async function statusOf(info: LaneHome): Promise<Status> {
+async function statusOf(root: string, info: LaneHome): Promise<Status> {
   const { lane, home } = info;
   try {
     const before = sampleLifecycle(home);
@@ -161,6 +161,7 @@ async function statusOf(info: LaneHome): Promise<Status> {
     const observed = await workspaceOf(info, "liveness");
     if (sampleLifecycle(home).some((text, at) => text !== before[at]))
       throw new HostUnread(`${lane} lifecycle state changed while its status was being read`);
+    confirmClaim(root, info);
     if (observed?.state === "running") return { lane, state: "running" };
     return reason === undefined ? { lane, state: "down" } : { lane, state: "stopped", reason };
   } catch (error) {
@@ -172,7 +173,7 @@ async function statusOf(info: LaneHome): Promise<Status> {
 export async function status(root: string): Promise<Status[]> {
   const { homes, unread } = discoverLanes(root);
   const out: Status[] = [];
-  for (const info of homes) out.push(await statusOf(info));
+  for (const info of homes) out.push(await statusOf(root, info));
   for (const { lane, message } of unread) out.push({ lane, state: "unknown", reason: message });
   return out;
 }
@@ -185,6 +186,7 @@ export async function placementStatus(
   const out: { lane: string; mate: boolean; host?: string }[] = [];
   for (const info of homes) {
     const mate = (await workspaceOf(info, "placement")) !== undefined;
+    confirmClaim(root, info);
     out.push({
       lane: info.lane,
       mate,

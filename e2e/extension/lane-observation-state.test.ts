@@ -61,6 +61,34 @@ test("a lane claim that changes while a running mate is being sampled leaves the
   assert.ok((await workspace("ops")) !== undefined);
 });
 
+test("a lane config truncated while status or placement reads Herdr is never published as a definite result", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  const config = join(home, "config", "lane.json");
+  const good = readFileSync(config, "utf8");
+  const truncate = () => {
+    rmSync(`${config}.swapped`, { force: true });
+    writeFileSync(`${config}.next`, "{");
+  };
+  truncate();
+  const rows: unknown = JSON.parse(fleet(["status", "--json"], "swap-memory", config));
+  assert.ok(existsSync(`${config}.swapped`));
+  assert.equal(records(rows)[0]?.["state"], "unknown");
+  assert.match(String(records(rows)[0]?.["reason"]), /claim changed or became ambiguous/);
+  writeFileSync(config, good);
+  truncate();
+  assert.throws(
+    () => fleet(["status", "--placement", "--json"], "swap-memory", config),
+    /claim changed or became ambiguous/,
+  );
+  assert.ok(existsSync(`${config}.swapped`));
+  writeFileSync(config, good);
+  assert.deepEqual(JSON.parse(fleet(["status", "--placement", "--json"])), [
+    { lane: "ops", mate: true },
+  ]);
+});
+
 test("an unreadable lane config is reported safely while healthy lanes still converge and start", async () => {
   addLane("zz");
   const ops = `${here.root}.worktrees/lane-ops`;
