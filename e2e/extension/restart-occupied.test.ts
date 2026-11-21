@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { poll } from "../support/harness.ts";
 import {
-  launchArgsOf,
   mateConnected,
+  sessionGeneration,
   startDispatchLab,
   stopDispatchLab,
   toolResults,
@@ -127,18 +128,32 @@ test("a refunded restart leaves the worker's model pin as it was, so the same ke
     return { tool: "restart_card", args: { card: 1, key: "K", model: "tier/quick" } };
   }, "mate");
   h.onModel(() => ({ tool: "board", args: { card: 1 } }), "mate");
+  const before = { generation: 0, calls: 0 };
   h.onModel(() => {
     rmSync(armed, { force: true });
+    before.generation = sessionGeneration(cardd, "c-1-a1");
+    before.calls = h.modelsOf("worker").length;
     return { tool: "restart_card", args: { card: 1, key: "K" } };
+  }, "mate");
+  h.onModel(async () => {
+    await poll(
+      () => (sessionGeneration(cardd, "c-1-a1") > before.generation ? true : undefined),
+      "the replacement worker to connect",
+      WORKER_WAIT_MS,
+    );
+    await h.waitForCall(before.calls, "worker", WORKER_WAIT_MS);
+    return { tool: "board", args: { card: 1 } };
   }, "mate");
   h.onModel(() => ({ text: "done" }), "mate");
   await mateConnected(h);
   mate.prompt("ship the scrollbar fix");
 
-  const results = toolResults(await h.waitForCall(4, "mate", 4 * WORKER_WAIT_MS));
-  assert.match(results.at(-3) ?? "", /did not become idle/);
-  assert.match(results.at(-2) ?? "", /,openai-codex\/gpt-fixture$/m);
-  assert.doesNotMatch(results.at(-2) ?? "", /tier\/quick/);
-  assert.doesNotMatch(results.at(-1) ?? "", /already recorded|did not become idle|restarted 3 times/);
-  assert.match(readFileSync(launchArgsOf(h), "utf8"), /--model\nopenai-codex\/gpt-fixture\n/);
+  const results = toolResults(await h.waitForCall(5, "mate", 4 * WORKER_WAIT_MS));
+  assert.match(results.at(-4) ?? "", /did not become idle/);
+  assert.match(results.at(-3) ?? "", /,openai-codex\/gpt-fixture$/m);
+  assert.doesNotMatch(results.at(-3) ?? "", /tier\/quick/);
+  assert.doesNotMatch(results.at(-2) ?? "", /already recorded|did not become idle|restarted 3 times/);
+  const replacement = h.modelsOf("worker").slice(before.calls);
+  assert.ok(replacement.length > 0);
+  for (const model of replacement) assert.equal(model, pinned);
 });

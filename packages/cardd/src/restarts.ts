@@ -116,6 +116,19 @@ interface Planned {
   readonly notify: readonly string[];
 }
 
+function passPinBaton(
+  db: DatabaseSync,
+  card: number,
+  request: number,
+  from: string | undefined,
+  to: string,
+): void {
+  db.prepare(
+    `UPDATE entries SET fields = json_set(fields, '$.modelFrom', ?)
+     WHERE card = ? AND id > ? AND json_extract(fields, '$.modelFrom') = ?`,
+  ).run(from ?? null, card, request, to);
+}
+
 function restorePin(db: DatabaseSync, lane: string, card: number, request: number): void {
   const row = db
     .prepare(
@@ -127,7 +140,7 @@ function restorePin(db: DatabaseSync, lane: string, card: number, request: numbe
   if (typeof to !== "string") return;
   const before = row?.["from"];
   const from = typeof before === "string" ? before : undefined;
-  if (!restoreAttemptPin(db, card, from, to)) return;
+  if (!restoreAttemptPin(db, card, from, to)) return passPinBaton(db, card, request, from, to);
   const body = `Model pin restored from ${to} to ${from ?? "the lane's normal model selection"}: the restart that changed it did not run.`;
   const fields = { model: from ?? null };
   addEntry(db, { card, author: `mate:${lane}`, kind: "note", body, fields }, []);

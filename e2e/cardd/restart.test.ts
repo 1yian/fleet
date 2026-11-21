@@ -498,3 +498,48 @@ for (const [name, rest] of Object.entries(resting)) {
     await returned.close();
   });
 }
+
+const PIN_A = "openai-codex/gpt-fixture";
+const PIN_B = "tier/quick";
+const PIN_C = "tier/visual";
+
+const restartWithModel = async (key: string, model: string) =>
+  check(
+    OPS["card.restart"].result,
+    await fleet.main.call("card.restart", { card: card.id, mode: "replace", key, model }),
+  );
+
+const pinOf = async (): Promise<string | undefined> =>
+  check(OPS["attempt.resume"].result, await fleet.main.call("attempt.resume", { card: card.id }))
+    .model;
+
+for (const order of [
+  ["older first", [0, 1]],
+  ["newer first", [1, 0]],
+] as const) {
+  test(`refunding two overlapping model-changing restarts ${order[0]} puts the worker's model pin back where it was`, async () => {
+    await fleet.main.call("attempt.begin", {
+      card: card.id,
+      host: "maverick",
+      task: "Review Spanish copy",
+      model: PIN_A,
+    });
+    await fleet.cardd.connect(
+      check(
+        OPS["attempt.resume"].result,
+        await fleet.main.call("attempt.resume", { card: card.id }),
+      ).token,
+    );
+    const requests = [
+      requestOf(await restartWithModel("to-b", PIN_B)),
+      requestOf(await restartWithModel("to-c", PIN_C)),
+    ];
+    const keys = ["to-b", "to-c"];
+    assert.equal(await pinOf(), PIN_C);
+    for (const [index, which] of order[1].entries()) {
+      assert.deepEqual(await restartFailed(keys[which] ?? "", requests[which]), { recorded: true });
+      if (index === 0) assert.notEqual(await pinOf(), PIN_A);
+    }
+    assert.equal(await pinOf(), PIN_A);
+  });
+}

@@ -251,7 +251,7 @@ export const holdRepeat = (key: string): ((carddUrl: string) => Promise<MateRout
 export const mateConnected = (h: Harness) =>
   h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");
 
-function sessionGeneration(cardd: Cardd, session: string): number {
+export function sessionGeneration(cardd: Cardd, session: string): number {
   const db = new DatabaseSync(cardd.db, { timeout: 5000 });
   try {
     return Number(
