@@ -2,8 +2,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { idlePark } from "@fleet/protocol";
 import { quietSql } from "./attempts.ts";
 import { jobStateSql, launchedJobSql, loseSilentJobs, startedAtSql } from "./jobs.ts";
-import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
-import { IN_FLIGHT_DELIVERY } from "./delivery-states.ts";
+import { chaseIntake, dueBatches, hasInFlightDelivery, remind } from "./deliveries.ts";
 import { escalationText, told, UNRECOVERABLE, unrecoverable } from "./incident-escalation.ts";
 import { liveStateSql } from "./incident-lifecycle.ts";
 import { incidentFrom, LIVE_INCIDENT, roleOf } from "./incident-store.ts";
@@ -86,7 +85,7 @@ const WORKER_RULES: readonly {
 
 const IDLE_WORKERS = (
   ids: readonly number[],
-): string => `SELECT w.card AS card, w.lane AS lane, w.seen AS seen,
+): string => `SELECT w.card AS card, w.lane AS lane, w.seen AS seen, w.session AS session,
     coalesce((SELECT max(created_at) FROM entries WHERE card = w.card AND author LIKE 'worker:%'), 0) AS spoke,
     (SELECT max(created_at) FROM entries WHERE card = w.card AND author = 'check'
       AND json_extract(fields, '$.condition') = 'worker-idle-nudge') AS nudged,
@@ -96,8 +95,7 @@ const IDLE_WORKERS = (
         WHERE card = w.card AND author LIKE 'worker:%'), 0)) AS ignored
   FROM (${workerCards(ids)}) w
   WHERE ${quietSql("w.state", "w.attemptId")}
-    AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}
-    AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session AND d.state IN (${IN_FLIGHT_DELIVERY}))`;
+    AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}`;
 
 const NUDGE_TEXT =
   "you went idle without reporting. If the work is done or you are stuck, call report now with the right status. If you are still working, carry on and report when you reach a handoff.";
@@ -145,9 +143,10 @@ function idleMatches(db: DatabaseSync, ids: readonly number[], now: number, t: T
     const seen = Number(row["seen"]);
     const nudged = typeof row["nudged"] === "number" ? row["nudged"] : 0;
     const ignored = typeof row["ignored"] === "number" ? row["ignored"] : undefined;
-    const settled = now - seen >= t.idleNudge;
+    if (now - seen < t.idleNudge || hasInFlightDelivery(db, String(row["session"]), card))
+      return [];
     const nudge: Match[] =
-      settled && (ignored === undefined || nudged < seen)
+      ignored === undefined || nudged < seen
         ? [
             {
               card,
@@ -160,8 +159,7 @@ function idleMatches(db: DatabaseSync, ids: readonly number[], now: number, t: T
             },
           ]
         : [];
-    const tier =
-      ignored === undefined || !settled ? 0 : repeatTier(now - ignored, t.idleTell, t.repeat);
+    const tier = ignored === undefined ? 0 : repeatTier(now - ignored, t.idleTell, t.repeat);
     const text = "worker idle without a handoff, and it did not act on a nudge";
     return [
       ...nudge,
@@ -462,6 +460,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLo
       })
       .map(({ card }) => card.id),
   );
+  const incidentNotices = reconcileIncidents(db, now, t);
   const checks = [
     ...withIncidents(db, workerMatches(db, open, now, t), now, t),
     ...finishedCards(open, t),
@@ -485,7 +484,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLo
     ...scheduledWakes(db, t.wall()),
     ...firedSchedules(db, t.wall()),
     ...dueBatches(db, { now: t.wall(), window: t.batch }),
-    ...reconcileIncidents(db, now, t),
+    ...incidentNotices,
     ...lostMates(db, now, t),
     ...expireMaintenance(db, now, t),
     ...replyNudges(db, open, now, t),

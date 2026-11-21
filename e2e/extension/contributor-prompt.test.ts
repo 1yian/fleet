@@ -172,6 +172,10 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
   const repo = new Scratch();
   const cardd = await Cardd.start();
   const h = await Harness.start();
+  mkdirSync(join(h.dir, "agent", "extensions"), { recursive: true });
+  execFileSync("herdr", ["integration", "install", "pi"], {
+    env: { ...process.env, PI_CODING_AGENT_DIR: join(h.dir, "agent") },
+  });
   const args = mateArgs(h).filter(
     (arg) => arg !== "--no-builtin-tools" && arg !== "--no-context-files",
   );
@@ -223,6 +227,8 @@ async function run(t: TestContext, name: string, variant: Variant): Promise<void
         return dispatch;
       }
       evidence(`${name}-worker`, turns);
+      if (variant.mirror === true && turns.at(-1)?.role !== "toolResult")
+        return { tool: "run_long", args: { label: "wait", command: "sleep 300" } };
       return { text: "Contributor instructions received." };
     }, "mate");
   const mateNoContext = variant.mateNoContextFiles === true;

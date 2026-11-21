@@ -4,6 +4,7 @@ import { maintenanceLine, type Maintenance } from "@fleet/protocol";
 import { spawnDetached } from "./detached.ts";
 import { mateRelaunchArgs, readLaneConfig } from "./lane-config.ts";
 import type { Link } from "./link.ts";
+import { PROCESS_ARG } from "./process-id.ts";
 import { LEAVING } from "./worker.ts";
 import type { ReloadReceipt } from "./reload-observer.ts";
 
@@ -31,7 +32,13 @@ export function relaunchSelf(
 ): void {
   const running = process.argv
     .slice(2)
-    .filter((arg) => arg !== "-c" && arg !== "--continue" && !arg.startsWith(STALE_RELOAD_ARG));
+    .filter(
+      (arg) =>
+        arg !== "-c" &&
+        arg !== "--continue" &&
+        !arg.startsWith(STALE_RELOAD_ARG) &&
+        !arg.startsWith(PROCESS_ARG),
+    );
   const lane = readLaneConfig(process.cwd());
   const kept = lane === undefined ? running : mateRelaunchArgs(running, lane);
   const args = staleAt === undefined ? kept : [...kept, `${STALE_RELOAD_ARG}${String(staleAt)}`];

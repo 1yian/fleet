@@ -4,10 +4,12 @@ import type { Draft } from "./change.ts";
 import {
   IN_FLIGHT_DELIVERY,
   QUEUED_DELIVERY,
+  retireNoticeDeliveries,
   SENT_DELIVERY,
   UNREAD_DELIVERY,
 } from "./delivery-states.ts";
 import { LIVE_INCIDENT } from "./incident-store.ts";
+import { noticeState } from "./restart-requests.ts";
 import { addEntry, ENTRY_JSON, json, mainLane } from "./store.ts";
 import { identified } from "./maintenance.ts";
 import { holdFor } from "./waits.ts";
@@ -36,7 +38,8 @@ type DeliveryEvent = "push" | "read" | "ack" | "confirm" | "resend";
 const AT_CONNECT = `${IN_FLIGHT_DELIVERY}, 'acknowledged'`;
 const WHEN_UP = QUEUED_DELIVERY;
 const AGAIN = "'resent', 'pushed-again'";
-const CHASEABLE = `${SENT_DELIVERY}, 'read', 'filed'`;
+const SENT_OR_READ = `${SENT_DELIVERY}, 'read'`;
+const CHASEABLE = `${SENT_OR_READ}, 'filed'`;
 
 function deliveryState(value: unknown): DeliveryState {
   const found = DELIVERY_STATES.find((state) => state === value);
@@ -216,6 +219,35 @@ export function dueBatches(db: DatabaseSync, batching: Batching): string[] {
     .map((row) => String(row["id"]));
 }
 
+function deliveryEligibility(
+  db: DatabaseSync,
+  entry: number,
+  card: number,
+  restartNotice: unknown,
+): ReturnType<typeof noticeState> {
+  if (typeof restartNotice !== "number") return "eligible";
+  const state = noticeState(db, card, restartNotice);
+  if (state === "retired")
+    db.prepare(retireNoticeDeliveries("SELECT id, card FROM entries WHERE id = ?")).run(
+      Date.now(),
+      entry,
+    );
+  return state;
+}
+
+export function hasInFlightDelivery(db: DatabaseSync, session: string, card: number): boolean {
+  return db
+    .prepare(
+      `SELECT json_extract(e.fields, '$.restartNotice') AS notice
+       FROM deliveries d JOIN entries e ON e.id = d.entry
+       WHERE d.session = ? AND d.retired_at IS NULL AND d.state IN (${IN_FLIGHT_DELIVERY})`,
+    )
+    .all(session)
+    .some(
+      ({ notice }) => typeof notice !== "number" || noticeState(db, card, notice) === "eligible",
+    );
+}
+
 export function toPush(
   db: DatabaseSync,
   session: string,
@@ -228,30 +260,40 @@ export function toPush(
     `SELECT json_object('entry', json(${ENTRY_JSON}), 'name', c.name,
        'again', json(iif(d.state IN (${AGAIN}), 'true', 'false'))) AS j
      FROM deliveries d JOIN entries e ON e.id = d.entry JOIN cards c ON c.id = e.card
-     WHERE d.session = ? AND d.state IN (${states}) ORDER BY e.id`,
+     WHERE d.session = ? AND d.retired_at IS NULL AND d.state IN (${states}) ORDER BY e.id`,
     session,
   );
   const queued = new Set(
     db
-      .prepare("SELECT entry FROM deliveries WHERE session = ? AND state = 'pending'")
+      .prepare(
+        "SELECT entry FROM deliveries WHERE session = ? AND retired_at IS NULL AND state = 'pending'",
+      )
       .all(session)
       .map((row) => Number(row["entry"])),
   );
   const lane = String(db.prepare("SELECT lane FROM sessions WHERE id = ?").get(session)?.["lane"]);
-  const all = rows.map((row) => {
-    const pushed = check(PushedEntrySchema, row);
-    const { name, again = false } = pushed;
-    const entry = identified(db, lane, holdFor(db, lane, pushed.entry));
+  const deferReplay = atConnect
+    ? db.prepare(
+        `UPDATE deliveries SET state = 'resent', updated_at = ?
+         WHERE session = ? AND entry = ? AND state IN (${SENT_OR_READ})`,
+      )
+    : undefined;
+  const now = Date.now();
+  const all = rows.flatMap((row) => {
+    const { entry: raw, name, again = false } = check(PushedEntrySchema, row);
+    const eligibility = deliveryEligibility(db, raw.id, raw.card, raw.fields["restartNotice"]);
+    if (eligibility !== "eligible") {
+      if (eligibility === "suppressed") deferReplay?.run(now, session, raw.id);
+      return [];
+    }
+    const entry = identified(db, lane, holdFor(db, lane, raw));
     const push = {
       entry,
       name,
       again,
       mode: isSteer(entry) ? "steer" : "followUp",
     } as const;
-    return {
-      push,
-      held: queued.has(entry.id) && !again && !isSteer(entry) && isRoutine(entry),
-    };
+    return [{ push, held: queued.has(entry.id) && !again && !isSteer(entry) && isRoutine(entry) }];
   });
   const holding = all.some(({ held }) => held);
   const urgent = all.some(({ held }) => !held);
@@ -262,7 +304,6 @@ export function toPush(
   const write = db.prepare(
     "UPDATE deliveries SET state = ?, updated_at = ? WHERE session = ? AND entry = ?",
   );
-  const now = Date.now();
   for (const { entry } of pushes) apply(read, write, session, entry.id, "push", now);
   return pushes;
 }
@@ -287,7 +328,7 @@ const UNREAD_RESENDS = 3;
 
 const CHASE_ROWS = `SELECT d.session AS session, d.state AS state, d.resends AS resends, d.told_at AS told, d.updated_at AS updated, s.role AS role, ${ENTRY_JSON} AS j
   FROM deliveries d JOIN sessions s ON s.id = d.session JOIN entries e ON e.id = d.entry
-  WHERE d.state IN (${CHASEABLE})
+  WHERE d.retired_at IS NULL AND d.state IN (${CHASEABLE})
     AND s.state IN ('idle', 'waiting')
     AND NOT ${LIVE_INCIDENT.replace("SESSION", "d.session")}
     AND (?1 - d.updated_at >= ?2 OR (d.resends >= ${String(UNREAD_RESENDS)} AND (d.told_at IS NULL OR ?1 - d.told_at >= ?3)))
@@ -352,7 +393,7 @@ export function remind(
 export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[] {
   const resend = db.prepare(
     `UPDATE deliveries SET state = ?, resends = resends + 1, updated_at = ?
-     WHERE session = ? AND entry = ?`,
+     WHERE session = ? AND entry = ? AND retired_at IS NULL`,
   );
   const told = db.prepare("UPDATE deliveries SET told_at = ? WHERE session = ? AND entry = ?");
   return db
@@ -361,6 +402,10 @@ export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[]
     .flatMap((row) => {
       const session = String(row["session"]);
       const entry = check(EntrySchema, JSON.parse(String(row["j"])));
+      if (
+        deliveryEligibility(db, entry.id, entry.card, entry.fields["restartNotice"]) !== "eligible"
+      )
+        return [];
       const due = now - Number(row["updated"]) >= t.intake;
       const resends = Number(row["resends"]) + (due ? 1 : 0);
       const owed =
@@ -369,8 +414,13 @@ export function chaseIntake(db: DatabaseSync, now: number, t: Timings): string[]
       const heard = owed ? tellOwner(db, session, String(row["role"]), entry, resends) : [];
       if (heard.length > 0) told.run(now, session, entry.id);
       if (!due) return heard;
-      resend.run(nextDelivery(deliveryState(row["state"]), "resend"), now, session, entry.id);
-      return [session, ...heard];
+      const { changes } = resend.run(
+        nextDelivery(deliveryState(row["state"]), "resend"),
+        now,
+        session,
+        entry.id,
+      );
+      return changes === 0 ? heard : [session, ...heard];
     });
 }
 
@@ -380,13 +430,19 @@ export function requireCommentsRead(db: DatabaseSync, session: string, status: s
   if (HOLDS_ON_UNREAD.has(status)) return;
   const rows = db
     .prepare(
-      `SELECT e.author AS author, e.body AS body FROM deliveries d JOIN entries e ON e.id = d.entry
-       WHERE d.session = ? AND d.state IN (${UNREAD_DELIVERY}) AND e.kind = 'comment'
+      `SELECT e.id, e.card, e.author, e.body, json_extract(e.fields, '$.restartNotice') AS notice
+       FROM deliveries d JOIN entries e ON e.id = d.entry
+       WHERE d.session = ? AND d.retired_at IS NULL AND d.state IN (${UNREAD_DELIVERY}) AND e.kind = 'comment'
          AND json_extract(e.fields, '$.task') IS NULL
          AND json_extract(e.fields, '$.for') = 'worker'
        ORDER BY e.id`,
     )
-    .all(session);
+    .all(session)
+    .filter(
+      (row) =>
+        deliveryEligibility(db, Number(row["id"]), Number(row["card"]), row["notice"]) ===
+        "eligible",
+    );
   if (rows.length === 0) return;
   const unread = rows
     .map((row) => `from ${sender(String(row["author"]))}: ${String(row["body"])}`)

@@ -132,8 +132,12 @@ export class Pi {
     return poll(() => this.uiRequests.find(match), what);
   }
 
-  prompt(message: string): void {
-    this.command({ type: "prompt", message });
+  prompt(message: string, whileRunning?: "followUp"): void {
+    this.command({
+      type: "prompt",
+      message,
+      ...(whileRunning === undefined ? {} : { streamingBehavior: whileRunning }),
+    });
   }
 
   compact(): void {

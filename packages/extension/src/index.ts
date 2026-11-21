@@ -424,6 +424,10 @@ export default function fleet(pi: ExtensionAPI): void {
     type: "string",
     description: "Comma-separated providers the model router must skip",
   });
+  pi.registerFlag("fleet-process", {
+    type: "string",
+    description: "The process id this launch announces to cardd",
+  });
   pi.registerFlag("fleet-url", { type: "string", description: "The cardd websocket URL" });
   pi.registerFlag("fleet-token", { type: "string", description: "This session's cardd token" });
   pi.registerFlag("fleet-role", { type: "string", description: "worker or mate" });

@@ -20,6 +20,7 @@ function echoTo(db: DatabaseSync, session: Session, card: Card): readonly string
       entry.id > asked.id &&
       entry.author === `mate:${session.lane}` &&
       entry.fields["task"] !== true &&
+      !(entry.kind === "comment" && typeof entry.fields["restartNotice"] === "number") &&
       ACTIONS.has(entry.kind),
   );
   return acted ? [] : [parent];

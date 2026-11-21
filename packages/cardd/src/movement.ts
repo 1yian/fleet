@@ -79,10 +79,16 @@ function repeatedReports(entries: readonly Entry[]): ReadonlySet<number> {
   return repeated;
 }
 
+const restartNotice = (entry: Entry): boolean =>
+  entry.kind === "comment" && typeof entry.fields["restartNotice"] === "number";
+
 const changes =
   (repeated: ReadonlySet<number>) =>
   (entry: Entry): boolean =>
-    MOVEMENT.has(entry.kind) && !AUTOMATIC.has(entry.author) && !repeated.has(entry.id);
+    MOVEMENT.has(entry.kind) &&
+    !AUTOMATIC.has(entry.author) &&
+    !restartNotice(entry) &&
+    !repeated.has(entry.id);
 
 const noStart = (entry: Entry): boolean =>
   entry.kind === "job-result" &&

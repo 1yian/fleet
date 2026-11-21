@@ -33,42 +33,8 @@ import { convergeSharedPreferences, PRESERVED_PREFIX } from "./standing.ts";
 import { eligibleLanes, hostProblems, newSnapshot, type SweepSnapshot } from "./prerequisites.ts";
 import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
+import { CUTOVER_USAGE, USAGE, VALUE_OPTIONS } from "./launch-usage.ts";
 
-const CUTOVER_USAGE =
-  "fleet job-cutover status | seal | confirm-stop <job> <evidence that the legacy job's process tree cannot run>";
-const USAGE = [
-  "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange [--host NAME] | restart [lane] | shared --content BASE64|--absent | scratch [--tidy] [--open CARD] [--move CARD] [--largest PATH ... [--by inodes|space]] [--json] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U (--token-file FILE|- | --bws JSON) [--hold] [lane options] | home set <lane> [--args JSON] [--worker-args JSON] | home transport <host> <lane|all> --from <reference-lane> | home transport <host> --check | home memory <lane> [--seed DIR] [--thinking LEVEL] | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]",
-  CUTOVER_USAGE,
-  "lane options of home add: --host NAME --hosts JSON --roots JSON --tier MODEL --direnv FOLDER --args JSON --worker-args JSON",
-  "  --hosts and --roots take a JSON object, --args and --worker-args a JSON array of strings. home set takes only --args and --worker-args, and changes only those.",
-  "  --token-file reads the lane token from a file, or from standard input with -, so it never sits in a command line. --hold makes the home held until it is started.",
-].join("\n");
-
-const VALUE_OPTIONS = new Set([
-  "--from",
-  "--url",
-  "--token-file",
-  "--bws",
-  "--args",
-  "--worker-args",
-  "--host",
-  "--hosts",
-  "--roots",
-  "--direnv",
-  "--tier",
-  "--seed",
-  "--thinking",
-  "--root",
-  "--db",
-  "--running",
-  "--restart",
-  "--content",
-  "--script",
-  "--largest",
-  "--by",
-  "--open",
-  "--move",
-]);
 const TOKEN_REFUSED =
   "fleet: --token is not accepted, because a token in a command line shows in the process list and in shell history. Pipe it in with --token-file -, give --token-file FILE, or use --bws JSON";
 

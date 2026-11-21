@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +21,10 @@ let mainToken: string;
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
+  mkdirSync(join(h.dir, "agent", "extensions"), { recursive: true });
+  execFileSync("herdr", ["integration", "install", "pi"], {
+    env: { ...process.env, PI_CODING_AGENT_DIR: join(h.dir, "agent") },
+  });
   scratch = new Scratch();
   mainToken = cardd.addLane("main", undefined, scratch.root);
   cleo = await cardd.connect(cardd.addLane("cleo", "main"));
@@ -49,6 +54,7 @@ const isWorker = (turns: Turn[]): boolean => systemOf(turns).includes("# Worker 
 
 async function dispatchWorker(
   model?: string,
+  holding = false,
 ): Promise<{ main: string; worker: string; pane: string }> {
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
   h.onModel(() => {
@@ -66,6 +72,14 @@ async function dispatchWorker(
       },
     };
   }, "mate");
+  for (let call = 0; call < 2; call += 1)
+    h.onModel((turns) => {
+      if (!isWorker(turns)) return { text: "dispatched" };
+      if (!holding) return { text: "continuing" };
+      return turns.at(-1)?.role === "toolResult"
+        ? { text: "continuing" }
+        : { tool: "run_long", args: { label: "wait", command: "sleep 300" } };
+    }, "mate");
   const pane = await startMain(lab, scratch, h, false, settingsArgs(h));
   const asked: unknown = await cleo.call("card.new", { title: "Ship the fix", kind: "scout" });
   await cleo.call("hold", {
@@ -102,7 +116,7 @@ test("an explicit GPT worker keeps its model after an ordinary restart", async (
   configureMain(scratch, cardd.url, mainToken, {
     workerArgs: [...workerBase(), "--model", "tier/quick"],
   });
-  const first = await dispatchWorker("openai-codex/gpt-fixture");
+  const first = await dispatchWorker("openai-codex/gpt-fixture", true);
   const card = (await cardd.board()).cards.find((each) => each.name === "one-scrollbar");
   assert.ok(card);
   let requested = false;
