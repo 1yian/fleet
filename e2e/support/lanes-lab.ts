@@ -43,6 +43,7 @@ beforeEach(async () => {
   ghost = await cardd.connect(cardd.addLane("ghost", "main"));
   lab = await HerdrLab.start({
     ...h.piEnv("mate"),
+    DIRENV_CONFIG: join(here.parent, "direnv"),
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
     FLEET_SUPERVISE_MS: "1000",
   });
