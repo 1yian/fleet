@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { check, HttpOutcomeSchema, OPS } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import { wakeMate } from "../../packages/extension/src/wake.ts";
+import { spawnGuarded } from "../support/guarded.ts";
 import { JobLab } from "../support/job-lab.ts";
 import { until } from "../support/live-fleet.ts";
 import { configureMain, Scratch } from "../support/scratch.ts";
@@ -167,7 +168,11 @@ test("a legacy-launched wrapper's heartbeats and result still reach cardd throug
     }),
   );
   const wrapper = fileURLToPath(new URL("../../packages/extension/src/job.ts", import.meta.url));
-  const exited = run("node", [wrapper, input]);
+  const child = spawnGuarded(process.execPath, [wrapper, input], {
+    env: { ...process.env, ...jl.lab.owned, HERDR_TAB_ID: undefined },
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  const exited = once(child, "exit");
   await until(
     () =>
       proxy.requests.some((each) => each.op === "job.alive" && each.url === "/call-followed") &&
@@ -177,7 +182,7 @@ test("a legacy-launched wrapper's heartbeats and result still reach cardd throug
     "the forwarded heartbeat to update cardd's live job state",
   );
   writeFileSync(release, "");
-  await exited;
+  assert.deepEqual(await exited, [0, null]);
   assert.deepEqual(await jl.jobResults(), [[job, 0, "done"]]);
   assert.ok(
     proxy.requests.some((each) => each.op === "job.finish" && each.url === "/call-followed"),

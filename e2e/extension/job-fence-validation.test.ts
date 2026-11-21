@@ -32,6 +32,8 @@ test("incomplete or unbound startup fences leave the wait, wrapper input, and ta
     { ...fence, startupFenced: undefined },
     { ...fence, exitCode: undefined },
     { ...fence, exitCode: 1.5 },
+    { ...fence, commandNotStarted: "yes" },
+    { ...fence, commandNotStarted: false },
     { ...fence, lost: true },
     { ...fence, revived: true },
     { ...fence, job: 2 },

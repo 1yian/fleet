@@ -94,6 +94,7 @@ export const StartupFenceFields = Type.Object({
   startupFenced: Type.Literal(true),
   startupLaunch: JobLaunchId,
   exitCode: Type.Integer(),
+  commandNotStarted: Type.Optional(Type.Literal(true)),
   lost: Type.Optional(Type.Never()),
   revived: Type.Optional(Type.Never()),
 });
