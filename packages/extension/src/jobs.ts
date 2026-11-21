@@ -437,10 +437,11 @@ export class Jobs {
     if (!running) {
       if (cancelled || this.revisions.get(job) === before) {
         this.advance(job);
-        this.unresolved.delete(job);
         if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
         this.running.delete(job);
         if (cancelled) this.confirmStartupFence(job);
+        if (this.pending.has(job)) this.unresolved.add(job);
+        else this.unresolved.delete(job);
       }
       return cancelled
         ? `${named} was stopped before wrapper registration. Its command will not run.`

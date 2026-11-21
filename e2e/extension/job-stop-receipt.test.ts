@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
+import { CardViewSchema, check } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import { JobLab } from "../support/job-lab.ts";
 import { until } from "../support/live-fleet.ts";
@@ -73,4 +74,61 @@ test("a contradictory stop receipt changes nothing, and an honest receipt still 
   );
   const [result] = await jl.jobResults();
   assert.deepEqual(result?.slice(0, 2), [1, 130]);
+});
+
+test("a generic stop receipt for a lost job keeps the pending dispatch reconcilable until an exact read answers", async (t) => {
+  jl.env["PROBE_STOP_RESULT"] = "1";
+  const done = join(jl.jobDir, "gate-done");
+  const { pi, proxy, shim } = await jl.holdDispatch(
+    t,
+    `while [ ! -e ${quote(done)} ]; do sleep 0.05; done; echo gate`,
+  );
+  writeFileSync(shim.release, "");
+  await until(() => (jl.wrapperPid() === null ? undefined : true), "the wrapper to register");
+  proxy.callFault("job.running", { error: "injected exact read failure" });
+  const wrapper = Number(jl.wrapperPid());
+  process.kill(wrapper, "SIGSTOP");
+  const resume = (): void => {
+    try {
+      process.kill(wrapper, "SIGCONT");
+    } catch {
+      return;
+    }
+  };
+  t.after(resume);
+  jl.ageJob(1);
+  const lost = await until(
+    async () =>
+      check(CardViewSchema, await jl.fleet.main.call("card", { card: jl.card.id })).entries.find(
+        (entry) => entry.fields["lost"] === true,
+      ),
+    "the detector to report the silent wrapper",
+  );
+  await jl.h.waitFor(
+    (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
+    "the loss notice",
+  );
+  const base = jl.h.events.filter((event) => event["type"] === "settled").length;
+  jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
+  jl.h.onModel(() => ({ text: "The job is already lost" }));
+  pi.prompt("Stop the gate job");
+  const stopped = await jl.h.waitFor(
+    (event) => event["type"] === "stop_result",
+    "the generic stop receipt",
+  );
+  assert.deepEqual(stopped["content"], [
+    { type: "text", text: "job 1 (gate) is not running: nothing to stop." },
+  ]);
+  await jl.h.waitForNth(
+    (event) => event["type"] === "settled",
+    base + 1,
+    "the worker to settle after the stop",
+  );
+  const mark = proxy.activities.length;
+  proxy.callFault("job.running", undefined);
+  proxy.drop();
+  await until(
+    () => (proxy.activities.slice(mark).includes("idle") ? true : undefined),
+    "the reconnect's exact read to end the wait",
+  );
 });

@@ -111,6 +111,15 @@ export class JobLab {
     }
   }
 
+  ageJob(job: number): void {
+    const db = new DatabaseSync(this.fleet.cardd.db, { timeout: 5000 });
+    try {
+      db.prepare("UPDATE jobs SET updated_at = updated_at - 60000 WHERE id = ?").run(job);
+    } finally {
+      db.close();
+    }
+  }
+
   wrapperPid(): unknown {
     const db = new DatabaseSync(this.fleet.cardd.db, { readOnly: true, timeout: 5000 });
     try {

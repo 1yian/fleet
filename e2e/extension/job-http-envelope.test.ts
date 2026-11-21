@@ -125,8 +125,10 @@ test("the cutover command never prints ready for a reply that is both a success 
     configureMain(scratch, await serve({ ok: true, value: READY, ...extra }), "token");
     assert.deepEqual(await status(), { failed: true, stdout: "" });
   }
-  configureMain(scratch, await serve({ ok: true, value: READY }), "token");
-  const honest = await status();
-  assert.equal(honest.failed, false);
-  assert.deepEqual(JSON.parse(honest.stdout), READY);
+  for (const additive of [{}, { requestId: "r-1", note: { served: "by cardd" } }]) {
+    configureMain(scratch, await serve({ ok: true, value: READY, ...additive }), "token");
+    const honest = await status();
+    assert.equal(honest.failed, false);
+    assert.deepEqual(JSON.parse(honest.stdout), READY);
+  }
 });

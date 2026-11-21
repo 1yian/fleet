@@ -1852,14 +1852,16 @@ test("a delayed positive job list cannot restore a wait after confirmed loss", a
   const snapshot = Promise.withResolvers<() => void>();
   let holdList = false;
   let confirmedLoss = false;
-  let listAskedAt = 0;
   const disconnect = await jobProxy(
     t,
     callCardd,
     false,
     (reply, send) => {
       if (!holdList || !reply.ok) return reply;
-      assert.deepEqual(check(OPS.jobs.result, reply.value), [{ id: 1, label: "delayed" }]);
+      assert.deepEqual(check(OPS.jobs.result, reply.value), [
+        { id: 1, label: "delayed" },
+        { id: 2, label: "other" },
+      ]);
       holdList = false;
       snapshot.resolve(() => {
         send(reply);
@@ -1871,7 +1873,6 @@ test("a delayed positive job list cannot restore a wait after confirmed loss", a
     undefined,
     (message) => {
       if (message.t === "activity") activities.push(message.state);
-      if (message.t === "call" && message.op === "jobs" && holdList) listAskedAt = Date.now();
     },
     (reply) => {
       if (reply.ok) confirmedLoss = !check(OPS["job.running"].result, reply.value).running;
@@ -1889,6 +1890,21 @@ test("a delayed positive job list cannot restore a wait after confirmed loss", a
   const wrapper = await wrapperOf(1, slow.ready);
   await settled(1);
   await until(() => (activities.at(-1) === "waiting" ? true : undefined), "the initial wait");
+  const token = env["FLEET_TOKEN"] ?? "";
+  const started = await fleet.cardd.post(token, "job.start", {
+    label: "other",
+    command: "sleep 99",
+  });
+  const outcome = check(HttpOutcomeSchema, started.body);
+  assert.ok(outcome.ok);
+  const other = check(OPS["job.start"].result, outcome.value);
+  assert.equal(other.job, 2);
+  const beat = setInterval(() => {
+    fleet.cardd.post(token, "job.alive", { job: 2 }).catch(() => undefined);
+  }, 200);
+  t.after(() => {
+    clearInterval(beat);
+  });
   holdList = true;
   disconnect();
   const releaseList = await snapshot.promise;
@@ -1904,23 +1920,23 @@ test("a delayed positive job list cannot restore a wait after confirmed loss", a
       () => (confirmedLoss && activities.at(-1) === "idle" ? true : undefined),
       "the worker to publish idle after the exact loss read",
     );
-    const before = activities.length;
-    const heldFor = Date.now() - listAskedAt;
-    assert.ok(
-      listAskedAt > 0 && heldFor < 4000,
-      `the held list expired before release (${String(heldFor)} ms)`,
-    );
     releaseList();
-    await fleet.main.call("comment", {
-      card: card.id,
-      text: "Check activity after the delayed list",
+    await until(
+      () => (activities.at(-1) === "waiting" ? true : undefined),
+      "the worker to consume the held list and wait on its other job",
+    );
+    const finished = await fleet.cardd.post(token, "job.finish", {
+      job: 2,
+      exitCode: 0,
+      outputTail: "other done",
     });
-    const activity = await until(() => {
-      const after = activities.slice(before);
-      return after.includes("running") && after.at(-1) !== "running" ? after.at(-1) : undefined;
-    }, "the worker to settle after the delayed list");
-    assert.equal(activity, "idle");
+    assert.equal(finished.status, 200);
+    await until(
+      () => (activities.at(-1) === "idle" ? true : undefined),
+      "the worker to publish idle once only the stale job could still hold the wait",
+    );
   } finally {
+    clearInterval(beat);
     process.kill(wrapper, "SIGCONT");
   }
 });
