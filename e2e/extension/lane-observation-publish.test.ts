@@ -104,9 +104,25 @@ test("a pane replaced between the two close reads, with the count unchanged, is 
   assert.equal((await workspace("ops"))?.["workspace_id"], before["workspace_id"]);
 });
 
-test("a non-Pi foreground child in the shell's own process group is busy and authorizes no launch or hold", async () => {
+test("a non-Pi foreground child in the shell's own process group leaves the lane unread and authorizes no launch or crash hold", async () => {
   const root = await idlePane("ops", ops());
-  assert.deepEqual(maintain("shared-group-child", root), action("ops", "running"));
+  assert.deepEqual(maintain("shared-group-child", root), action("ops", "unread"));
   assert.equal(existsSync(join(ops(), "state", "starts")), false);
   assert.equal(existsSync(join(ops(), "state", "stopped")), false);
+});
+
+test("a same-group foreground child never clears a hold or lets restart-all replace the workspace", async () => {
+  const root = await idlePane("ops", ops());
+  const stopped = join(ops(), "state", "stopped");
+  const starts = join(ops(), "state", "starts");
+  const history = `${String(Date.now())}\n`;
+  writeFileSync(stopped, "stopped by hand\n");
+  writeFileSync(starts, history);
+  const before = await workspace("ops");
+  assert.ok(typeof before?.["workspace_id"] === "string");
+  assert.deepEqual(maintain("shared-group-child", root), action("ops", "unread"));
+  assert.throws(() => fleet(["restart"], "shared-group-child", root));
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+  assert.equal(readFileSync(starts, "utf8"), history);
+  assert.equal((await workspace("ops"))?.["workspace_id"], before["workspace_id"]);
 });

@@ -358,7 +358,9 @@ export async function lanePaneState(
   if (shell !== group && processes.length === 0)
     throw new HostUnread(`herdr returned a foreground group without processes for pane ${pane}`);
   if (shell !== group) return "busy";
-  return processes.some((each) => each["pid"] !== shell) ? "busy" : "down";
+  if (processes.some((each) => each["pid"] !== shell))
+    throw new HostUnread(`herdr listed a foreground process in the shell's own group for ${pane}`);
+  return "down";
 }
 
 function completeProcesses(entries: unknown, pane: string) {
