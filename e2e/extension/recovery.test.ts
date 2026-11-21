@@ -167,9 +167,9 @@ test("a worker with a stale module is replaced on its own conversation and work,
 
 function assertRecoveredConversation(h: Harness, incident: number): void {
   const checkText = `recovery check ${String(incident)} from main: this is a health check, not new work`;
-  const fresh = h.callsOf("worker").find(
-    (turns) => cardFor(turns) === 1 && lastUser(turns)?.includes(checkText),
-  );
+  const fresh = h
+    .callsOf("worker")
+    .find((turns) => cardFor(turns) === 1 && lastUser(turns)?.includes(checkText));
   assert.ok(fresh, "the replacement did not receive its recovery check");
   assert.ok(
     fresh.some((turn) => turn.text.includes("fix the scrollbar")),

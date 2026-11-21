@@ -114,27 +114,21 @@ class StartUnconfirmed extends Error {
   }
 }
 
-async function launchOnce(
-  host: string,
-  pane: string,
-  args: string[],
-  replacing = false,
-): Promise<Error | undefined> {
+async function launchReplacement(host: string, pane: string, args: string[]): Promise<void> {
+  if (!(await until(() => shellIdle(host, pane), SHELL_WAIT_MS)))
+    throw new Error(`the shell in pane ${pane} on ${host} did not become idle`);
+  try {
+    await startReplacementOnce(host, args);
+  } catch (error) {
+    throw error instanceof AgentStartRefused ? error : new StartUnconfirmed(error);
+  }
+}
+
+async function launchOnce(host: string, pane: string, args: string[]): Promise<Error | undefined> {
   const watch = { over: false };
-  const launched = until(() => shellIdle(host, pane), SHELL_WAIT_MS).then(async (idle) => {
-    if (replacing && watch.over) return undefined;
-    if (replacing && !idle)
-      return new Error(`the shell in pane ${pane} on ${host} did not become idle`);
-    try {
-      if (replacing) await startReplacementOnce(host, args);
-      else await herdr(host, args);
-      return undefined;
-    } catch (error) {
-      return replacing && !(error instanceof AgentStartRefused)
-        ? new StartUnconfirmed(error)
-        : toError(error);
-    }
-  }, toError);
+  const launched = until(() => shellIdle(host, pane), SHELL_WAIT_MS)
+    .then(() => herdr(host, args))
+    .then(() => undefined, toError);
   const appeared = (async (): Promise<undefined> => {
     while (!watch.over && !(await piRunning(host, pane).catch(() => false))) await sleep(POLL_MS);
     return undefined;
@@ -221,7 +215,10 @@ async function replacementError(
       `${cause}\nThe replacement could not be confirmed after the start command; the request was not refunded.`,
       { cause: error },
     );
-  const context = running === false ? await exitedMessage(host, pane, worker) : undefined;
+  const context =
+    running === false
+      ? `The replacement did not start. Pi is not running in pane ${pane} on ${host}. ${await paneTail(host, pane, worker.token)}`
+      : undefined;
   return new DidNotStart(error, context, worker.token);
 }
 
@@ -236,10 +233,7 @@ async function startAgent(
   let readiness: string | undefined;
   try {
     if (replacementStarted === undefined) await launchAgent(host, pane, args);
-    else {
-      const error = await launchOnce(host, pane, args, true);
-      if (error !== undefined) throw error;
-    }
+    else await launchReplacement(host, pane, args);
   } catch (error) {
     if (replacementStarted !== undefined) {
       const outcome = await replacementError(host, pane, worker, error, replacementStarted);

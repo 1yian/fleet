@@ -41,6 +41,8 @@ export class AgentStartRefused extends Error {}
 
 export class AgentReadinessTimedOut extends Error {}
 
+export class AgentReadinessTimedOut extends Error {}
+
 const startRefused = (code: unknown): boolean =>
   code === "agent_pane_busy" || code === "agent_name_taken" || code === "server_not_running";
 
@@ -54,7 +56,7 @@ function structured(output: string): Record<string, unknown> | undefined {
     const payload: unknown = JSON.parse(output);
     return isRecord(payload) ? payload : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -302,18 +304,19 @@ function laneTransportFailure(
   return lane === "observe" ? new HostUnread(message) : new Error(message);
 }
 
-function rejectedBeforeStart(
+function refusalDetail(
   file: string,
   error: ExecFileException,
   out: string,
   err: string,
-): boolean {
-  return (
-    error.code === "ENOENT" ||
-    diedBeforeTheCommandStarted(file, error, err) ||
-    refusedStart(err) ||
-    refusedStart(out)
-  );
+): string | undefined {
+  const stdout = refusalOf(out);
+  const stderr = refusalOf(err);
+  if (stdout !== undefined) return [stdout, stderr ?? err.trim()].filter(Boolean).join("\n");
+  if (stderr !== undefined) return stderr;
+  if (error.code === "ENOENT" || diedBeforeTheCommandStarted(file, error, err))
+    return err.trim() || exitStatus(error);
+  return undefined;
 }
 
 function startFailure(
@@ -367,16 +370,20 @@ async function herdrText(
           return;
         }
         const detail = err.trim() || (!replay && out.trim()) || exitStatus(error);
-        const message = scrub(`herdr ${args[0] ?? ""} on ${host} failed: ${detail}`);
-        reject(
-          !replay && rejectedBeforeStart(file, error, out, err)
-            ? new AgentStartRefused(message)
-            : failure(via, error, message, probe),
-        );
+        reject(failure(via, error, message(detail), probe));
       },
       replay,
     );
   });
+}
+
+function startError(
+  error: Record<string, unknown>,
+  reply: Record<string, unknown>,
+  message: string,
+): Error | undefined {
+  if (startRefused(error["code"])) return new AgentStartRefused(message);
+  return readinessTimeout(reply) ? new AgentReadinessTimedOut(message) : undefined;
 }
 
 function startError(
