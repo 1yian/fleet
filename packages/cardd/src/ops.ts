@@ -17,6 +17,7 @@ import {
   prepareJob,
   recordJobResult,
   registerJob,
+  isJobRunning,
   runningJobs,
   startJob,
   stopJob,
@@ -363,6 +364,10 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
     return { value: { status, attention, until }, notify: [] };
   },
   "job.idle": (db, session) => ({ value: { idle: !hasJobWait(db, session.id) }, notify: [] }),
+  "job.running": (db, session, raw) => {
+    const { job } = check(OPS["job.running"].args, raw);
+    return { value: { running: isJobRunning(db, session.id, job) }, notify: [] };
+  },
   jobs: (db, session) => ({ value: runningJobs(db, session.id), notify: [] }),
   "incident.report": (db, session, raw, timing) =>
     reportFailure(db, session, check(OPS["incident.report"].args, raw), timing),

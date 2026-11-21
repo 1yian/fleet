@@ -109,6 +109,9 @@ async function jobProxy(
   beforeStop?: Promise<void>,
   idleReply?: (reply: CallResult) => CallResult | undefined,
   outbound?: (message: ClientMessage) => void,
+  exactReply?: (reply: CallResult) => CallResult | undefined,
+  holdOn: (fields: Record<string, unknown>) => boolean = (fields) =>
+    fields["startupFenced"] === true || fields["lost"] === true,
 ) {
   const proxy = createServer((req, res) => {
     let body = "";
@@ -136,6 +139,7 @@ async function jobProxy(
     const jobReads = new Set<number>();
     const reports = new Set<number>();
     const idleReads = new Set<number>();
+    const exactReads = new Set<number>();
     let held: { id: number; release: true | Promise<void> } | undefined;
     client.pause();
     upstream.on("open", () => {
@@ -151,6 +155,7 @@ async function jobProxy(
         reportReply !== undefined ||
         beforeStop !== undefined ||
         idleReply !== undefined ||
+        exactReply !== undefined ||
         outbound !== undefined
       ) {
         const message = parseClientMessage(text);
@@ -158,6 +163,7 @@ async function jobProxy(
         if (message.t === "call") {
           if (message.op === "job.idle" && idleReply !== undefined) idleReads.add(message.id);
           if (message.op === "jobs" && jobsReply !== undefined) jobReads.add(message.id);
+          if (message.op === "job.running" && exactReply !== undefined) exactReads.add(message.id);
           if (message.op === "report" && reportReply !== undefined) reports.add(message.id);
           if (message.op === "job.stop" && beforeStop !== undefined) {
             void beforeStop.then(forward);
@@ -174,7 +180,7 @@ async function jobProxy(
         held === undefined &&
         dropFence &&
         message.t === "entry" &&
-        (message.entry.fields["startupFenced"] === true || message.entry.fields["lost"] === true)
+        holdOn(message.entry.fields)
       ) {
         held = { id: message.entry.id, release: dropFence };
         dropFence = false;
@@ -188,6 +194,13 @@ async function jobProxy(
       } else if (client.readyState === WebSocket.OPEN) {
         if (message.t === "result" && jobReads.delete(message.id) && jobsReply !== undefined) {
           const reply = jobsReply(message);
+          if (reply !== undefined) client.send(JSON.stringify(reply));
+        } else if (
+          message.t === "result" &&
+          exactReads.delete(message.id) &&
+          exactReply !== undefined
+        ) {
+          const reply = exactReply(message);
           if (reply !== undefined) client.send(JSON.stringify(reply));
         } else if (
           message.t === "result" &&
@@ -1580,103 +1593,138 @@ exec ${quote(herdr)} "$@"
   assert.equal(existsSync(marker), false);
 });
 
-const staleNotice = (job: number, label: string, kind: "lost" | "revived"): number => {
-  const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
-  try {
-    const fields = JSON.stringify({ job, label, [kind]: true });
-    const body =
-      kind === "lost"
-        ? `job ${String(job)} (${label}) lost: no heartbeat arrived`
-        : `job ${String(job)} (${label}) is running again`;
-    const { lastInsertRowid } = db
-      .prepare(
-        "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, 'check', 'job-result', ?, ?, ?)",
-      )
-      .run(card.id, body, fields, Date.now());
-    db.prepare(
-      "INSERT INTO deliveries (session, entry, state, updated_at) VALUES ('c-1-a1', ?, 'pending', ?)",
-    ).run(lastInsertRowid, Date.now());
-    return Number(lastInsertRowid);
-  } finally {
-    db.close();
-  }
-};
+type ExactRead = "complete" | "failed" | "hanging";
 
-for (const stale of [
-  "revival after an acknowledged completion",
-  "loss after an acknowledged revival",
-]) {
-  test(`a replayed ${stale} cannot change the replacement worker's wait`, async (t) => {
-    const activities: string[] = [];
-    await jobProxy(t, callCardd, false, undefined, undefined, undefined, undefined, (message) => {
-      if (message.t === "activity") activities.push(message.state);
-    });
-    const completed = stale.startsWith("revival");
-    const slow = commandAwaitingGo(85);
-    t.after(() => {
-      if (existsSync(h.dir)) writeFileSync(slow.go, "");
-    });
-    h.onModel(() => ({
-      tool: "run_long",
-      args: { label: "stale", command: completed ? "echo done" : slow.command },
-    }));
-    h.onModel(() => ({ text: "Waiting for the job" }));
-    if (completed) h.onModel(() => ({ text: "The result was handled" }));
-    const first = worker();
-    if (completed) {
-      await h.waitForNth((e) => e["type"] === "fleet_delivered", 1, "the job result");
-      await settled(2);
+for (const older of ["loss", "revival"] as const)
+  for (const exactRead of ["complete", "failed", "hanging"] as ExactRead[])
+    test(`a replayed older ${older} cannot change the replacement worker's wait (${exactRead} exact read)`, async (t) => {
+      const activities: string[] = [];
+      const release = Promise.withResolvers<void>();
+      t.after(() => release.resolve());
+      let faulty = false;
+      let listReads = 0;
+      const fault = (reply: CallResult): CallResult | undefined => {
+        if (exactRead === "complete") return reply;
+        if (exactRead === "hanging") return undefined;
+        return { t: "result", id: reply.id, ok: false, error: "job read unavailable" };
+      };
+      await jobProxy(
+        t,
+        callCardd,
+        release.promise,
+        (reply) => {
+          if (!faulty) return reply;
+          listReads += 1;
+          return listReads === 1 ? reply : fault(reply);
+        },
+        undefined,
+        undefined,
+        undefined,
+        (message) => {
+          if (message.t === "activity") activities.push(message.state);
+        },
+        (reply) => (faulty ? fault(reply) : reply),
+        (fields) => (older === "loss" ? fields["lost"] === true : fields["revived"] === true),
+      );
+      const slow = commandAwaitingGo(86);
+      t.after(() => {
+        if (existsSync(h.dir)) writeFileSync(slow.go, "");
+      });
+      h.onModel(() => ({ tool: "run_long", args: { label: "replayed", command: slow.command } }));
+      h.onModel(() => ({ text: "Waiting for the job" }));
+      for (let i = 0; i < 12; i++) h.onModel(() => ({ text: "Noted" }));
+      const view = async () =>
+        (await cardView()).entries.filter((entry) => entry.kind === "job-result");
       const db = new DatabaseSync(fleet.cardd.db, { readOnly: true, timeout: 5000 });
       t.after(() => db.close());
-      await untilAsync(
-        () =>
-          db
-            .prepare(
-              `SELECT 1 AS found FROM deliveries d JOIN entries e ON e.id = d.entry
-               WHERE d.session = 'c-1-a1' AND e.kind = 'job-result'
-                 AND d.state IN ('acknowledged', 'confirmed')`,
-            )
-            .get() === undefined
-            ? undefined
-            : true,
-        "cardd to persist the acknowledgment of the completion",
-      );
-    } else {
-      await until(() => (existsSync(slow.ready) ? true : undefined), "the command to run");
+      const acknowledged = (entry: number): boolean =>
+        db
+          .prepare(
+            "SELECT 1 AS found FROM deliveries WHERE session = 'c-1-a1' AND entry = ? AND state IN ('acknowledged', 'confirmed')",
+          )
+          .get(entry) !== undefined;
+      const first = worker();
+      const wrapper = await wrapperOf(1, slow.ready);
       await settled(1);
-    }
-    await first.kill();
-    const notice = staleNotice(1, "stale", completed ? "revived" : "lost");
-    const delivered = h.events.filter((event) => event["type"] === "fleet_delivered").length;
-    const settledBefore = h.events.filter((event) => event["type"] === "settled").length;
-    h.onModel(() => ({ text: "The stale notice was handled" }));
-    h.onModel(() => ({ text: "The follow-up was handled" }));
-    const second = worker();
-    await h.waitFor(
-      (event) => event["type"] === "fleet_delivered" && event["entryId"] === notice,
-      "the replacement worker to receive the stale notice",
-    );
-    assert.ok(h.events.filter((event) => event["type"] === "fleet_delivered").length > delivered);
-    await h.waitForNth(
-      (event) => event["type"] === "settled",
-      settledBefore + 1,
-      "the replacement worker to settle on the stale notice",
-    );
-    const sentBefore = activities.length;
-    second.prompt("Is the job still being waited on?");
-    await h.waitForNth(
-      (event) => event["type"] === "settled",
-      settledBefore + 2,
-      "the follow-up turn",
-    );
-    const settledActivity = await until(() => {
-      const after = activities.slice(sentBefore);
-      return after.includes("running") && after.at(-1) !== "running" ? after.at(-1) : undefined;
-    }, "the worker to send its settled activity after the follow-up turn");
-    assert.equal(settledActivity, completed ? "idle" : "waiting");
-    assert.equal(existsSync(slow.ready), !completed);
-  });
-}
+      process.kill(wrapper, "SIGSTOP");
+      const lost = await untilAsync(
+        async () => (await view()).find((entry) => entry.fields["lost"] === true),
+        "the detector to record the loss",
+      );
+      if (older === "loss") {
+        assert.equal(
+          h.events.some(
+            (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
+          ),
+          false,
+        );
+      } else {
+        await h.waitFor(
+          (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
+          "the loss to reach the first worker",
+        );
+      }
+      process.kill(wrapper, "SIGCONT");
+      const revived = await untilAsync(
+        async () => (await view()).find((entry) => entry.fields["revived"] === true),
+        "the heartbeat to record the revival",
+      );
+      const newer = older === "loss" ? revived : undefined;
+      if (newer !== undefined) {
+        await h.waitFor(
+          (event) => event["type"] === "fleet_delivered" && event["entryId"] === newer.id,
+          "the revival to reach the first worker",
+        );
+        await untilAsync(
+          () => (acknowledged(newer.id) ? true : undefined),
+          "cardd to persist the acknowledgment of the revival",
+        );
+      } else {
+        writeFileSync(slow.go, "");
+        const done = await untilAsync(
+          async () => (await view()).find((entry) => entry.fields["exitCode"] === 0),
+          "the durable completion",
+        );
+        await h.waitFor(
+          (event) => event["type"] === "fleet_delivered" && event["entryId"] === done.id,
+          "the completion to reach the first worker",
+        );
+        await untilAsync(
+          () => (acknowledged(done.id) ? true : undefined),
+          "cardd to persist the acknowledgment of the completion",
+        );
+      }
+      const held = older === "loss" ? lost : revived;
+      assert.equal(acknowledged(held.id), false);
+      await first.kill();
+      faulty = true;
+      const settledBefore = h.events.filter((event) => event["type"] === "settled").length;
+      const second = worker();
+      await h.waitFor((event) => event["type"] === "fleet_connected", "the replacement to connect");
+      release.resolve();
+      await h.waitFor(
+        (event) => event["type"] === "fleet_delivered" && event["entryId"] === held.id,
+        "the replacement worker to receive the older notice",
+      );
+      await h.waitForNth(
+        (event) => event["type"] === "settled",
+        settledBefore + 1,
+        "the replacement worker to settle on the older notice",
+      );
+      const sentBefore = activities.length;
+      second.prompt("Is the job still being waited on?");
+      await h.waitForNth(
+        (event) => event["type"] === "settled",
+        settledBefore + 2,
+        "the follow-up turn",
+      );
+      const settledActivity = await until(() => {
+        const after = activities.slice(sentBefore);
+        return after.includes("running") && after.at(-1) !== "running" ? after.at(-1) : undefined;
+      }, "the worker to send its settled activity after the follow-up turn");
+      assert.equal(settledActivity, older === "loss" ? "waiting" : "idle");
+      assert.equal(existsSync(slow.ready), true);
+    });
 
 test("run_long reports a dispatch as awaiting startup confirmation while registration is held, then delivers the result", async (t) => {
   const registration = Promise.withResolvers<void>();

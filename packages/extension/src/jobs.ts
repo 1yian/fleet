@@ -80,13 +80,13 @@ export class Jobs {
   private readonly preparing = new Map<string, Preparing>();
   private readonly running = new Set<number>();
   private readonly lastResult = new Map<number, number>();
+  private readonly noticed = new Set<number>();
   private readonly pending = new Map<number, PendingDispatch>();
   private readonly launching = new Map<
     number,
     { unstarted: boolean; ran: boolean; legacy: boolean }
   >();
   private readonly unsettled = new Set<number>();
-  private readonly unverified = new Set<number>();
   private readonly cancelledJobs = new Set<number>();
   private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
@@ -110,35 +110,25 @@ export class Jobs {
     this.resumeLaunchCleanup();
     const before = new Map(this.lastResult);
     const jobs = await this.link.call("jobs", {}, 5000);
-    this.applyList(new Set(jobs.map(({ id }) => id)), before, [
-      ...new Set([...jobs.map(({ id }) => id), ...this.unverified]),
-    ]);
-  }
-
-  private applyList(
-    listed: ReadonlySet<number>,
-    before: ReadonlyMap<number, number>,
-    jobs: readonly number[],
-  ): void {
-    for (const id of jobs) {
-      if (this.lastResult.get(id) !== before.get(id)) continue;
-      if (listed.has(id)) {
-        this.unverified.delete(id);
-        this.running.add(id);
-        this.clearPending(id);
-      } else if (this.unverified.delete(id)) this.running.delete(id);
+    for (const { id } of jobs) {
+      if (this.lastResult.get(id) !== before.get(id) && !this.noticed.has(id)) continue;
+      this.running.add(id);
+      this.clearPending(id);
     }
   }
 
   private async reconcile(job: number): Promise<void> {
-    this.unverified.add(job);
-    const before = new Map(this.lastResult);
+    const seen = this.lastResult.get(job);
+    let running: boolean;
     try {
-      const jobs = await this.link.call("jobs", {}, 5000);
-      this.applyList(new Set(jobs.map(({ id }) => id)), before, [job]);
+      running = (await this.link.call("job.running", { job }, 5000)).running;
     } catch {
       return;
     }
+    if (this.lastResult.get(job) !== seen) return;
+    this.clearPending(job);
+    if (running) this.running.add(job);
+    else this.running.delete(job);
   }
 
   observeResult(entry: Entry): void {
@@ -147,6 +137,8 @@ export class Jobs {
     if (startupFenced !== true && typeof exitCode !== "number" && lost !== true && revived !== true)
       return;
     this.lastResult.set(job, entry.id);
+    if (startupFenced !== true && typeof exitCode !== "number") this.noticed.add(job);
+    else this.noticed.delete(job);
     if (startupFenced === true) {
       this.confirmStartupFence(
         job,
@@ -165,11 +157,11 @@ export class Jobs {
       (!launching.legacy || exitCode === 0)
     )
       launching.ran = true;
-    this.clearPending(job);
-    if (revived === true) this.running.add(job);
-    else this.running.delete(job);
-    if (typeof exitCode === "number") this.forgetTab(job);
-    else void this.reconcile(job);
+    if (typeof exitCode === "number") {
+      this.clearPending(job);
+      this.running.delete(job);
+      this.forgetTab(job);
+    } else void this.reconcile(job);
   }
 
   private owner(job: number): string {
@@ -441,6 +433,7 @@ export class Jobs {
         );
       if (launching.legacy) {
         this.settleLaunchFile(job);
+        this.running.delete(job);
         throw error;
       }
       this.removeFile(job, file);

@@ -375,6 +375,14 @@ export function hasJobWait(db: DatabaseSync, session: string): boolean {
   );
 }
 
+export function isJobRunning(db: DatabaseSync, session: string, job: number): boolean {
+  return (
+    db
+      .prepare(`SELECT 1 FROM jobs j WHERE id = ? AND attempt = ? AND ${runningJobSql("j")}`)
+      .get(job, attemptOf(db, session)) !== undefined
+  );
+}
+
 export function runningJobs(db: DatabaseSync, session: string): { id: number; label: string }[] {
   return db
     .prepare(

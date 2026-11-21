@@ -186,6 +186,11 @@ export const JOB_OPS = {
     args: Type.Object({}),
     result: Type.Object({ idle: Type.Boolean() }),
   },
+  "job.running": {
+    roles: ["worker"],
+    args: Type.Object({ job: Type.Integer() }),
+    result: Type.Object({ running: Type.Boolean() }),
+  },
   jobs: {
     roles: ["worker"],
     args: Type.Object({}),
