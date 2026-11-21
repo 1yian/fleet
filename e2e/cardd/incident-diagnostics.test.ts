@@ -108,6 +108,9 @@ for (const [name, diagnostic] of [
   ["curl hidden marker with a tail", "curl -H 'X-Api-Key: [hidden] canoe' https://localhost"],
   ["curl form password argument", "curl --data-urlencode 'password=paper canoe' https://localhost"],
   ["curl json body password", `curl -d '{"password":"paper canoe"}' https://localhost`],
+  ["curl key passphrase", "curl --cert client.pem --pass paper https://localhost"],
+  ["curl attached certificate password", "curl -E client.pem:paper https://localhost"],
+  ["curl tls password", "curl --tlspassword paper --tlsuser demo https://localhost"],
   ["curl multipart secret", "curl -F 'client_secret=paper canoe' https://localhost"],
   ["curl attached data argument", "curl -d'password=paper canoe' https://localhost"],
   ["curl percent-encoded field name", "curl -d 'pass%77ord=paper%20canoe' https://localhost"],
@@ -336,6 +339,20 @@ test("two port-prefixed failure lines keep their text and their transient recove
 test("two port lines whose offsets match the first message length keep text and transient recovery", async () => {
   const card = await newCard(cleo, "Report matching-gap port failures");
   await reportFailure(fleet, cleo, card, "8080: network timeout\n8090: connection refused");
+  const heard = await cleo.waitForEntry(is("runtime-failure"), "the runtime failure");
+  assert.ok(heard.body.includes("8080: network timeout"), heard.body);
+  assert.ok(heard.body.includes("Classified transient."), heard.body);
+  assert.ok(heard.body.includes("mode=retry"), heard.body);
+});
+
+test("timestamped port lines whose offsets match the first message keep text and transient recovery", async () => {
+  const card = await newCard(cleo, "Report timestamped matching-gap port failures");
+  await reportFailure(
+    fleet,
+    cleo,
+    card,
+    "12:00:01.000001 8080: network timeout\n12:00:02.000002 8091: connection refused",
+  );
   const heard = await cleo.waitForEntry(is("runtime-failure"), "the runtime failure");
   assert.ok(heard.body.includes("8080: network timeout"), heard.body);
   assert.ok(heard.body.includes("Classified transient."), heard.body);

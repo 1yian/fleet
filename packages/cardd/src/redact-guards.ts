@@ -33,6 +33,7 @@ const TRACE_ROW = new RegExp(
   String.raw`(?:^|[\n\u0001"'\u0060])[ \t>*+-]*(?:(\d{2}:\d{2}:\d{2}(?:\.\d+)?)[ \t]+)?([\da-f]{4}):[ \t]([^\n\u0001]*)`,
   "gi",
 );
+const FRAGMENT = /^[\w+/=-]{2,}["'}\]\s]*$/;
 const HTTP_TEXT = /HTTP\/|^(?:GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s|^[\w-]+:\s/i;
 const BROWSER_USERINFO = /(?<![a-z\d+.-])(?:https?|wss?|ftp):\/*(?!\[hidden\]@)[^\s/?#@]*@/i;
 
@@ -64,7 +65,8 @@ interface Row {
 function clippedAfter(prior: Row, row: Row): boolean {
   const gap = row.offset - prior.offset;
   const room = gap - prior.rest.length;
-  const stamped = row.stamped && prior.stamped && (room === 1 || room === 2);
+  const fragments = FRAGMENT.test(prior.rest) && FRAGMENT.test(row.rest);
+  const stamped = row.stamped && prior.stamped && fragments && (room === 1 || room === 2);
   return (prior.rest.length === 64 && gap === 64) || stamped;
 }
 

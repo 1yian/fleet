@@ -32,6 +32,10 @@ export const REDACTED_COMPLAINTS = [
   ],
   ["8080: connection refused", "8080: connection refused"],
   [
+    "12:00:01.000001 8080: network timeout\n12:00:02.000002 8091: connection refused",
+    "12:00:01.000001 8080: network timeout 12:00:02.000002 8091: connection refused",
+  ],
+  [
     "12:00:01.000001 8080: i/o timeout\n12:00:02.000002 9090: connection refused",
     "12:00:01.000001 8080: i/o timeout 12:00:02.000002 9090: connection refused",
   ],
@@ -284,6 +288,14 @@ export const COOKIE_COMPLAINTS = [
 
 export const CURL_DATA_COMPLAINTS = [
   "curl --data-urlencode 'password=paper canoe' https://localhost",
+  "curl --cert client.pem --pass paper https://localhost",
+  "curl --key client.key --pass=paper https://localhost",
+  "curl --proxy-pass paper -x proxy:3128 https://localhost",
+  "curl --tlspassword paper --tlsuser demo https://localhost",
+  "curl --proxy-tlspassword=paper https://localhost",
+  "curl -E client.pem:paper https://localhost",
+  "curl -sE 'client.pem:paper' https://localhost",
+  "curl --proxy-cert client.pem:paper https://localhost",
   "curl -d 'pass%77ord=paper%20canoe' https://localhost",
   "curl -d'api%5Fkey=paper' https://localhost",
   "curl --url-query 'pass%77ord=paper%20canoe' https://localhost",
