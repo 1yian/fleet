@@ -294,7 +294,6 @@ test("a delayed generic stop reply for a lost job cannot discard a revival that 
       text: "job 1 (gate): no interrupt was sent, and this reply was superseded by newer news about the job.",
     },
   ]);
-  exactReply.resolve(undefined);
   await jl.h.waitForNth(
     (event) => event["type"] === "settled",
     base + 1,
@@ -306,6 +305,7 @@ test("a delayed generic stop reply for a lost job cannot discard a revival that 
   );
   assert.equal(settledActivity, "waiting");
   assert.equal(proxy.activities.slice(quiet).includes("idle"), false);
+  exactReply.resolve(undefined);
 
   writeFileSync(done, "");
   await until(
