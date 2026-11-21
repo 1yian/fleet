@@ -21,7 +21,7 @@ A lane's mate reads `behind` with every step in another lane counted as open and
 
 ## What counts as a real change
 
-`movedAt` advances on a comment, hold, release, answer, review feedback, cleanup, report, job result, or checkout progress (`progress_at`), with the exceptions below. A `working` report does not count if the preceding report was also `working`, even if its text differs. A `note` report counts. Automated wakes and lost job results do not count. `movedAt` never reads `cards.last_activity`, which every reconnect resets.
+`movedAt` advances on a comment, hold, release, answer, review feedback, cleanup, report, job result, or checkout progress (`progress_at`), with the exceptions below. A `working` report does not count if the preceding report was also `working`, even if its text differs. A `note` report counts. Automated wakes, lost job results, and the comment that `restart_card` posts to a replaced worker do not count. `movedAt` never reads `cards.last_activity`, which every reconnect resets.
 
 A job is a repeat if an earlier run of the same label in the live attempt began strictly after the cutoff. The cutoff is the latest of card creation, a counted entry other than a job result, checkout progress, or a change of exit code. An exit-code change is measured against the preceding recorded exit code for that label in the live attempt, such as a pass after a timeout. It can reset the cutoff for all labels. A repeat with no exit-code change does not advance `movedAt`. A normal job finish can advance `movedAt` without resetting the cutoff.
 
