@@ -279,7 +279,7 @@ exec ${quote(herdr)} "$@"
         if (message.t === "result") ops.delete(message.id);
         if (op === "jobs") state.lists += 1;
         const fault = op === undefined ? undefined : state.callFaults.get(op);
-        deliver(client, rewriteResult(message, text, fault), fault);
+        deliver(client, message, rewriteResult(message, text, fault), fault);
       });
       upstream.on("error", () => client.terminate());
       upstream.on("close", () => client.terminate());
@@ -348,12 +348,19 @@ exec ${quote(herdr)} "$@"
   }
 }
 
-function deliver(client: WebSocket, payload: string, fault: CallFault | undefined): void {
+function deliver(
+  client: WebSocket,
+  message: ServerMessage,
+  payload: string,
+  fault: CallFault | undefined,
+): void {
   const send = (): void => {
     if (client.readyState === WebSocket.OPEN) client.send(payload);
   };
-  if (fault !== undefined && "hold" in fault) void fault.hold.then(send);
-  else send();
+  if (fault !== undefined && "hold" in fault) {
+    fault.seen?.(message);
+    void fault.hold.then(send);
+  } else send();
 }
 
 function rewriteResult(message: ServerMessage, text: string, fault: CallFault | undefined): string {
@@ -370,7 +377,7 @@ type CallFault =
   | { error: string }
   | { raw: Record<string, unknown> }
   | { local: Record<string, unknown> }
-  | { hold: Promise<unknown> };
+  | { hold: Promise<unknown>; seen?: (message: ServerMessage) => void };
 type HttpFault = { redirect: string } | { value: unknown } | { status: number; body: unknown };
 
 class ProxyState {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { CardViewSchema, check } from "@fleet/protocol";
+import { CardViewSchema, check, OPS, type ServerMessage } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import { JobLab } from "../support/job-lab.ts";
 import { until } from "../support/live-fleet.ts";
@@ -198,14 +198,12 @@ test("a stop reply that is both a success and a failure leaves the held launch i
   assert.deepEqual(await jl.jobResults(), [[1, 130, "stopped before wrapper registration"]]);
 });
 
-test("a delayed generic stop reply for a lost job cannot discard a revival that arrived first", async (t) => {
-  jl.env["PROBE_STOP_RESULT"] = "1";
-  const done = join(jl.jobDir, "gate-done");
-  const { pi, proxy, shim } = await jl.holdDispatch(
-    t,
-    `while [ ! -e ${quote(done)} ]; do sleep 0.05; done; echo gate`,
-  );
-  writeFileSync(shim.release, "");
+async function silenceRegisteredGate(
+  t: Parameters<typeof JobLab.prototype.proxy>[0],
+  proxy: Awaited<ReturnType<typeof JobLab.prototype.proxy>>,
+  release: string,
+) {
+  writeFileSync(release, "");
   await until(() => (jl.wrapperPid() === null ? undefined : true), "the wrapper to register");
   const lists = proxy.lists();
   proxy.drop();
@@ -234,6 +232,17 @@ test("a delayed generic stop reply for a lost job cannot discard a revival that 
     (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
     "the loss notice",
   );
+  return { resume, entryWhere };
+}
+
+test("a delayed generic stop reply for a lost job cannot discard a revival that arrived first", async (t) => {
+  jl.env["PROBE_STOP_RESULT"] = "1";
+  const done = join(jl.jobDir, "gate-done");
+  const { pi, proxy, shim } = await jl.holdDispatch(
+    t,
+    `while [ ! -e ${quote(done)} ]; do sleep 0.05; done; echo gate`,
+  );
+  const { resume, entryWhere } = await silenceRegisteredGate(t, proxy, shim.release);
 
   const stopReply = Promise.withResolvers<undefined>();
   const exactReply = Promise.withResolvers<undefined>();
@@ -241,7 +250,12 @@ test("a delayed generic stop reply for a lost job cannot discard a revival that 
     stopReply.resolve(undefined);
     exactReply.resolve(undefined);
   });
-  proxy.callFault("job.stop", { hold: stopReply.promise });
+  const captured = Promise.withResolvers<ServerMessage>();
+  proxy.callFault("job.stop", {
+    hold: stopReply.promise,
+    seen: (message) => captured.resolve(message),
+  });
+  const quiet = proxy.activities.length;
   const base = jl.h.events.filter((event) => event["type"] === "settled").length;
   jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
   jl.h.onModel(() => ({ text: "The stop reply arrived" }));
@@ -250,6 +264,12 @@ test("a delayed generic stop reply for a lost job cannot discard a revival that 
     () => (proxy.calls.includes("job.stop") ? true : undefined),
     "the stop request to be sent",
   );
+  const negative = await captured.promise;
+  assert.ok(negative.t === "result" && negative.ok);
+  assert.deepEqual(check(OPS["job.stop"].result, negative.value), {
+    label: "gate",
+    running: false,
+  });
   proxy.callFault("job.running", { hold: exactReply.promise });
   resume();
   const revived = await until(entryWhere("revived"), "the heartbeat to revive the job");
@@ -268,6 +288,12 @@ test("a delayed generic stop reply for a lost job cannot discard a revival that 
     "the delayed generic stop reply",
   );
   assert.equal(stopped["isError"], false);
+  assert.deepEqual(stopped["content"], [
+    {
+      type: "text",
+      text: "job 1 (gate): no interrupt was sent, and this reply was superseded by newer news about the job.",
+    },
+  ]);
   exactReply.resolve(undefined);
   await jl.h.waitForNth(
     (event) => event["type"] === "settled",
@@ -279,6 +305,7 @@ test("a delayed generic stop reply for a lost job cannot discard a revival that 
     "the worker's settled activity",
   );
   assert.equal(settledActivity, "waiting");
+  assert.equal(proxy.activities.slice(quiet).includes("idle"), false);
 
   writeFileSync(done, "");
   await until(

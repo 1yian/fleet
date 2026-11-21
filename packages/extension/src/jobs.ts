@@ -440,10 +440,9 @@ export class Jobs {
     const named = `job ${String(job)} (${label})`;
     if (cancelled) this.cancelledJobs.add(job);
     if (!running) {
-      if (
-        cancelled ||
-        (this.revisions.get(job) === before && this.lastResult.get(job) === noticed)
-      ) {
+      const current =
+        cancelled || (this.revisions.get(job) === before && this.lastResult.get(job) === noticed);
+      if (current) {
         this.advance(job);
         if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
         this.running.delete(job);
@@ -451,9 +450,11 @@ export class Jobs {
         if (this.pending.has(job)) this.unresolved.add(job);
         else this.unresolved.delete(job);
       }
-      return cancelled
-        ? `${named} was stopped before wrapper registration. Its command will not run.`
-        : `${named} is not running: nothing to stop.`;
+      if (cancelled)
+        return `${named} was stopped before wrapper registration. Its command will not run.`;
+      return current
+        ? `${named} is not running: nothing to stop.`
+        : `${named}: no interrupt was sent, and this reply was superseded by newer news about the job.`;
     }
     let tab = this.ownedTabs.get(job);
     if (tab === undefined) {
