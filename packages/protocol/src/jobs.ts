@@ -97,13 +97,35 @@ export const StartupFenceFields = Type.Object({
   lost: Type.Optional(Type.Never()),
   revived: Type.Optional(Type.Never()),
 });
+const JobExitFields = Type.Object({
+  job: JobId,
+  exitCode: Type.Integer(),
+  commandNotStarted: Type.Optional(Type.Literal(true)),
+  lost: Type.Optional(Type.Never()),
+  revived: Type.Optional(Type.Never()),
+});
+const JobLostFields = Type.Object({
+  job: JobId,
+  lost: Type.Literal(true),
+  exitCode: Type.Optional(Type.Never()),
+  revived: Type.Optional(Type.Never()),
+  commandNotStarted: Type.Optional(Type.Never()),
+});
+const JobRevivedFields = Type.Object({
+  job: JobId,
+  revived: Type.Literal(true),
+  exitCode: Type.Optional(Type.Never()),
+  lost: Type.Optional(Type.Never()),
+  commandNotStarted: Type.Optional(Type.Never()),
+});
+export const JobResultFields = Type.Union([JobExitFields, JobLostFields, JobRevivedFields]);
 const StartJob = Type.Object({
   label: Type.String({ minLength: 1 }),
   command: Type.String({ minLength: 1 }),
 });
 const StartedJob = Type.Object({
   job: JobId,
-  heartbeatMs: Type.Integer({ minimum: 1 }),
+  heartbeatMs: Type.Integer({ minimum: 1, maximum: 2_147_483_647 }),
 });
 const CutoverBlocker = Type.Object({
   job: JobId,

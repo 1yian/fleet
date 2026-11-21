@@ -38,6 +38,7 @@ export { ATTENTIONS, STATUSES, type Attention, type Status } from "./standing.ts
 export {
   JOB_RUNNING,
   jobIsRunning,
+  JobResultFields,
   nextJob,
   parseJobState,
   startedJob,

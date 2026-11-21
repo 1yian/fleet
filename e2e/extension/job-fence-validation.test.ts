@@ -238,3 +238,41 @@ test("a running stop receipt for a modern launch retires fence eligibility", asy
   );
   assert.deepEqual(await jl.jobResults(), [[1, 0, "gate"]]);
 });
+
+test("malformed ordinary notices cannot retire fence eligibility or touch the wait, input, or tab", async (t) => {
+  const { proxy, shim, input, tab } = await jl.holdDispatch(t, "echo gate");
+  const notices: Record<string, unknown>[] = [
+    { job: 1, lost: true, revived: true },
+    { job: 1, lost: true, exitCode: 0 },
+    { job: 1, revived: true, exitCode: 0 },
+    { job: 1, exitCode: 1.5 },
+    { job: 1, exitCode: 0, commandNotStarted: "yes" },
+    { job: 1, lost: true, commandNotStarted: true },
+    { job: 0, lost: true },
+    { job: 1.5, lost: true },
+  ];
+  const before = jl.deliveredCount();
+  const mark = proxy.activities.length;
+  const reads = proxy.calls.length;
+  notices.forEach((fields, index) => proxy.push(3001 + index, fields));
+  await jl.h.waitForNth(
+    (event) => event["type"] === "fleet_delivered",
+    before + notices.length,
+    "the malformed notices",
+  );
+  await settleWindow();
+  assert.equal(proxy.calls.slice(reads).includes("job.running"), false);
+  assert.equal(existsSync(shim.closes), false);
+  assert.ok(existsSync(input));
+  assert.ok(await jl.hasTab(tab));
+  assert.equal(proxy.activities.slice(mark).includes("idle"), false);
+
+  jl.expireJob();
+  await until(
+    () => (existsSync(shim.closes) ? readFileSync(shim.closes, "utf8").trim() : undefined),
+    "cardd's real expiry fence to close the tab",
+  );
+  assert.equal(readFileSync(shim.closes, "utf8").trim(), tab);
+  assert.equal(existsSync(input), false);
+  assert.deepEqual(await jl.jobResults(), EXPIRED);
+});

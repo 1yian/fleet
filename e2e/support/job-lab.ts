@@ -200,9 +200,14 @@ exec ${quote(herdr)} "$@"
       req.on("end", () => {
         void (async () => {
           const { op, args } = check(HttpCallSchema, JSON.parse(body));
-          const fault = state.takeHttpFault(op);
+          state.requests.push({ op, url: req.url ?? "" });
+          const fault = req.url === "/call" ? state.takeHttpFault(op) : undefined;
           if (fault !== undefined) {
             if ("redirect" in fault) res.writeHead(307, { location: fault.redirect }).end();
+            else if ("status" in fault)
+              res
+                .writeHead(fault.status, { "content-type": "application/json" })
+                .end(JSON.stringify(fault.body));
             else
               res
                 .writeHead(200, { "content-type": "application/json" })
@@ -234,7 +239,10 @@ exec ${quote(herdr)} "$@"
         const text = rawText(raw);
         const message = parseClientMessage(text);
         if (message.t === "activity") state.activities.push(message.state);
-        if (message.t === "call") ops.set(message.id, message.op);
+        if (message.t === "call") {
+          ops.set(message.id, message.op);
+          state.calls.push(message.op);
+        }
         if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
       });
       upstream.on("message", (raw) => {
@@ -281,6 +289,8 @@ exec ${quote(herdr)} "$@"
     });
     return {
       activities: state.activities,
+      requests: state.requests,
+      calls: state.calls,
       lists: (): number => state.lists,
       drop,
       callFault: (op: string, fault: CallFault | undefined): void => {
@@ -320,11 +330,13 @@ exec ${quote(herdr)} "$@"
 }
 
 type CallFault = { value: unknown } | { error: string };
-type HttpFault = { redirect: string } | { value: unknown };
+type HttpFault = { redirect: string } | { value: unknown } | { status: number; body: unknown };
 
 class ProxyState {
   readonly clients = new Set<WebSocket>();
   readonly activities: string[] = [];
+  readonly requests: { op: string; url: string }[] = [];
+  readonly calls: string[] = [];
   readonly callFaults = new Map<string, CallFault>();
   readonly httpFaults = new Map<string, { fault: HttpFault; times: number }>();
   prepare: HeldPrepare | undefined;

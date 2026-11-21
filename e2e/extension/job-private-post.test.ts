@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test, type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { quote } from "@fleet/protocol/route";
+import { wakeMate } from "../../packages/extension/src/wake.ts";
 import { JobLab } from "../support/job-lab.ts";
 import { until } from "../support/live-fleet.ts";
 import { configureMain, Scratch } from "../support/scratch.ts";
@@ -120,4 +121,46 @@ test("the cutover command never forwards its body to a redirect target, and an h
   configureMain(scratch, honest, "token");
   const answered = await run("node", [scratch.launch, "job-cutover", "status"]);
   assert.deepEqual(JSON.parse(answered.stdout), { state: "ready", blockers: [] });
+});
+
+test("legacy heartbeat and result transport still follows a same-origin redirect", async (t) => {
+  const proxy = await jl.proxy(t);
+  const followed = `${new URL(jl.env["FLEET_URL"]?.replace(/^ws/, "http") ?? "").origin}/call-followed`;
+  proxy.httpFault("job.finish", { redirect: followed }, 1);
+  const shim = jl.installShim();
+  writeFileSync(shim.release, "");
+  jl.h.onModel(() => ({ tool: "run_long", args: { label: "gate", command: "echo gate" } }));
+  jl.h.onModel(() => ({ text: "The gate was dispatched" }));
+  jl.worker();
+  await until(
+    async () => ((await jl.jobResults()).length > 0 ? true : undefined),
+    "the redirected result to arrive",
+  );
+  assert.deepEqual(await jl.jobResults(), [[1, 0, "gate"]]);
+  assert.ok(
+    proxy.requests.some((each) => each.op === "job.finish" && each.url === "/call-followed"),
+  );
+});
+
+test("fleet wake still follows a same-origin redirect", async (t) => {
+  const scratch = new Scratch("wake-redirect");
+  t.after(() => scratch.dispose());
+  const server = createServer((req, res) => {
+    req.resume();
+    if (req.url === "/call") res.writeHead(307, { location: "/call-followed" }).end();
+    else
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ ok: true, value: { entry: 7 } }));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  configureMain(scratch, `ws://127.0.0.1:${String(address.port)}/session`, "token");
+  assert.equal(await wakeMate(scratch.root, { note: "check in" }), 7);
 });

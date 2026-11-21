@@ -5,9 +5,10 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { check, OPS, StartupFenceFields, type Entry } from "@fleet/protocol";
+import { check, JobResultFields, OPS, StartupFenceFields, type Entry } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import Type from "typebox";
+import type { Static } from "typebox";
 import Value from "typebox/value";
 import { joinContained } from "./containment.ts";
 import { field, herdr, records, rootPane } from "./host.ts";
@@ -163,24 +164,25 @@ export class Jobs {
   }
 
   observeResult(entry: Entry): void {
-    const { job, exitCode, lost, revived } = entry.fields;
-    if (!Number.isInteger(job) || typeof job !== "number") return;
-    if ((this.lastResult.get(job) ?? 0) >= entry.id) return;
-    if ("startupFenced" in entry.fields || "startupLaunch" in entry.fields) {
-      this.observeFence(job, entry);
-      return;
-    }
+    const { fields } = entry;
+    if ("startupFenced" in fields || "startupLaunch" in fields) this.observeFence(entry);
+    else if (Value.Check(JobResultFields, fields)) this.applyResult(entry.id, fields);
+    else if (["exitCode", "lost", "revived", "commandNotStarted"].some((key) => key in fields))
+      this.warn(`Ignored an incomplete job result (entry ${String(entry.id)})`);
+  }
+
+  private applyResult(id: number, fields: Static<typeof JobResultFields>): void {
+    const { job, exitCode, lost, revived, commandNotStarted } = fields;
+    if ((this.lastResult.get(job) ?? 0) >= id) return;
     if (lost === true || revived === true) this.launches.delete(job);
-    if (typeof exitCode !== "number" && lost !== true && revived !== true) return;
-    this.lastResult.set(job, entry.id);
+    this.lastResult.set(job, id);
     if (typeof exitCode === "number") {
       this.advance(job);
       this.unresolved.delete(job);
     }
     if (lost === true || typeof exitCode === "number") this.files.settleLaunchFile(job);
     const launching = this.launching.get(job);
-    if (launching !== undefined && entry.fields["commandNotStarted"] === true)
-      launching.unstarted = true;
+    if (launching !== undefined && commandNotStarted === true) launching.unstarted = true;
     else if (
       launching !== undefined &&
       typeof exitCode === "number" &&
@@ -199,13 +201,13 @@ export class Jobs {
     this.ownedTabs.delete(job);
   }
 
-  private observeFence(job: number, entry: Entry): void {
+  private observeFence(entry: Entry): void {
     if (!Value.Check(StartupFenceFields, entry.fields)) {
-      this.warn(
-        `Ignored an incomplete startup fence for job ${String(job)} (entry ${String(entry.id)})`,
-      );
+      this.warn(`Ignored an incomplete startup fence (entry ${String(entry.id)})`);
       return;
     }
+    const { job } = entry.fields;
+    if ((this.lastResult.get(job) ?? 0) >= entry.id) return;
     const launch = entry.fields.startupLaunch;
     if (this.launches.get(job) !== launch) {
       this.preparing.get(launch)?.fences.set(job, entry);

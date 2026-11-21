@@ -42,7 +42,7 @@ const JobFile = Type.Object({
   token: Type.String(),
   job: Type.Integer(),
   timeoutMs: Type.Number(),
-  heartbeatMs: Type.Integer({ minimum: 1 }),
+  heartbeatMs: OPS["job.start"].result.properties.heartbeatMs,
   tailLines: Type.Optional(Type.Number()),
   lineChars: Type.Optional(Type.Number()),
   command: Type.Optional(Type.String()),
@@ -222,7 +222,7 @@ async function run(job: Job): Promise<JobResult> {
 function call(job: Job, op: string, args: object): Promise<Response | undefined> {
   const headers = { authorization: `Bearer ${job.token}`, "content-type": "application/json" };
   const body = JSON.stringify({ op, args });
-  return fetch(job.url, { method: "POST", headers, body, redirect: "error" }).then(
+  return fetch(job.url, { method: "POST", headers, body }).then(
     (response) => response,
     () => undefined,
   );
