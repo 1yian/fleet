@@ -108,6 +108,11 @@ case "$1 $2:$HERDR_FAULT" in
     if [ "\${4%:*}" = "$FAULT_PANE" ]; then
       "$REAL_HERDR" workspace close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
     fi ;;
+  'pane process-info:pi-only')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
   'pane process-info:shared-group-child')
     if [ "$4" = "$FAULT_PANE" ]; then
       printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1,"foreground_processes":[{"pid":2,"name":"sleep","argv":["sleep","60"]}]}}}'
@@ -116,7 +121,7 @@ case "$1 $2:$HERDR_FAULT" in
   'pane process-info:pi-then-busy')
     if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.pi" ]; then
       : > "$HERDR_FAULT_LOG.pi"
-      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi
     if [ "$4" = "$FAULT_PANE" ]; then
@@ -129,7 +134,7 @@ case "$1 $2:$HERDR_FAULT" in
       if [ "$(wc -l < "$HERDR_FAULT_LOG.calls")" -eq 2 ]; then
         "$REAL_HERDR" pane split "$4" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
       fi
-      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
   'pane run:split-after-create'|'workspace close:split-after-create')
@@ -150,7 +155,7 @@ case "$1 $2:$HERDR_FAULT" in
         : > "$HERDR_FAULT_LOG.split"
         "$REAL_HERDR" pane split "$4" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
       fi
-      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
   'pane process-info:split-at-info'|'pane process-info:pi-split-at-info')
@@ -158,24 +163,24 @@ case "$1 $2:$HERDR_FAULT" in
       : > "$HERDR_FAULT_LOG.split"
       "$REAL_HERDR" pane split "$4" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
       if [ "$HERDR_FAULT" = 'pi-split-at-info' ]; then
-        printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+        printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
         exit 0
       fi
     fi ;;
   'pane process-info:pi-then-shell')
     if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.pi" ]; then
       : > "$HERDR_FAULT_LOG.pi"
-      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
   'pane process-info:split-utility-flip')
     if [ "$4" = "$FAULT_PANE" ]; then
-      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
   'pane process-info:cwd-drop-final'|'pane process-info:cwd-relative-final'|'pane process-info:cwd-nul-final')
     if [ "$4" = "$FAULT_PANE" ]; then
-      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
   'pane list:cwd-drop-final'|'pane list:cwd-relative-final'|'pane list:cwd-nul-final')
@@ -239,7 +244,7 @@ case "$1 $2:$HERDR_FAULT" in
     exit $? ;;
   'pane process-info:pi-in-split')
     if [ "$4" = "$FAULT_PANE" ]; then
-      printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
   'pane process-info:empty-busy')

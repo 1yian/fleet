@@ -126,3 +126,19 @@ test("a same-group foreground child never clears a hold or lets restart-all repl
   assert.equal(readFileSync(starts, "utf8"), history);
   assert.equal((await workspace("ops"))?.["workspace_id"], before["workspace_id"]);
 });
+
+test("a Pi-only partial process reply on a held lane clears no hold and lets restart-all replace nothing", async () => {
+  const root = await idlePane("ops", ops());
+  const stopped = join(ops(), "state", "stopped");
+  const starts = join(ops(), "state", "starts");
+  const history = `${String(Date.now())}\n`;
+  writeFileSync(stopped, "stopped by hand\n");
+  writeFileSync(starts, history);
+  const before = await workspace("ops");
+  assert.ok(typeof before?.["workspace_id"] === "string");
+  assert.deepEqual(maintain("pi-only", root), action("ops", "unread"));
+  assert.throws(() => fleet(["restart"], "pi-only", root));
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+  assert.equal(readFileSync(starts, "utf8"), history);
+  assert.equal((await workspace("ops"))?.["workspace_id"], before["workspace_id"]);
+});
