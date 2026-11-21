@@ -356,6 +356,14 @@ for (const [name, diagnostic] of [
     String.raw`{"b":"https://localhost/cb\u003fpassword=paper","a":"https://localhost/cb?password=example"}`,
   ],
   [
+    "a skipped raw name before an escaped semicolon assignment",
+    String.raw`{"a":"https://fixture.local/?x;password=example","b":"https://fixture.local/?next=1\u003bpassword=paper"}`,
+  ],
+  [
+    "an escaped semicolon assignment before a skipped raw name",
+    String.raw`{"b":"https://fixture.local/?next=1\u003bpassword=paper","a":"https://fixture.local/?x;password=example"}`,
+  ],
+  [
     "an encoded fragment parameter name",
     "Callback https://localhost/callback#pass%77ord=paper failed",
   ],

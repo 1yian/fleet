@@ -72,6 +72,14 @@ export const REDACTED_COMPLAINTS = [
     "[URL withheld: credential boundaries unclear]",
   ],
   [
+    String.raw`{"a":"https://fixture.local/?x;password=example","b":"https://fixture.local/?next=1\u003bpassword=paper"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    String.raw`{"b":"https://fixture.local/?next=1\u003bpassword=paper","a":"https://fixture.local/?x;password=example"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
     "Callback https://localhost/callback#pass%77ord=paper failed",
     "[URL withheld: credential boundaries unclear]",
   ],
