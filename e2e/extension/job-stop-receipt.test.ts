@@ -113,11 +113,18 @@ test("a generic stop receipt for a lost job keeps the pending dispatch reconcila
     () => (proxy.replied.includes("job.running") ? true : undefined),
     "the failed exact reply to reach the worker",
   );
-  const lossTurn = await until(
-    () => proxy.activities.slice(lossFrom).findLast((state) => state !== "running"),
-    "the loss turn's settled activity",
+  const pushFrom = proxy.activities.length;
+  proxy.push(9001, { job: 99, exitCode: 0 });
+  await jl.h.waitFor(
+    (event) => event["type"] === "fleet_delivered" && event["entryId"] === 9001,
+    "the worker to deliver the entry that followed the failed reply on its socket",
   );
+  const lossTurn = await until(() => {
+    const after = proxy.activities.slice(pushFrom);
+    return after.includes("running") ? after.findLast((state) => state !== "running") : undefined;
+  }, "the settled activity after the failed reply and the delivery behind it");
   assert.equal(lossTurn, "waiting");
+  assert.ok(proxy.activities.slice(lossFrom).length > 0);
   const settles = (): number => jl.h.events.filter((event) => event["type"] === "settled").length;
   const checkFrom = proxy.activities.length;
   const checkBase = settles();

@@ -168,6 +168,7 @@ export class JobLab {
       closes: join(this.jobDir, "tab-closes"),
       creates: join(this.jobDir, "tab-creates"),
       runs: join(this.jobDir, "pane-runs"),
+      keys: join(this.jobDir, "pane-keys"),
       release: join(this.jobDir, "release-dispatch"),
     };
     const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
@@ -180,8 +181,9 @@ fi
 if [ "$1 $2" = 'tab create' ]; then
   echo tab >> ${quote(logs.creates)}
 fi
-if [ "$1 $2" = 'pane send-keys' ] && ${swallowKeys ? "true" : "false"}; then
-  exit 0
+if [ "$1 $2" = 'pane send-keys' ]; then
+  echo "$3" >> ${quote(logs.keys)}
+  if ${swallowKeys ? "true" : "false"}; then exit 0; fi
 fi
 if [ "$1 $2" = 'pane run' ]; then
   echo run >> ${quote(logs.runs)}

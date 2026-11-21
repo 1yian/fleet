@@ -432,16 +432,19 @@ export class Jobs {
     if (workspace === undefined) throw new Error("stop_job needs a worker inside a herdr pane");
     const before = this.revisions.get(job);
     const noticed = this.lastResult.get(job);
+    const known = this.ownedTabs.get(job);
+    const stale = (): boolean =>
+      this.revisions.get(job) !== before || this.lastResult.get(job) !== noticed;
     const receipt = await this.link.call("job.stop", { job });
     const { label, running } = receipt;
     const cancelled = "cancelled" in receipt && receipt.cancelled === true;
     const legacy = "legacy" in receipt && receipt.legacy === true;
     if (running) this.launches.delete(job);
     const named = `job ${String(job)} (${label})`;
+    const superseded = `${named}: no interrupt was sent, and this reply was superseded by newer news about the job.`;
     if (cancelled) this.cancelledJobs.add(job);
     if (!running) {
-      const current =
-        cancelled || (this.revisions.get(job) === before && this.lastResult.get(job) === noticed);
+      const current = cancelled || !stale();
       if (current) {
         this.advance(job);
         if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
@@ -454,17 +457,17 @@ export class Jobs {
       }
       if (cancelled)
         return `${named} was stopped before wrapper registration. Its command will not run.`;
-      return current
-        ? `${named} is not running: nothing to stop.`
-        : `${named}: no interrupt was sent, and this reply was superseded by newer news about the job.`;
+      return current ? `${named} is not running: nothing to stop.` : superseded;
     }
-    let tab = this.ownedTabs.get(job);
+    if (stale()) return superseded;
+    let tab = known ?? this.ownedTabs.get(job);
     if (tab === undefined) {
       if (!legacy && !(await confirmLegacyStop(this.endpoint, job, label)))
         return `${named} has no verified tab ID in this worker session, so nothing was signalled.`;
       const tabs = records(
         (await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"],
       );
+      if (stale()) return superseded;
       const matches = tabs.filter((each) => each["label"] === tabName(job, label));
       if (matches.length > 1)
         return `${named} has multiple matching tabs and no known tab ID, so nothing was signalled.`;
@@ -473,6 +476,7 @@ export class Jobs {
     const panes = records(
       (await herdr("local", ["pane", "list", "--workspace", workspace]))["panes"],
     );
+    if (stale()) return superseded;
     const pane = field(
       panes.find((each) => tab !== undefined && each["tab_id"] === tab),
       "pane_id",
