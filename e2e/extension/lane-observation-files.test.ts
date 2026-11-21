@@ -7,6 +7,7 @@ import { isRecord, records } from "../support/json.ts";
 import {
   addLane,
   idlePane,
+  lab,
   here,
   faultLog,
   fleet,
@@ -185,6 +186,22 @@ test("a workspace row without a pane count is unread and is never closed by stop
   assert.ok(typeof before?.["workspace_id"] === "string");
   assert.throws(() => fleet(["stop", "ops"], "no-count", root), /no pane count/);
   assert.throws(() => fleet(["restart", "ops"], "no-count", root), /no pane count/);
+  assert.equal(existsSync(stopped), false);
+  assert.equal((await workspace("ops"))?.["workspace_id"], before["workspace_id"]);
+  assert.equal(fleet(["stop", "ops"]).trim(), "ops: stopped");
+  assert.equal(await workspace("ops"), undefined);
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+});
+
+test("a current-title workspace whose pane roster is incomplete is never closed by stop or restart", async () => {
+  const home = lane();
+  const root = await idlePane("ops", home);
+  await lab.run(["pane", "split", root, "--direction", "right", "--no-focus"]);
+  const stopped = join(home, "state", "stopped");
+  const before = await workspace("ops");
+  assert.ok(typeof before?.["workspace_id"] === "string");
+  for (const command of ["stop", "restart"])
+    assert.throws(() => fleet([command, "ops"], "split-only", root), /incomplete pane list/);
   assert.equal(existsSync(stopped), false);
   assert.equal((await workspace("ops"))?.["workspace_id"], before["workspace_id"]);
   assert.equal(fleet(["stop", "ops"]).trim(), "ops: stopped");

@@ -177,8 +177,11 @@ async function findCurrent(
   if (row === undefined) return undefined;
   const workspace = String(row["workspace_id"]);
   requireCount(row, workspace);
-  if (purpose === "close") return { workspace, state: "matched" };
   const panes = await panesOf(workspace, row["pane_count"], deadline);
+  if (purpose === "close") {
+    expect(obs, workspace, panes, membership);
+    return { workspace, state: "matched" };
+  }
   const [first] = panes;
   if (first === undefined) throw new HostUnread(`herdr returned no pane for ${workspace}`);
   if (panes.length !== 1) return inspectSplit(workspace, panes, home, purpose, deadline, obs);
