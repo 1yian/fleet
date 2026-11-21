@@ -8,6 +8,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { check, OPS, type Entry } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import Type from "typebox";
+import Value from "typebox/value";
 import { joinContained } from "./containment.ts";
 import { field, herdr, records, rootPane } from "./host.ts";
 import { JobFiles } from "./job-files.ts";
@@ -65,7 +66,6 @@ interface JobOptions {
 }
 
 interface PendingDispatch {
-  readonly launch: string;
   readonly file: string;
   dispatched: boolean;
   fenced: boolean;
@@ -74,11 +74,12 @@ interface PendingDispatch {
 const startupFenced = (pending: PendingDispatch | undefined): boolean => pending?.fenced === true;
 
 interface Preparing {
-  fence?: { job: number; detail: string };
+  fence?: Entry;
 }
 
 export class Jobs {
   private readonly preparing = new Map<string, Preparing>();
+  private readonly launches = new Map<number, string>();
   private readonly running = new Set<number>();
   private readonly lastResult = new Map<number, number>();
   private readonly revisions = new Map<number, number>();
@@ -159,21 +160,18 @@ export class Jobs {
   }
 
   observeResult(entry: Entry): void {
-    const { job, startupFenced, startupLaunch, exitCode, lost, revived } = entry.fields;
+    const { job, exitCode, lost, revived } = entry.fields;
     if (!Number.isInteger(job) || typeof job !== "number") return;
     if ((this.lastResult.get(job) ?? 0) >= entry.id) return;
-    if (startupFenced !== true && typeof exitCode !== "number" && lost !== true && revived !== true)
+    if ("startupFenced" in entry.fields || "startupLaunch" in entry.fields) {
+      this.observeFence(job, entry);
       return;
-    const fence = startupFenced === true ? this.fenceLaunch(job, startupLaunch) : undefined;
-    if (startupFenced === true && fence === undefined) return;
+    }
+    if (typeof exitCode !== "number" && lost !== true && revived !== true) return;
     this.lastResult.set(job, entry.id);
-    if (startupFenced === true || typeof exitCode === "number") {
+    if (typeof exitCode === "number") {
       this.advance(job);
       this.unresolved.delete(job);
-    }
-    if (startupFenced === true) {
-      this.confirmStartupFence(job, fence, entry.body);
-      return;
     }
     if (lost === true || typeof exitCode === "number") this.files.settleLaunchFile(job);
     const launching = this.launching.get(job);
@@ -196,21 +194,26 @@ export class Jobs {
     this.ownedTabs.delete(job);
   }
 
-  private fenceLaunch(job: number, launch: unknown): string | undefined {
-    try {
-      const id = check(OPS["job.register"].args.properties.launch, launch);
-      const pending = this.pending.get(job);
-      return pending === undefined || pending.launch === id ? id : undefined;
-    } catch {
-      return undefined;
+  private observeFence(job: number, entry: Entry): void {
+    const { startupFenced, startupLaunch } = entry.fields;
+    if (
+      startupFenced !== true ||
+      !Value.Check(OPS["job.register"].args.properties.launch, startupLaunch)
+    )
+      return;
+    const launch = startupLaunch;
+    if (this.launches.get(job) !== launch) {
+      const preparing = this.preparing.get(launch);
+      if (preparing !== undefined) preparing.fence = entry;
+      return;
     }
+    this.lastResult.set(job, entry.id);
+    this.advance(job);
+    this.unresolved.delete(job);
+    this.confirmStartupFence(job);
   }
 
-  private confirmStartupFence(job: number, launch?: string, detail = "startup was fenced"): void {
-    if (launch !== undefined) {
-      const preparing = this.preparing.get(launch);
-      if (preparing !== undefined) preparing.fence = { job, detail };
-    }
+  private confirmStartupFence(job: number): void {
     const pending = this.pending.get(job);
     this.running.delete(job);
     if (pending === undefined) return;
@@ -298,8 +301,12 @@ export class Jobs {
       },
     );
     this.preparing.delete(id);
-    if (registeredLaunch && preparing.fence?.job === job)
-      throw new Error(`Job ${String(job)} cannot start: ${preparing.fence.detail}`);
+    if (registeredLaunch) this.launches.set(job, id);
+    const early = preparing.fence;
+    if (early !== undefined && early.fields["job"] === job) {
+      this.observeResult(early);
+      throw new Error(`Job ${String(job)} cannot start: ${early.body}`);
+    }
     if (registeredLaunch && this.cancelledJobs.has(job))
       throw new Error(`Job ${String(job)} cannot start: it was stopped before dispatch`);
     const file = join(
@@ -308,7 +315,7 @@ export class Jobs {
     );
     const tab = tabName(job, label);
     const pending: PendingDispatch | undefined = registeredLaunch
-      ? { launch: id, file, dispatched: false, fenced: false }
+      ? { file, dispatched: false, fenced: false }
       : undefined;
     const launching = { unstarted: false, ran: false, legacy: !registeredLaunch };
     this.launching.set(job, launching);

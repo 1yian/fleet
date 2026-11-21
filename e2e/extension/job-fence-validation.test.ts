@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
-import { afterEach, beforeEach, test } from "node:test";
+import { afterEach, beforeEach, test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
-import { check, HttpCallSchema, OPS, type Card } from "@fleet/protocol";
+import {
+  CardViewSchema,
+  check,
+  HttpCallSchema,
+  parseClientMessage,
+  parseServerMessage,
+  type Card,
+} from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import { WebSocket, WebSocketServer } from "ws";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
@@ -13,6 +20,7 @@ import { Harness, rawText } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
 import { until } from "../support/live-fleet.ts";
+import { DatabaseSync } from "node:sqlite";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const OTHER_LAUNCH = "11111111-1111-4111-8111-111111111111";
@@ -50,8 +58,11 @@ afterEach(async (t) => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
-async function proxyCardd(onRegistered: (launch: string) => void) {
+async function proxyCardd() {
   const clients = new Set<WebSocket>();
+  const activities: string[] = [];
+  let connections = 0;
+  let lists = 0;
   const proxy = createServer((req, res) => {
     let body = "";
     req.setEncoding("utf8").on("data", (chunk: string) => {
@@ -63,8 +74,6 @@ async function proxyCardd(onRegistered: (launch: string) => void) {
         const result = await fleet.cardd.post(env["FLEET_TOKEN"] ?? "", op, args);
         res.writeHead(result.status, { "content-type": "application/json" });
         res.end(typeof result.body === "string" ? result.body : JSON.stringify(result.body));
-        if (op === "job.register" && result.status === 200)
-          onRegistered(check(OPS["job.register"].args, args).launch);
       })().catch((error: unknown) => res.destroy(error instanceof Error ? error : undefined));
     });
   });
@@ -72,13 +81,22 @@ async function proxyCardd(onRegistered: (launch: string) => void) {
   sockets.on("connection", (client) => {
     const upstream = new WebSocket(fleet.cardd.url);
     clients.add(client);
+    const listReads = new Set<number>();
+    connections += 1;
     client.pause();
     upstream.on("open", () => client.resume());
     client.on("message", (raw) => {
-      if (upstream.readyState === WebSocket.OPEN) upstream.send(rawText(raw));
+      const text = rawText(raw);
+      const message = parseClientMessage(text);
+      if (message.t === "activity") activities.push(message.state);
+      if (message.t === "call" && message.op === "jobs") listReads.add(message.id);
+      if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
     });
     upstream.on("message", (raw) => {
-      if (client.readyState === WebSocket.OPEN) client.send(rawText(raw));
+      const text = rawText(raw);
+      if (client.readyState === WebSocket.OPEN) client.send(text);
+      const message = parseServerMessage(text);
+      if (message.t === "result" && listReads.delete(message.id)) lists += 1;
     });
     upstream.on("error", () => client.terminate());
     upstream.on("close", () => client.terminate());
@@ -90,13 +108,19 @@ async function proxyCardd(onRegistered: (launch: string) => void) {
   assert.ok(address && typeof address !== "string");
   env["FLEET_URL"] = `ws://127.0.0.1:${String(address.port)}/session`;
   return {
+    activities,
+    connections: (): number => connections,
+    lists: (): number => lists,
     stop: (): void => {
       for (const client of clients) client.terminate();
       sockets.close();
       proxy.closeAllConnections();
       proxy.close();
     },
-    pushFence: (id: number, extra: Record<string, unknown>): void => {
+    drop: (): void => {
+      for (const client of clients) client.terminate();
+    },
+    push: (id: number, fields: Record<string, unknown>): void => {
       const message = JSON.stringify({
         t: "entry",
         entry: {
@@ -105,7 +129,7 @@ async function proxyCardd(onRegistered: (launch: string) => void) {
           author: "job:1",
           kind: "job-result",
           body: "could not start: injected fence",
-          fields: { job: 1, label: "gate", exitCode: 127, startupFenced: true, ...extra },
+          fields: { label: "gate", exitCode: 127, ...fields },
           createdAt: Date.now(),
         },
         name: "users-see-one-scrollbar",
@@ -116,13 +140,13 @@ async function proxyCardd(onRegistered: (launch: string) => void) {
   };
 }
 
-test("only a startup fence naming the pending launch closes a live job tab", async (t) => {
-  const registered = Promise.withResolvers<string>();
-  const proxy = await proxyCardd((launch) => registered.resolve(launch));
+async function holdDispatch(t: TestContext, command: string) {
+  const proxy = await proxyCardd();
   t.after(() => proxy.stop());
   const bin = join(jobDir, "bin");
   mkdirSync(bin);
   const closes = join(jobDir, "tab-closes");
+  const release = join(jobDir, "release-dispatch");
   const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
   writeFileSync(
     join(bin, "herdr"),
@@ -130,36 +154,142 @@ test("only a startup fence naming the pending launch closes a live job tab", asy
 if [ "$1 $2" = 'tab close' ]; then
   echo "$3" >> ${quote(closes)}
 fi
+if [ "$1 $2" = 'pane run' ]; then
+  exec ${quote(herdr)} pane run "$3" "while [ ! -e ${quote(release)} ]; do sleep 0.05; done; $4"
+fi
 exec ${quote(herdr)} "$@"
 `,
     { mode: 0o755 },
   );
   env["PATH"] = `${bin}:${process.env["PATH"] ?? ""}`;
-  h.onModel(() => ({ tool: "run_long", args: { label: "gate", command: "sleep 120" } }));
+  h.onModel(() => ({ tool: "run_long", args: { label: "gate", command } }));
   h.onModel(() => ({ text: "waiting for the gate" }));
   h.startPi("c-1-a1", env, [EXTENSION]);
-  const launch = await registered.promise;
-  const gateTab = async () => {
+  await until(
+    () => (proxy.activities.includes("waiting") ? true : undefined),
+    "the worker to publish waiting for the dispatched job",
+  );
+  const input = readdirSync(jobDir).find((name) => /^fleet-job-1-.+\.json$/.test(name));
+  assert.ok(input);
+  const launch = /^fleet-job-1-(.+)\.json$/.exec(input)?.[1];
+  assert.ok(launch);
+  const tabs = async () => {
     const listed = await lab.run(["tab", "list", "--workspace", env["HERDR_WORKSPACE_ID"] ?? ""]);
-    return records(listed["tabs"]).find((tab) => tab["label"] === "job-1-gate");
+    return records(listed["tabs"]);
   };
-  const live = await gateTab();
-  assert.ok(live);
+  const gate = (await tabs()).find((tab) => tab["label"] === "job-1-gate");
+  assert.ok(gate);
+  return {
+    proxy,
+    closes,
+    release,
+    input: join(jobDir, input),
+    launch,
+    tab: String(gate["tab_id"]),
+    tabs,
+  };
+}
 
-  proxy.pushFence(1001, {});
-  proxy.pushFence(1002, { startupLaunch: OTHER_LAUNCH });
-  proxy.pushFence(1003, { startupLaunch: 7 });
-  proxy.pushFence(1004, { startupLaunch: "not-a-launch" });
-  await h.waitForNth((event) => event["type"] === "fleet_delivered", 4, "the invalid fences");
+const expireJob = (): void => {
+  const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+  try {
+    db.prepare("UPDATE jobs SET created_at = created_at - 60000 WHERE id = 1").run();
+  } finally {
+    db.close();
+  }
+};
+
+const deliveredCount = (): number =>
+  h.events.filter((event) => event["type"] === "fleet_delivered").length;
+
+test("incomplete or unbound startup fences leave the wait, wrapper input, and tab alone until cardd's expiry fences the real launch", async (t) => {
+  const { proxy, closes, input, launch, tab, tabs } = await holdDispatch(t, "echo gate");
+  const other = { startupFenced: true, startupLaunch: OTHER_LAUNCH };
+  const variants: Record<string, unknown>[] = [
+    { job: 1, startupFenced: true },
+    { job: 1, ...other },
+    { job: 1, startupFenced: true, startupLaunch: 7 },
+    { job: 1, startupFenced: true, startupLaunch: "not-a-launch" },
+    { job: 1, startupFenced: "true", startupLaunch: launch },
+    { job: 1, startupLaunch: launch },
+    { job: 2, startupFenced: true, startupLaunch: launch },
+    { job: 1.5, startupFenced: true, startupLaunch: launch },
+  ];
+  const before = deliveredCount();
+  const mark = proxy.activities.length;
+  variants.forEach((fields, index) => proxy.push(1001 + index, fields));
+  await h.waitForNth(
+    (event) => event["type"] === "fleet_delivered",
+    before + variants.length,
+    "the invalid fences",
+  );
   await new Promise((resolve) => setTimeout(resolve, 1000));
   assert.equal(existsSync(closes), false);
-  assert.equal((await gateTab())?.["tab_id"], live["tab_id"]);
+  assert.ok(existsSync(input));
+  assert.ok((await tabs()).some((each) => each["tab_id"] === tab));
+  assert.equal(proxy.activities.slice(mark).includes("idle"), false);
 
-  proxy.pushFence(1005, { startupLaunch: launch });
+  expireJob();
   await until(
     () => (existsSync(closes) ? readFileSync(closes, "utf8").trim() : undefined),
-    "the matching fence to close the tab",
+    "cardd's real expiry fence to close the tab",
   );
-  assert.equal(readFileSync(closes, "utf8").trim(), live["tab_id"]);
-  await until(async () => ((await gateTab()) === undefined ? true : undefined), "the tab to close");
+  assert.equal(readFileSync(closes, "utf8").trim(), tab);
+  assert.equal(existsSync(input), false);
+  await until(
+    async () => ((await tabs()).some((each) => each["tab_id"] === tab) ? undefined : true),
+    "the fenced tab to close",
+  );
+  assert.deepEqual(await jobResults(), [
+    [1, 127, "could not start: wrapper did not register before the startup deadline"],
+  ]);
 });
+
+test("an unbound startup fence cannot end a registered job's wait after a job list released the pending input", async (t) => {
+  const done = join(jobDir, "gate-done");
+  const { proxy, closes, release, launch } = await holdDispatch(
+    t,
+    `while [ ! -e ${quote(done)} ]; do sleep 0.05; done; echo gate`,
+  );
+  writeFileSync(release, "");
+  await until(() => (wrapperPid() === null ? undefined : true), "the wrapper to register");
+  const lists = proxy.lists();
+  proxy.drop();
+  await until(
+    () => (proxy.lists() > lists ? true : undefined),
+    "the reconnect job list to release the pending input",
+  );
+  const delivered = deliveredCount();
+  const mark = proxy.activities.length;
+  proxy.push(1001, { job: 1, startupFenced: true, startupLaunch: OTHER_LAUNCH });
+  proxy.push(1002, { job: 2, startupFenced: true, startupLaunch: launch });
+  await h.waitForNth(
+    (event) => event["type"] === "fleet_delivered",
+    delivered + 2,
+    "the unbound fences",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.equal(proxy.activities.slice(mark).includes("idle"), false);
+  assert.equal(existsSync(closes), false);
+
+  writeFileSync(done, "");
+  await until(
+    () => (proxy.activities.slice(mark).includes("idle") ? true : undefined),
+    "the real job result to end the wait",
+  );
+  assert.deepEqual(await jobResults(), [[1, 0, "gate"]]);
+});
+
+const jobResults = async () =>
+  check(CardViewSchema, await fleet.main.call("card", { card: card.id }))
+    .entries.filter((entry) => entry.kind === "job-result")
+    .map((entry) => [entry.fields["job"], entry.fields["exitCode"], entry.body]);
+
+const wrapperPid = (): unknown => {
+  const db = new DatabaseSync(fleet.cardd.db, { readOnly: true, timeout: 5000 });
+  try {
+    return db.prepare("SELECT wrapper_pid FROM jobs WHERE id = 1").get()?.["wrapper_pid"] ?? null;
+  } finally {
+    db.close();
+  }
+};
