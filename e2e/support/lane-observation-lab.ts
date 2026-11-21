@@ -113,6 +113,11 @@ case "$1 $2:$HERDR_FAULT" in
       printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
+  'pane process-info:pi-alone-same-group')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1,"foreground_processes":[{"pid":2,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
   'pane process-info:pi-and-child-same-group')
     if [ "$4" = "$FAULT_PANE" ]; then
       printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1,"foreground_processes":[{"pid":2,"name":"pi","argv":["pi"]},{"pid":3,"name":"sleep","argv":["sleep","60"]}]}}}'

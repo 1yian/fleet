@@ -150,6 +150,10 @@ heldWithReply(
   "pi-only",
 );
 heldWithReply(
+  "a lone Pi row in the shell's own group on a held lane clears no hold and lets restart-all replace nothing",
+  "pi-alone-same-group",
+);
+heldWithReply(
   "a Pi row beside another child in the shell's own group on a held lane clears no hold and lets restart-all replace nothing",
   "pi-and-child-same-group",
 );
