@@ -9,8 +9,9 @@ import { CardViewSchema, check, HttpOutcomeSchema, type Entry } from "@fleet/pro
 import {
   lastUser,
   mateConnected,
+  holdRepeat,
+  repeatFinished,
   RESTART_REPEATED,
-  restartRepeatFinished,
   startDispatchLab,
   stopDispatchLab,
   toolResults,
@@ -375,6 +376,7 @@ test("a replacement requested again with the same key while it is still starting
   parts = await startDispatchLab({
     cardd: { CARDD_TIMING_SCALE: "0.02" },
     workerArgs: ["-e", HOLD],
+    mateRoute: holdRepeat("same"),
   });
   const { h, lab, clone, mate, cardd } = parts;
   const tree = `${clone}.worktrees/c-1-a1`;
@@ -419,7 +421,7 @@ test("a replacement requested again with the same key while it is still starting
   );
   const release = await open(gate, "w");
   try {
-    await restartRepeatFinished(h);
+    await repeatFinished(parts);
     assert.equal(toolResults(h.callsOf("mate").at(-1) ?? []).length, 2);
     await verifyDuplicate(incident, false);
     assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
@@ -440,7 +442,6 @@ test("a replacement requested again with the same key while it is still starting
     (view) => view.some((entry) => entry.body.includes("recovered (replace)")),
     WORKER_WAIT_MS,
   );
-
   assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
   assert.deepEqual(await workersOf(lab), ["c-1-a1"]);
   assert.deepEqual(await boardNames(), [[1, "task-1"]]);
@@ -475,7 +476,6 @@ test("a stale import on the nudge turn is one incident, replaced on the same car
     }, "worker");
   await mateConnected(h);
   mate.prompt("ship it");
-
   const entries = await waitFor(
     () => entriesOf(1),
     (view) => view.some((entry) => entry.body.includes("recovered (replace)")),

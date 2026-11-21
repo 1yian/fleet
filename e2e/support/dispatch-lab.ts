@@ -6,6 +6,7 @@ import { Cardd } from "./cardd.ts";
 import { Harness, type Move, type Pi, type Turn } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
+import { RepeatProxy, type MateRoute } from "./repeat-proxy.ts";
 import { addRemote, git as gitIn } from "./remote.ts";
 import { tempDir } from "./run-root.ts";
 
@@ -24,6 +25,7 @@ export interface DispatchLab {
   readonly mate: Pi;
   readonly home: string;
   readonly mainToken: string;
+  readonly route: MateRoute | undefined;
 }
 
 export const launchArgsOf = (h: Harness): string => join(h.dir, "worker-args");
@@ -45,6 +47,7 @@ export interface LabOptions {
   readonly roots?: Record<string, string>;
   readonly needsTrust?: boolean;
   readonly freshInstall?: boolean;
+  readonly mateRoute?: (carddUrl: string) => Promise<MateRoute>;
 }
 
 function gateRemote(
@@ -133,6 +136,14 @@ async function startSite(
   return { cardd, clone: fresh.clone, remote: undefined, env: fresh.env };
 }
 
+const routeFor = (
+  make: LabOptions["mateRoute"],
+  carddUrl: string,
+): Promise<MateRoute | undefined> =>
+  make === undefined ? Promise.resolve(undefined) : make(carddUrl);
+
+const urlFor = (route: MateRoute | undefined, carddUrl: string): string => route?.url ?? carddUrl;
+
 export async function startDispatchLab({
   cardd: carddEnv,
   carddArgs = [],
@@ -142,11 +153,13 @@ export async function startDispatchLab({
   workerShell = false,
   extension = EXTENSION,
   roots = {},
+  mateRoute,
   ...site
 }: LabOptions = {}): Promise<DispatchLab> {
   const checkout = resolve(dirname(extension), "..", "..", "..");
   const { cardd, clone, remote, env } = await startSite(carddEnv, carddArgs, site);
   if (dashTokens.length > 0) cardd.dashTokens(dashTokens);
+  const route = await routeFor(mateRoute, cardd.url);
   const home = tempDir("fleet-home-");
   const mainToken = cardd.addLane("main", undefined, home);
   const piConfig = tempDir("herdr-pi-");
@@ -164,7 +177,7 @@ export async function startDispatchLab({
   const mate = h.startPi(
     "main",
     {
-      FLEET_URL: cardd.url,
+      FLEET_URL: urlFor(route, cardd.url),
       FLEET_TOKEN: mainToken,
       FLEET_ROLE: "mate",
       ...lab.owned,
@@ -189,11 +202,14 @@ export async function startDispatchLab({
     },
     [extension],
   );
-  return { cardd, h, lab, clone, remote, mate, home, mainToken };
+  return { cardd, h, lab, clone, remote, mate, home, mainToken, route };
 }
 
-export async function stopDispatchLab({ lab, h, cardd }: DispatchLab): Promise<void> {
-  const stopped = await Promise.allSettled([lab.stop(), h.stop(), cardd.stop()]);
+const stopRoute = (route: MateRoute | undefined): Promise<void> =>
+  route === undefined ? Promise.resolve() : route.stop();
+
+export async function stopDispatchLab({ lab, h, cardd, route }: DispatchLab): Promise<void> {
+  const stopped = await Promise.allSettled([lab.stop(), h.stop(), cardd.stop(), stopRoute(route)]);
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 }
@@ -212,7 +228,7 @@ export const plan = (turns: Turn[], plans: Record<string, readonly Move[]>): Mov
 export const RESTART_REPEATED =
   "This restart key was already recorded. No new launch was attempted.";
 
-export const restartRepeatFinished = (h: Harness) =>
+const restartRepeatFinished = (h: Harness) =>
   h.waitFor(
     (event) =>
       event["type"] === "tool_execution_end" &&
@@ -220,6 +236,16 @@ export const restartRepeatFinished = (h: Harness) =>
       event["text"] === RESTART_REPEATED,
     "the mate's repeated restart_card call to finish while the start is gated",
   );
+
+export function repeatFinished({ route, h }: DispatchLab): Promise<unknown> {
+  if (route === undefined) throw new Error("the mate's calls are not routed through a hold");
+  route.release();
+  return restartRepeatFinished(h);
+}
+
+export const holdRepeat = (key: string): ((carddUrl: string) => Promise<MateRoute>) => {
+  return (carddUrl) => RepeatProxy.start(carddUrl, key);
+};
 
 export const mateConnected = (h: Harness) =>
   h.waitFor((e) => e["type"] === "fleet_connected", "the mate to connect");

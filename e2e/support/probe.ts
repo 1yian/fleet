@@ -68,6 +68,7 @@ function observe(pi: ExtensionAPI, report: (event: Record<string, unknown>) => v
 
 function observeTools(pi: ExtensionAPI, report: (event: Record<string, unknown>) => void): void {
   pi.on("tool_execution_end", (event) => {
+    if (event.toolName !== "restart_card") return;
     const content: unknown = isRecord(event.result) ? event.result["content"] : undefined;
     const text = Array.isArray(content)
       ? content

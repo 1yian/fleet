@@ -215,7 +215,7 @@ async function replacementError(
     error instanceof AgentReadinessTimedOut ||
     (error instanceof StartUnconfirmed && error.timedOut);
   if (timedOut && (await replacementStarted()) === true) return cause;
-  if (running === true) return toError(error);
+  if (running === true && !(error instanceof AgentStartRefused)) return toError(error);
   if (running === false && error instanceof StartUnconfirmed)
     return new Error(
       `${cause}\nThe replacement could not be confirmed after the start command; the request was not refunded.`,

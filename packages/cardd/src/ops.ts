@@ -25,7 +25,7 @@ import {
 import { keepingRefusals } from "./incident-escalation.ts";
 import { markStopping } from "./incident-lanes.ts";
 import { clearFailure, noteControl, reportFailure } from "./incidents.ts";
-import { generationOf, processOf } from "./incident-store.ts";
+import { processOf } from "./incident-store.ts";
 import { restartCard, restartFailed, restartNotice } from "./restarts.ts";
 import {
   hold,
@@ -257,9 +257,8 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
     const card = ownCard(db, session, id);
     requireOpen(db, card);
     const attempt = resumeAttempt(db, card);
-    const generation = generationOf(db, attempt.session);
     return {
-      value: { ...attempt, generation, process: processOf(db, attempt.session) },
+      value: { ...attempt, process: processOf(db, attempt.session) },
       notify: [],
     };
   },

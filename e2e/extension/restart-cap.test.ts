@@ -9,11 +9,12 @@ import { fileURLToPath } from "node:url";
 import { check, HttpOutcomeSchema, OPS } from "@fleet/protocol";
 import { gate, poll } from "../support/harness.ts";
 import {
+  holdRepeat,
   launchArgsOf,
   mateConnected,
   plan,
   RESTART_REPEATED,
-  restartRepeatFinished,
+  repeatFinished,
   startDispatchLab,
   stopDispatchLab,
   toolResults,
@@ -191,11 +192,17 @@ async function verifyCountedRestart(
   });
 }
 
-async function generationOf({ cardd, mainToken }: DispatchLab): Promise<number> {
-  const { body } = await cardd.post(mainToken, "attempt.resume", { card: 1 });
-  const resumed = check(HttpOutcomeSchema, body);
-  assert.ok(resumed.ok, resumed.ok ? undefined : resumed.error);
-  return check(OPS["attempt.resume"].result, resumed.value).generation;
+function generationOf({ cardd }: DispatchLab): number {
+  const db = new DatabaseSync(cardd.db, { readOnly: true, timeout: 5000 });
+  try {
+    const generation = db.prepare("SELECT generation FROM sessions WHERE id = 'c-1-a1'").get()?.[
+      "generation"
+    ];
+    assert.equal(typeof generation, "number");
+    return Number(generation);
+  } finally {
+    db.close();
+  }
 }
 
 async function stopReplacement(
@@ -206,16 +213,9 @@ async function stopReplacement(
   const attempt = "c-1-a1";
   const deadline = Date.now() + WORKER_WAIT_MS;
   for (;;) {
-    const group = await workerGroupOf(lab.lab, attempt);
-    if (
-      group !== undefined &&
-      group > 0 &&
-      group !== original &&
-      (await generationOf(lab)) === generation
-    ) {
-      process.kill(-group, "SIGKILL");
-      break;
-    }
+    const group = await workerGroupOf(lab.lab, "c-1-a1");
+    if (group !== undefined && group > 0 && group !== original && generationOf(lab) === generation)
+      return group;
     assert.ok(
       Date.now() < deadline,
       `the replacement did not start at generation ${String(generation)}`,
@@ -338,7 +338,7 @@ function sessionProcess({ cardd }: DispatchLab): string | null {
 async function anotherProcessConnects(lab: DispatchLab, token: string): Promise<void> {
   const other = await lab.cardd.connect(token, [], false);
   await other.close();
-  assert.equal(await generationOf(lab), 2);
+  assert.equal(generationOf(lab), 2);
 }
 
 async function reachBarrier(
@@ -366,7 +366,7 @@ async function reachBarrier(
 }
 
 async function repeatCompletesWhileGated(lab: DispatchLab, prompt: string): Promise<void> {
-  await restartRepeatFinished(lab.h);
+  await repeatFinished(lab);
   assert.equal(mateResultsAfter(lab, prompt), undefined);
 }
 
@@ -423,6 +423,7 @@ for (const c of readinessCases) {
       hosts: { far: ["node", READINESS, armed] },
       roots: { far: CHECKOUT },
       workerArgs: ["-e", HOLD],
+      mateRoute: holdRepeat("readiness"),
     });
     const { h, lab, mate } = parts;
     const restart = { card: 1, key: "readiness", mode: "replace" } as const;
