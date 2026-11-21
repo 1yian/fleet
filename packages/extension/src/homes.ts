@@ -30,7 +30,6 @@ import {
   LANE_FILE,
   mateStartArgs,
   parseLaneConfig,
-  readLaneConfig,
   readRegular,
   type LaneConfig,
 } from "./lane-config.ts";
@@ -274,15 +273,15 @@ async function confirmTarget(
 
 const noClaimCheck = (): void => undefined;
 
-function confirmClaim(info: LaneHome): void {
-  let now: LaneConfig | undefined;
+function confirmClaim(root: string, info: LaneHome): void {
+  let now: LaneHome | undefined;
   try {
-    now = readLaneConfig(info.home);
+    now = discoverLanes(root).homes.find((each) => each.lane === info.lane);
   } catch {
-    throw new HostUnread(`${info.lane} config could not be read again after it was checked`);
+    throw new HostUnread(`${info.lane} claim could not be read again after it was checked`);
   }
-  if (JSON.stringify(now) !== JSON.stringify(info.config))
-    throw new HostUnread(`${info.lane} config changed after it was checked`);
+  if (now?.home !== info.home || JSON.stringify(now.config) !== JSON.stringify(info.config))
+    throw new HostUnread(`${info.lane} claim changed or became ambiguous after it was checked`);
 }
 
 async function start(
@@ -299,6 +298,7 @@ async function start(
   await confirmTarget(info, existingPane, launchDeadline);
   confirm(info);
   const pane = existingPane ?? (await createMatePane(info, launchDeadline));
+  confirm(info);
   const pi = ["pi", "--continue", TRUST_ARG, ...mateStartArgs(info.config.args, info.config.tier)];
   const { direnv } = info.config;
   const command = withCompileCache(direnv === undefined ? pi : ["direnv", "exec", direnv, ...pi]);
@@ -385,7 +385,12 @@ export async function up(
   discovered?: Discovery,
 ): Promise<SweepResult> {
   const { homes: lanes, unread } = named(root, only, discovered);
-  const confirm = discovered === undefined ? noClaimCheck : confirmClaim;
+  const confirm =
+    discovered === undefined
+      ? noClaimCheck
+      : (info: LaneHome): void => {
+          confirmClaim(root, info);
+        };
   const expected = [...lanes, ...unread].map(({ lane }) => lane);
   const unreadFailed = unreadFailure(unread);
   const first = offset % Math.max(1, lanes.length);

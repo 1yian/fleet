@@ -233,6 +233,37 @@ test("a lane claim that changes after the sweep checked it is unread and never a
   assert.deepEqual(maintain(), action("ops", "started"));
 });
 
+test("a competing home that becomes readable after the sweep's snapshot makes the lane ambiguous and unread", async () => {
+  const home = lane();
+  const rival = copyHome("ops-backup", () => undefined);
+  const rivalConfig = join(rival, "config", "lane.json");
+  const claim = readFileSync(rivalConfig, "utf8");
+  const selected = readFileSync(join(home, "config", "lane.json"), "utf8");
+  const starts = join(home, "state", "starts");
+  const stopped = join(home, "state", "stopped");
+  const history = `${String(Date.now())}\n`.repeat(3);
+  for (const recorded of [history, undefined]) {
+    writeFileSync(rivalConfig, "{");
+    writeFileSync(`${rivalConfig}.next`, claim);
+    rmSync(`${rivalConfig}.swapped`, { force: true });
+    rmSync(starts, { force: true });
+    if (recorded !== undefined) writeFileSync(starts, recorded);
+    const reply: unknown = JSON.parse(fleet(typedMaintenance, "swap-config", rivalConfig));
+    assert.ok(existsSync(`${rivalConfig}.swapped`));
+    assert.equal(readFileSync(join(home, "config", "lane.json"), "utf8"), selected);
+    assert.ok(isRecord(reply));
+    assert.deepEqual(reply["expected"], ["ops", "ops-backup"]);
+    assert.match(String(reply["failed"]), /lane ops-backup could not be read: .*not valid JSON/);
+    assert.deepEqual(records(reply["outcomes"]), [{ lane: "ops", action: "unread" }]);
+    assert.equal(await workspace("ops"), undefined);
+    assert.equal(existsSync(stopped), false);
+    assert.equal(existsSync(starts), recorded !== undefined);
+    if (recorded !== undefined) assert.equal(readFileSync(starts, "utf8"), recorded);
+  }
+  rmSync(rival, { recursive: true });
+  assert.deepEqual(maintain(), action("ops", "started"));
+});
+
 test("a lane config that is a writerless FIFO is unread without blocking a healthy sibling", async () => {
   const fix = addLane("fix");
   const config = join(fix, "config", "lane.json");
