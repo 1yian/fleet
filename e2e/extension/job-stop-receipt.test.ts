@@ -87,6 +87,7 @@ test("a generic stop receipt for a lost job keeps the pending dispatch reconcila
   await until(() => (jl.wrapperPid() === null ? undefined : true), "the wrapper to register");
   proxy.callFault("job.running", { error: "injected exact read failure" });
   const wrapper = Number(jl.wrapperPid());
+  const lossFrom = proxy.activities.length;
   process.kill(wrapper, "SIGSTOP");
   const resume = (): void => {
     try {
@@ -109,9 +110,14 @@ test("a generic stop receipt for a lost job keeps the pending dispatch reconcila
     "the loss notice",
   );
   await until(
-    () => (proxy.calls.includes("job.running") ? true : undefined),
-    "the loss notice's exact read to be sent and fail",
+    () => (proxy.replied.includes("job.running") ? true : undefined),
+    "the failed exact reply to reach the worker",
   );
+  const lossTurn = await until(
+    () => proxy.activities.slice(lossFrom).findLast((state) => state !== "running"),
+    "the loss turn's settled activity",
+  );
+  assert.equal(lossTurn, "waiting");
   const settles = (): number => jl.h.events.filter((event) => event["type"] === "settled").length;
   const checkFrom = proxy.activities.length;
   const checkBase = settles();
@@ -120,12 +126,12 @@ test("a generic stop receipt for a lost job keeps the pending dispatch reconcila
   await jl.h.waitForNth(
     (event) => event["type"] === "settled",
     checkBase + 1,
-    "the worker to settle after the failed exact read",
+    "the prompted check to settle",
   );
-  const before = await until(
-    () => proxy.activities.slice(checkFrom).findLast((state) => state !== "running"),
-    "the worker's settled activity before the stop",
-  );
+  const before = await until(() => {
+    const after = proxy.activities.slice(checkFrom);
+    return after.includes("running") ? after.findLast((state) => state !== "running") : undefined;
+  }, "the prompted check's settled activity before the stop");
   assert.equal(before, "waiting");
   const quiet = proxy.activities.length;
   const base = settles();
@@ -345,3 +351,23 @@ test("a delayed generic stop reply for a lost job cannot discard a revival that 
   );
   assert.deepEqual((await jl.jobResults()).at(-1), [1, 0, "gate"]);
 });
+
+for (const mixed of [false, true])
+  test(`an automatic stopped-if-idle handoff ${mixed ? "is not confirmed by a reply that is both a success and a failure" : "is confirmed by an honest reply"}`, async (t) => {
+    const proxy = await jl.proxy(t);
+    if (mixed) proxy.callFault("report", { raw: { error: "the report was refused" } });
+    jl.h.onModel(() => ({ text: "Nothing is running" }));
+    jl.h.onModel(() => ({ text: "Still nothing is running" }));
+    const pi = jl.worker();
+    const reported = await until(
+      () => (proxy.replied.includes("report") ? proxy.calls.indexOf("report") : undefined),
+      "the automatic handoff reply",
+    );
+    jl.h.onModel(() => ({ text: "Nothing else to do" }));
+    pi.prompt("Anything else?");
+    const idle = await until(() => {
+      const at = proxy.calls.indexOf("job.idle", reported + 1);
+      return at < 0 ? undefined : at;
+    }, "the next run's idle check after the handoff reply");
+    assert.equal(proxy.calls.slice(reported + 1, idle).includes("standing"), !mixed);
+  });

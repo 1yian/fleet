@@ -26,7 +26,14 @@ function checkResult(op: OpName, value: unknown): unknown {
   return check(OPS[op].result, value);
 }
 
-const isJobOp = (op: OpName): boolean => op === "jobs" || op.startsWith("job.");
+const strictReply = (op: OpName, args: unknown): boolean =>
+  op === "jobs" ||
+  op.startsWith("job.") ||
+  (op === "report" &&
+    typeof args === "object" &&
+    args !== null &&
+    "status" in args &&
+    args.status === "stopped-if-idle");
 
 const contradictory = (result: Result): boolean =>
   result.ok ? "error" in result : "value" in result;
@@ -127,7 +134,7 @@ export class Link {
             }, deadlineMs);
       this.pending.set(id, (result) => {
         clearTimeout(timer);
-        if (isJobOp(op) && contradictory(result))
+        if (strictReply(op, args) && contradictory(result))
           reject(
             new Error(`cardd's answer to ${op} is both a success and a failure; it was ignored`),
           );

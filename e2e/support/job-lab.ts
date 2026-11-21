@@ -289,6 +289,7 @@ exec ${quote(herdr)} "$@"
         if (op === "jobs") state.lists += 1;
         const fault = op === undefined ? undefined : state.callFaults.get(op);
         deliver(client, message, rewriteResult(message, text, fault), fault);
+        if (op !== undefined) state.replied.push(op);
       });
       upstream.on("error", () => client.terminate());
       upstream.on("close", () => client.terminate());
@@ -319,6 +320,7 @@ exec ${quote(herdr)} "$@"
       activities: state.activities,
       requests: state.requests,
       calls: state.calls,
+      replied: state.replied,
       lists: (): number => state.lists,
       drop,
       callFault: (op: string, fault: CallFault | undefined): void => {
@@ -394,6 +396,7 @@ class ProxyState {
   readonly activities: string[] = [];
   readonly requests: { op: string; url: string }[] = [];
   readonly calls: string[] = [];
+  readonly replied: string[] = [];
   readonly callFaults = new Map<string, CallFault>();
   readonly httpFaults = new Map<string, { fault: HttpFault; times: number }>();
   prepare: HeldPrepare | undefined;
