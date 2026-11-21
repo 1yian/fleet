@@ -36,6 +36,18 @@ export const REDACTED_COMPLAINTS = [
     "[URL withheld: credential boundaries unclear]",
   ],
   [
+    "Callback https://localhost/callback?a%70i+key=paper failed",
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    "Callback https://localhost/callback?next=1&client+secret=paper failed",
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    "Callback https://localhost/callback?q=a+b=2 failed",
+    "Callback https://localhost/callback?q=a+b=2 failed",
+  ],
+  [
     "Callback https://localhost/callback#pass%77ord=paper failed",
     "[URL withheld: credential boundaries unclear]",
   ],

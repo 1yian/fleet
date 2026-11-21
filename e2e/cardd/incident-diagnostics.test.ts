@@ -328,6 +328,14 @@ for (const [name, diagnostic] of [
     "Callback https://localhost/callback?access%5Ftoken=paper failed",
   ],
   [
+    "a form-encoded query parameter name",
+    "Callback https://localhost/callback?a%70i+key=paper failed",
+  ],
+  [
+    "a plus-separated fragment parameter name",
+    "Callback https://localhost/callback#client+secret=paper failed",
+  ],
+  [
     "an encoded fragment parameter name",
     "Callback https://localhost/callback#pass%77ord=paper failed",
   ],
