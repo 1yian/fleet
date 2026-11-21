@@ -212,5 +212,9 @@ test("fleet wake still follows a same-origin redirect", async (t) => {
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   configureMain(scratch, `ws://127.0.0.1:${String(address.port)}/session`, "token");
-  assert.equal(scratch.fleet(["wake", "main", "check in"]).trim(), "main: woken");
+  const { stdout } = await run("node", [scratch.launch, "wake", "main", "check in"], {
+    encoding: "utf8",
+    env: { ...process.env },
+  });
+  assert.equal(stdout.trim(), "main: woken");
 });
