@@ -115,7 +115,13 @@ class StartUnconfirmed extends Error {
 }
 
 async function launchReplacement(host: string, pane: string, args: string[]): Promise<void> {
-  if (!(await until(() => shellIdle(host, pane), SHELL_WAIT_MS)))
+  let idle: boolean;
+  try {
+    idle = await until(() => shellIdle(host, pane), SHELL_WAIT_MS);
+  } catch (error) {
+    throw new DidNotStart(error);
+  }
+  if (!idle)
     throw new DidNotStart(new Error(`the shell in pane ${pane} on ${host} did not become idle`));
   try {
     await startReplacementOnce(host, args);
