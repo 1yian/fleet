@@ -79,6 +79,7 @@ for (const [name, diagnostic] of [
   ["attached backtick shell value", "Tool printed password=prefix`paper canoe"],
   ["spliced attached backtick value", "Tool printed password=pre\\\nfix`paper canoe"],
   ["spliced credential collection", "Tool printed pass\\\nword: [paper, canoe]"],
+  ["hex escaped credential key", 'Tool printed {"pass\\x77ord":"paper canoe"}'],
   ["spliced escaped credential key", 'Tool printed {"pass\\\n\\u0077ord":"paper canoe"}'],
   ["spliced unbounded YAML", "Tool printed to\\\nken: !!str >\n paper canoe"],
   ["spliced multiline scalar", "pass\\\nword: paper\n  canoe"],

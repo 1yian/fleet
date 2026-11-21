@@ -13,8 +13,9 @@ const COOKIE_HEADER = new RegExp(
   ].join("|"),
   "i",
 );
-const ESCAPED_KEY = /\\?["']((?:[^"'\\\n]|\\+u[\da-f]{4})+)\\?["']\s*:/gi;
-const KEY_ESCAPE = /\\+u([\da-f]{4})/gi;
+const ESCAPED_KEY = /\\?["']((?:[^"'\\\n]|\\+[^\\\n])+)\\?["']\s*:/g;
+const KEY_ESCAPE =
+  /\\+(?:u\{([\da-fA-F]+)\}|u([\da-fA-F]{4})|x([\da-fA-F]{2})|U([\da-fA-F]{8})|[^\\\n])/g;
 const CREDENTIAL_KEY = new RegExp(String.raw`^${SECRET_NAME}$`, "i");
 const UNICODE_ESCAPE = /\\+u([\da-f]{4})/gi;
 
@@ -120,9 +121,12 @@ export const hasCookieRecord = (text: string): boolean =>
 
 export function hasEscapedCredentialKey(text: string): boolean {
   for (const [, key = ""] of text.matchAll(ESCAPED_KEY)) {
-    const decoded = key.replace(KEY_ESCAPE, (_escape, hex: string) =>
-      String.fromCharCode(Number.parseInt(hex, 16)),
-    );
+    const decoded = key.replace(KEY_ESCAPE, (_escape, ...groups: (string | undefined)[]) => {
+      const hex = groups.slice(0, 4).find((group) => group !== undefined);
+      if (hex === undefined) return "";
+      const code = Number.parseInt(hex, 16);
+      return code > 0x10ffff ? "" : String.fromCodePoint(code);
+    });
     if (decoded !== key && CREDENTIAL_KEY.test(decoded)) return true;
   }
   return false;
