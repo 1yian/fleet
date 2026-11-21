@@ -17,7 +17,6 @@ const ESCAPED_KEY = /\\?["']((?:[^"'\\\n]|\\+u[\da-f]{4})+)\\?["']\s*:/gi;
 const KEY_ESCAPE = /\\+u([\da-f]{4})/gi;
 const CREDENTIAL_KEY = new RegExp(String.raw`^${SECRET_NAME}$`, "i");
 const UNICODE_ESCAPE = /\\+u([\da-f]{4})/gi;
-const CONTROL_ESCAPE = /\\+[rntbf]/g;
 
 export function normalizeInput(text: string): string {
   return text.replace(/\r\n?/g, "\n").replace(/^\uFEFF/gm, "");
@@ -47,14 +46,37 @@ export const hasBrowserUserinfo = (text: string): boolean =>
       .replace(/\\/g, "/"),
   );
 
-const decoded = (text: string): string =>
-  text
-    .replace(UNICODE_ESCAPE, (_escape, hex: string) => {
+interface Decoded {
+  readonly view: string;
+  readonly starts: readonly number[];
+  readonly literal: readonly boolean[];
+}
+
+const DECODE_TOKEN = /\\+u([\da-fA-F]{4})|(\\+[rntbf])|\\+|[\s\S]/g;
+
+function decode(text: string): Decoded {
+  let view = "";
+  const starts: number[] = [];
+  const literal: boolean[] = [];
+  const emit = (char: string, start: number, plain: boolean): void => {
+    view += char;
+    starts.push(start);
+    literal.push(plain);
+  };
+  for (const match of text.matchAll(DECODE_TOKEN)) {
+    const [token = "", hex, control] = match;
+    const start = match.index;
+    if (hex !== undefined) {
       const code = Number.parseInt(hex, 16);
-      return code < 0x20 ? "\u0001" : String.fromCharCode(code);
-    })
-    .replace(CONTROL_ESCAPE, "\u0001")
-    .replace(/\\+/g, "");
+      if (code < 0x20) emit("\u0001", start, false);
+      else if (code !== 0x5c) emit(String.fromCharCode(code), start, false);
+    } else if (control !== undefined) emit("\u0001", start, false);
+    else if (!token.startsWith("\\")) emit(token, start, true);
+  }
+  return { view, starts, literal };
+}
+
+const decoded = (text: string): string => decode(text).view;
 
 interface Row {
   readonly stamped: boolean;
@@ -106,7 +128,7 @@ export function hasEscapedCredentialKey(text: string): boolean {
   return false;
 }
 
-const PARAM_NAME = /[?&#;]([^=&\s#?]*)=/g;
+const PARAM_NAME = new RegExp(String.raw`(?=[?&#;]([^=&#?;\n\u0001]*)=)`, "g");
 const PERCENT = /%([\da-f]{2})/gi;
 
 export function percentDecoded(name: string): string {
@@ -121,10 +143,22 @@ export function percentDecoded(name: string): string {
   return current;
 }
 
+function literalSpan(found: Decoded, from: number, length: number): boolean {
+  const first = found.starts[from] ?? 0;
+  for (let offset = 0; offset < length; offset += 1) {
+    if (found.literal[from + offset] !== true) return false;
+    if (found.starts[from + offset] !== first + offset) return false;
+  }
+  return true;
+}
+
 export function hasEncodedCredentialParam(text: string): boolean {
-  const escaped = text.search(UNICODE_ESCAPE) >= 0;
-  return Array.from(decoded(text).matchAll(PARAM_NAME)).some(([, name = ""]) => {
-    const plain = percentDecoded(name);
-    return CREDENTIAL_KEY.test(plain) && (escaped || plain !== name);
-  });
+  const found = decode(text);
+  for (const match of found.view.matchAll(PARAM_NAME)) {
+    const name = match[1] ?? "";
+    const key = percentDecoded(name);
+    if (!CREDENTIAL_KEY.test(key)) continue;
+    if (key !== name || !literalSpan(found, match.index, name.length + 2)) return true;
+  }
+  return false;
 }

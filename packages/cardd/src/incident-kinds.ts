@@ -429,7 +429,7 @@ export function diagnoseFailure(text: string): {
     const [line = "", status = "", inline] = envelope ?? [];
     const seconds =
       inline ?? (envelope === null ? undefined : headerRetryAfter(source.slice(line.length)));
-    const kind = envelope === null && hasCookieRecord(source) ? "withheld" : classify(status);
+    const kind = envelope === null ? "withheld" : classify(status);
     return { error, signals: { kind, retryAfter: milliseconds(seconds) } };
   }
   return { error, signals: { kind: classify(error), retryAfter: retryAfterMs(diagnostic) } };

@@ -1,5 +1,9 @@
 export const REDACTED_COMPLAINTS = [
   ['It printed password: "paper canoe harbor".', "It printed password: [hidden]."],
+  [
+    String.raw`Unauthorized for https://localhost/cb?password=paper (label \u00e9)`,
+    String.raw`Unauthorized for https://localhost/cb?password=[hidden] (label \u00e9)`,
+  ],
   ["password: ``paper ``` canoe ` sail``, next=visible", "password: [hidden], next=visible"],
   ["password: Basic paper\n canoe harbor\nnext: visible", "password: [hidden] next: visible"],
   ["password:\n paper canoe\n harbor\nnext: visible", "password: [hidden] next: visible"],
@@ -77,6 +81,10 @@ export const REDACTED_COMPLAINTS = [
   ],
   [
     String.raw`{"b":"https://fixture.local/?next=1\u003bpassword=paper","a":"https://fixture.local/?x;password=example"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    String.raw`{"url":"https://localhost/callback?api\u0020key=paper"}`,
     "[URL withheld: credential boundaries unclear]",
   ],
   [

@@ -364,6 +364,10 @@ for (const [name, diagnostic] of [
     String.raw`{"b":"https://fixture.local/?next=1\u003bpassword=paper","a":"https://fixture.local/?x;password=example"}`,
   ],
   [
+    "an escaped space inside a parameter name",
+    String.raw`{"url":"https://localhost/callback?api\u0020key=paper"}`,
+  ],
+  [
     "an encoded fragment parameter name",
     "Callback https://localhost/callback#pass%77ord=paper failed",
   ],
@@ -377,6 +381,53 @@ for (const [name, diagnostic] of [
     assert.doesNotMatch(heard.body, /paper/);
   });
 }
+
+test("an escaped-name URL credential is withheld and refused recovery through card.restart", async () => {
+  const card = await newCard(cleo, "Report an escaped credential name");
+  await reportFailure(
+    fleet,
+    cleo,
+    card,
+    String.raw`Unauthorized for {"url":"https://localhost/callback?api\u0020key=paper"}`,
+  );
+  const heard = await cleo.waitForEntry(is("runtime-failure"), "the runtime failure");
+  assert.ok(heard.body.includes("Classified withheld."), heard.body);
+  assert.doesNotMatch(heard.body, /paper/);
+  await assert.rejects(
+    cleo.call("card.restart", {
+      card: card.id,
+      incident: 1,
+      generation: 1,
+      mode: "retry",
+      key: "escaped-retry",
+    }),
+    /is blocked/,
+  );
+});
+
+test("an unrelated Unicode escape keeps the plain URL credential scrubbed, the auth class, and the refusal", async () => {
+  const card = await newCard(cleo, "Report an unrelated escape");
+  await reportFailure(
+    fleet,
+    cleo,
+    card,
+    String.raw`Unauthorized for https://localhost/cb?password=paper (label \u00e9)`,
+  );
+  const heard = await cleo.waitForEntry(is("runtime-failure"), "the runtime failure");
+  assert.ok(heard.body.includes("password=[hidden]"), heard.body);
+  assert.ok(heard.body.includes("Classified auth."), heard.body);
+  assert.doesNotMatch(heard.body, /paper/);
+  await assert.rejects(
+    cleo.call("card.restart", {
+      card: card.id,
+      incident: 1,
+      generation: 1,
+      mode: "retry",
+      key: "unrelated-escape-retry",
+    }),
+    /is blocked/,
+  );
+});
 
 test("a bare port diagnostic keeps its text and its transient recovery", async () => {
   const card = await newCard(cleo, "Report a port timeout");
