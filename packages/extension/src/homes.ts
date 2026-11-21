@@ -22,15 +22,24 @@ import {
   type Discovery,
   type LaneHome,
 } from "./lane-homes.ts";
+import {
+  CRASH_WINDOW_MS,
+  confirmLifecycle,
+  heldReasonOf,
+  readState,
+  recentStartsOf,
+  sampleLifecycle,
+  startsFile,
+  stoppedFile,
+  type Lifecycle,
+} from "./lane-lifecycle.ts";
 import { idlePaneOf, lanePaneState, workspaceOf } from "./lane-observation.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
 import {
-  isAbsent,
   isRecord,
   LANE_FILE,
   mateStartArgs,
   parseLaneConfig,
-  readRegular,
   type LaneConfig,
 } from "./lane-config.ts";
 import { remainingMs } from "./maintenance-budget.ts";
@@ -66,11 +75,8 @@ interface SweepResult {
 }
 
 const STARTS_BEFORE_HOLD = 3;
-const CRASH_WINDOW_MS = 10 * 60_000;
 
-const stoppedFile = (home: string): string => join(home, "state", "stopped");
 const HELD_AT_CREATION = "held since the home was made\n";
-const startsFile = (home: string): string => join(home, "state", "starts");
 
 function liftHold(home: string): void {
   rmSync(stoppedFile(home), { force: true });
@@ -142,27 +148,9 @@ const ifUnread =
     throw error;
   };
 
-function readState(file: string, name: string): string | undefined {
-  try {
-    return readRegular(file);
-  } catch (error) {
-    if (isAbsent(file, error)) return undefined;
-    const code = error instanceof Error && "code" in error ? String(error.code) : "unknown";
-    throw new HostUnread(`could not read ${name} (${code})`);
-  }
-}
-
-const heldReasonOf = (text: string | undefined): string | undefined =>
-  text === undefined ? undefined : text.trim() || "stopped";
-
 function heldReason(home: string): string | undefined {
   return heldReasonOf(readState(stoppedFile(home), "state/stopped"));
 }
-
-const sampleLifecycle = (home: string): [string | undefined, string | undefined] => [
-  readState(stoppedFile(home), "state/stopped"),
-  readState(startsFile(home), "state/starts"),
-];
 
 async function statusOf(info: LaneHome): Promise<Status> {
   const { lane, home } = info;
@@ -215,15 +203,6 @@ function syncHome(root: string, home: string, deadline?: number): void {
 
 function recentStarts(home: string, now: number): number[] {
   return recentStartsOf(readState(startsFile(home), "state/starts"), now);
-}
-
-function recentStartsOf(text: string | undefined, now: number): number[] {
-  if (text === undefined) return [];
-  const lines = text.split("\n");
-  const complete = lines.pop() === "";
-  if (!complete || lines.length === 0 || !lines.every((line) => /^[1-9]\d{0,15}$/.test(line)))
-    throw new HostUnread("state/starts is incomplete");
-  return lines.map(Number).filter((time) => time > now - CRASH_WINDOW_MS);
 }
 
 const LANE_OBSERVATION_MS = 18_000;
@@ -300,9 +279,10 @@ function confirmClaim(root: string, info: LaneHome): void {
 async function createConfirmedPane(
   info: LaneHome,
   deadline: number | undefined,
-  confirm: (info: LaneHome) => void,
+  confirm: (info: LaneHome, sample: Lifecycle) => void,
+  sample: Lifecycle,
 ): Promise<string> {
-  confirm(info);
+  confirm(info, sample);
   const pane = await createMatePane(info, deadline);
   await confirmTarget(info, pane, deadline);
   return pane;
@@ -313,15 +293,16 @@ async function start(
   info: LaneHome,
   existingPane: string | undefined,
   lift: boolean,
+  sample: Lifecycle,
   deadline?: number,
-  confirm: (info: LaneHome) => void = noClaimCheck,
+  confirm: (info: LaneHome, sample: Lifecycle) => void = noClaimCheck,
 ): Promise<void> {
   const launchDeadline = startDeadline(deadline);
-  const history = recentStarts(info.home, Date.now());
+  const history = recentStartsOf(sample[1], Date.now());
   syncHome(root, info.home, launchDeadline);
   await confirmTarget(info, existingPane, launchDeadline);
-  const pane = existingPane ?? (await createConfirmedPane(info, launchDeadline, confirm));
-  confirm(info);
+  const pane = existingPane ?? (await createConfirmedPane(info, launchDeadline, confirm, sample));
+  confirm(info, sample);
   const pi = ["pi", "--continue", TRUST_ARG, ...mateStartArgs(info.config.args, info.config.tier)];
   const { direnv } = info.config;
   const command = withCompileCache(direnv === undefined ? pi : ["direnv", "exec", direnv, ...pi]);
@@ -374,7 +355,7 @@ async function upOne(
   info: LaneHome,
   only: string | undefined,
   deadline: number | undefined,
-  confirm: (info: LaneHome) => void,
+  confirm: (info: LaneHome, sample: Lifecycle) => void,
 ): Promise<Outcome> {
   const { lane, home } = info;
   const observationDeadline =
@@ -382,9 +363,10 @@ async function upOne(
       ? undefined
       : Math.min(deadline, performance.now() + LANE_OBSERVATION_MS);
   const observed = await workspaceOf(info, "liveness", observationDeadline);
-  const reason = heldReason(home);
-  const history = recentStarts(home, Date.now());
-  confirm(info);
+  const sample = sampleLifecycle(home);
+  const reason = heldReasonOf(sample[0]);
+  const history = recentStartsOf(sample[1], Date.now());
+  confirm(info, sample);
   if (observed?.state === "running") {
     if (reason !== undefined) liftHold(home);
     return { lane, action: "running" };
@@ -396,7 +378,7 @@ async function upOne(
     writeFileSync(stoppedFile(home), `crash loop: ${detail}\n`);
     return { lane, action: "held", detail };
   }
-  await start(root, info, idlePaneOf(observed), lift, deadline, confirm);
+  await start(root, info, idlePaneOf(observed), lift, sample, deadline, confirm);
   return { lane, action: "started" };
 }
 
@@ -411,9 +393,10 @@ export async function up(
   const confirm =
     discovered === undefined
       ? noClaimCheck
-      : (info: LaneHome): void => {
+      : (info: LaneHome, sample: Lifecycle): void => {
           confirmClaim(root, info);
           discovered.confirm?.(info);
+          confirmLifecycle(info, sample);
         };
   const expected = [...lanes, ...unread].map(({ lane }) => lane);
   const unreadFailed = unreadFailure(unread);
@@ -481,7 +464,7 @@ async function restartOne(root: string, info: LaneHome, all: boolean): Promise<O
     throw new HostUnread(
       `${info.lane} still has a running mate in workspace ${observed.workspace} after restart closed its own`,
     );
-  await start(root, info, idlePaneOf(observed), true);
+  await start(root, info, idlePaneOf(observed), true, sampleLifecycle(info.home));
   return { lane: info.lane, action: "started" };
 }
 

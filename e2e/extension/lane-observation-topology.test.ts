@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { records } from "../support/json.ts";
@@ -152,6 +152,46 @@ test("a pane that turns busy during checkout is never run into", async () => {
   assert.deepEqual(maintain("", root), action("ops", "unread"));
   assert.equal(existsSync(`${faultLog()}.checkout`), true);
   assert.equal(existsSync(join(home, "state", "starts")), false);
+});
+
+test("lifecycle evidence that changes during checkout never authorizes a launch or overwrites it", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  const state = join(home, "state");
+  const starts = join(state, "starts");
+  const stopped = join(state, "stopped");
+  const mutations = `${faultLog()}.mutations`;
+  const root = await idlePane("ops", home);
+  const gitHere = (...args: string[]) =>
+    execFileSync("git", [
+      "-C",
+      here.root,
+      "-c",
+      "user.name=scratch",
+      "-c",
+      "user.email=s@example.com",
+      ...args,
+    ]);
+  const hook = join(here.root, ".git", "hooks", "post-checkout");
+  const variants: { change: string; file: string; text: string }[] = [
+    { change: `printf 'torn' > '${starts}'`, file: starts, text: "torn" },
+    {
+      change: `printf 'stopped by hand\\n' > '${stopped}'`,
+      file: stopped,
+      text: "stopped by hand\n",
+    },
+  ];
+  for (const variant of variants) {
+    rmSync(state, { recursive: true, force: true });
+    rmSync(mutations, { force: true });
+    mkdirSync(state, { recursive: true });
+    if (variant.file === stopped) writeFileSync(starts, `${String(Date.now())}\n`);
+    gitHere("commit", "--allow-empty", "-qm", "advance");
+    writeFileSync(hook, `#!/bin/sh\nmkdir -p '${state}'\n${variant.change}\n`, { mode: 0o755 });
+    assert.deepEqual(maintain("split-after-create", root), action("ops", "unread"));
+    assert.equal(existsSync(mutations), false);
+    assert.equal(readFileSync(variant.file, "utf8"), variant.text);
+    assert.equal(existsSync(variant.file === starts ? stopped : starts), variant.file === stopped);
+  }
 });
 
 test("a utility pane changing directory does not discard valid Pi evidence in a split", async () => {
