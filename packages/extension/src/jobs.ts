@@ -431,6 +431,7 @@ export class Jobs {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error("stop_job needs a worker inside a herdr pane");
     const before = this.revisions.get(job);
+    const noticed = this.lastResult.get(job);
     const receipt = await this.link.call("job.stop", { job });
     const { label, running } = receipt;
     const cancelled = "cancelled" in receipt && receipt.cancelled === true;
@@ -439,7 +440,10 @@ export class Jobs {
     const named = `job ${String(job)} (${label})`;
     if (cancelled) this.cancelledJobs.add(job);
     if (!running) {
-      if (cancelled || this.revisions.get(job) === before) {
+      if (
+        cancelled ||
+        (this.revisions.get(job) === before && this.lastResult.get(job) === noticed)
+      ) {
         this.advance(job);
         if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
         this.running.delete(job);

@@ -278,12 +278,8 @@ exec ${quote(herdr)} "$@"
         const op = message.t === "result" ? ops.get(message.id) : undefined;
         if (message.t === "result") ops.delete(message.id);
         if (op === "jobs") state.lists += 1;
-        const rewritten = rewriteResult(
-          message,
-          text,
-          op === undefined ? undefined : state.callFaults.get(op),
-        );
-        if (client.readyState === WebSocket.OPEN) client.send(rewritten);
+        const fault = op === undefined ? undefined : state.callFaults.get(op);
+        deliver(client, rewriteResult(message, text, fault), fault);
       });
       upstream.on("error", () => client.terminate());
       upstream.on("close", () => client.terminate());
@@ -352,8 +348,17 @@ exec ${quote(herdr)} "$@"
   }
 }
 
+function deliver(client: WebSocket, payload: string, fault: CallFault | undefined): void {
+  const send = (): void => {
+    if (client.readyState === WebSocket.OPEN) client.send(payload);
+  };
+  if (fault !== undefined && "hold" in fault) void fault.hold.then(send);
+  else send();
+}
+
 function rewriteResult(message: ServerMessage, text: string, fault: CallFault | undefined): string {
-  if (message.t !== "result" || fault === undefined || "local" in fault) return text;
+  if (message.t !== "result" || fault === undefined || "local" in fault || "hold" in fault)
+    return text;
   if ("raw" in fault) return JSON.stringify({ ...message, ...fault.raw });
   if ("error" in fault)
     return JSON.stringify({ t: "result", id: message.id, ok: false, error: fault.error });
@@ -364,7 +369,8 @@ type CallFault =
   | { value: unknown }
   | { error: string }
   | { raw: Record<string, unknown> }
-  | { local: Record<string, unknown> };
+  | { local: Record<string, unknown> }
+  | { hold: Promise<unknown> };
 type HttpFault = { redirect: string } | { value: unknown } | { status: number; body: unknown };
 
 class ProxyState {
