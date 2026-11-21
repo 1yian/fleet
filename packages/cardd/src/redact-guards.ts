@@ -13,7 +13,7 @@ const COOKIE_HEADER = new RegExp(
   ].join("|"),
   "i",
 );
-const ESCAPED_KEY = /\\?["']((?:[^"'\\\n]|\\+[^\\\n])+)\\?["']\s*:/g;
+const ESCAPED_KEY = /(?=["']((?:[^"'\\\n]|\\+[^"'\\\n])+)\\*["']\s*:)/g;
 const KEY_ESCAPE =
   /\\+(?:u\{([\da-fA-F]+)\}|u([\da-fA-F]{4})|x([\da-fA-F]{2})|U([\da-fA-F]{8})|[^\\\n])/g;
 const CREDENTIAL_KEY = new RegExp(String.raw`^${SECRET_NAME}$`, "i");

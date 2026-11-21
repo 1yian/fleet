@@ -464,6 +464,9 @@ const CURL_DATA_COMPLAINTS = [
 const ESCAPED_KEY_COMPLAINTS = [
   String.raw`{"pass\u0077ord":["paper","canoe"]}`,
   String.raw`{"pass\u0077ord":"paper canoe"}`,
+  String.raw`{\"pass\u0077ord\":\"paper canoe\",\"next\":\"yes\"}`,
+  String.raw`{"log":"{\"pass\\u0077ord\":\"paper canoe\",\"next\":\"yes\"}"}`,
+  String.raw`{"log":"{\\\"pass\\\\u0077ord\\\":\\\"paper canoe\\\",\\\"next\\\":\\\"yes\\\"}"}`,
   String.raw`{"to\u006Ben": "paper canoe"}`,
   String.raw`{"api\u0020key":"paper canoe"}`,
   String.raw`{"pass\x77ord": "paper canoe"}`,
