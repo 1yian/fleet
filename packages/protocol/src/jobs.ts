@@ -88,6 +88,14 @@ export function nextJob(life: JobLife, event: JobEvent, at: number): JobStep | u
 const JobLaunchId = Type.String({
   pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 });
+export const StartupFenceFields = Type.Object({
+  job: Type.Integer({ minimum: 1 }),
+  startupFenced: Type.Literal(true),
+  startupLaunch: JobLaunchId,
+  exitCode: Type.Integer(),
+  lost: Type.Optional(Type.Never()),
+  revived: Type.Optional(Type.Never()),
+});
 const StartJob = Type.Object({
   label: Type.String({ minLength: 1 }),
   command: Type.String({ minLength: 1 }),
@@ -165,12 +173,24 @@ export const JOB_OPS = {
   "job.stop": {
     roles: ["worker"],
     args: Type.Object({ job: Type.Integer() }),
-    result: Type.Object({
-      label: Type.String(),
-      running: Type.Boolean(),
-      cancelled: Type.Optional(Type.Literal(true)),
-      legacy: Type.Optional(Type.Literal(true)),
-    }),
+    result: Type.Union([
+      Type.Object(
+        {
+          label: Type.String({ minLength: 1 }),
+          running: Type.Literal(true),
+          legacy: Type.Optional(Type.Literal(true)),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          label: Type.String({ minLength: 1 }),
+          running: Type.Literal(false),
+          cancelled: Type.Optional(Type.Literal(true)),
+        },
+        { additionalProperties: false },
+      ),
+    ]),
   },
   "job.drop": {
     roles: ["worker", "mate"],

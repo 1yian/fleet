@@ -41,6 +41,7 @@ export {
   nextJob,
   parseJobState,
   startedJob,
+  StartupFenceFields,
   type JobEvent,
   type JobLife,
   type JobState,

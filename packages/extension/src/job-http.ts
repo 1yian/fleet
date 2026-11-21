@@ -87,7 +87,7 @@ export async function confirmLegacyStop(
     const stop = await call("job.stop", { job });
     if (stop.status !== 200 || !stop.outcome.ok) return false;
     const receipt = check(OPS["job.stop"].result, stop.outcome.value);
-    return receipt.running && receipt.label === label && receipt.cancelled === undefined;
+    return receipt.running && receipt.label === label;
   } catch {
     return false;
   } finally {

@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { check, OPS, type Entry } from "@fleet/protocol";
+import { check, OPS, StartupFenceFields, type Entry } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import Type from "typebox";
 import Value from "typebox/value";
@@ -74,7 +74,7 @@ interface PendingDispatch {
 const startupFenced = (pending: PendingDispatch | undefined): boolean => pending?.fenced === true;
 
 interface Preparing {
-  fence?: Entry;
+  readonly fences: Map<number, Entry>;
 }
 
 export class Jobs {
@@ -127,6 +127,7 @@ export class Jobs {
       for (const { id } of jobs) {
         if (this.revisions.get(id) !== before.get(id)) continue;
         this.running.add(id);
+        this.launches.delete(id);
         this.clearPending(id);
       }
       if (this.waiting !== wasWaiting) this.onWaitChanged();
@@ -154,8 +155,10 @@ export class Jobs {
     this.unresolved.delete(job);
     const wasWaiting = this.waiting;
     this.clearPending(job);
-    if (running) this.running.add(job);
-    else this.running.delete(job);
+    if (running) {
+      this.running.add(job);
+      this.launches.delete(job);
+    } else this.running.delete(job);
     if (this.waiting !== wasWaiting) this.onWaitChanged();
   }
 
@@ -184,6 +187,7 @@ export class Jobs {
     )
       launching.ran = true;
     if (typeof exitCode === "number") {
+      this.launches.delete(job);
       this.clearPending(job);
       this.running.delete(job);
       this.forgetTab(job);
@@ -195,16 +199,15 @@ export class Jobs {
   }
 
   private observeFence(job: number, entry: Entry): void {
-    const { startupFenced, startupLaunch } = entry.fields;
-    if (
-      startupFenced !== true ||
-      !Value.Check(OPS["job.register"].args.properties.launch, startupLaunch)
-    )
+    if (!Value.Check(StartupFenceFields, entry.fields)) {
+      this.warn(
+        `Ignored an incomplete startup fence for job ${String(job)} (entry ${String(entry.id)})`,
+      );
       return;
-    const launch = startupLaunch;
+    }
+    const launch = entry.fields.startupLaunch;
     if (this.launches.get(job) !== launch) {
-      const preparing = this.preparing.get(launch);
-      if (preparing !== undefined) preparing.fence = entry;
+      this.preparing.get(launch)?.fences.set(job, entry);
       return;
     }
     this.lastResult.set(job, entry.id);
@@ -214,6 +217,7 @@ export class Jobs {
   }
 
   private confirmStartupFence(job: number): void {
+    this.launches.delete(job);
     const pending = this.pending.get(job);
     this.running.delete(job);
     if (pending === undefined) return;
@@ -292,7 +296,7 @@ export class Jobs {
     if (workspace === undefined) throw new Error(`${label} needs a worker inside a herdr pane`);
     this.files.resumeLaunchCleanup();
     const id = randomUUID();
-    const preparing: Preparing = {};
+    const preparing: Preparing = { fences: new Map() };
     this.preparing.set(id, preparing);
     const { job, heartbeatMs, registeredLaunch } = await this.prepare(id, label, command).catch(
       (error: unknown) => {
@@ -302,8 +306,8 @@ export class Jobs {
     );
     this.preparing.delete(id);
     if (registeredLaunch) this.launches.set(job, id);
-    const early = preparing.fence;
-    if (early !== undefined && early.fields["job"] === job) {
+    const early = preparing.fences.get(job);
+    if (early !== undefined) {
       this.observeResult(early);
       throw new Error(`Job ${String(job)} cannot start: ${early.body}`);
     }
@@ -420,24 +424,27 @@ export class Jobs {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error("stop_job needs a worker inside a herdr pane");
     const before = this.revisions.get(job);
-    const { label, running, cancelled, legacy } = await this.link.call("job.stop", { job });
+    const receipt = await this.link.call("job.stop", { job });
+    const { label, running } = receipt;
+    const cancelled = "cancelled" in receipt && receipt.cancelled === true;
+    const legacy = "legacy" in receipt && receipt.legacy === true;
     const named = `job ${String(job)} (${label})`;
-    if (cancelled === true) this.cancelledJobs.add(job);
+    if (cancelled) this.cancelledJobs.add(job);
     if (!running) {
-      if (cancelled === true || this.revisions.get(job) === before) {
+      if (cancelled || this.revisions.get(job) === before) {
         this.advance(job);
         this.unresolved.delete(job);
         if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
         this.running.delete(job);
-        if (cancelled === true) this.confirmStartupFence(job);
+        if (cancelled) this.confirmStartupFence(job);
       }
-      return cancelled === true
+      return cancelled
         ? `${named} was stopped before wrapper registration. Its command will not run.`
         : `${named} is not running: nothing to stop.`;
     }
     let tab = this.ownedTabs.get(job);
     if (tab === undefined) {
-      if (legacy !== true && !(await confirmLegacyStop(this.endpoint, job, label)))
+      if (!legacy && !(await confirmLegacyStop(this.endpoint, job, label)))
         return `${named} has no verified tab ID in this worker session, so nothing was signalled.`;
       const tabs = records(
         (await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"],
