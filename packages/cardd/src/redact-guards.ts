@@ -110,7 +110,7 @@ function hasTraceRows(text: string): boolean {
   return rows.some((row) => row.offset === 0) || clipped || (rising && http);
 }
 
-export const hasCookieHeader = (text: string): boolean => {
+const hasCookieHeader = (text: string): boolean => {
   const view = decoded(text);
   return COOKIE_HEADER.test(view) || hasTraceRows(view);
 };

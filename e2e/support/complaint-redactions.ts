@@ -1,4 +1,4 @@
-export const REDACTED_COMPLAINTS = [
+const REDACTED_COMPLAINTS = [
   ['It printed password: "paper canoe harbor".', "It printed password: [hidden]."],
   [
     String.raw`Unauthorized for https://localhost/cb?password=paper (label \u00e9)`,
@@ -357,7 +357,7 @@ export const REDACTED_COMPLAINTS = [
   ["The only clue was token: [hidden].", "The only clue was token: [hidden]."],
 ] as const;
 
-export const COOKIE_COMPLAINTS = [
+const COOKIE_COMPLAINTS = [
   "GET / HTTP/1.1\nHost: localhost\nCookie: session=paper",
   "HTTP/1.1 200 OK\nSet-Cookie: session=paper; HttpOnly",
   "cookie: paper=canoe; river=sail",
@@ -433,7 +433,7 @@ export const COOKIE_COMPLAINTS = [
   "Co\\\nokie: session=paper",
 ];
 
-export const CURL_DATA_COMPLAINTS = [
+const CURL_DATA_COMPLAINTS = [
   "curl --data-urlencode 'password=paper canoe' https://localhost",
   "curl --cert client.pem --pass paper https://localhost",
   "curl --key client.key --pass=paper https://localhost",
@@ -461,7 +461,7 @@ export const CURL_DATA_COMPLAINTS = [
   "curl --form=api_key=paper\\ canoe https://localhost",
 ];
 
-export const RECORD_WITHHELD = "[credential record withheld: credential boundaries unclear]";
+const RECORD_WITHHELD = "[credential record withheld: credential boundaries unclear]";
 
 export const withheldFor = (text: string): string =>
   COOKIE_COMPLAINTS.includes(text)
