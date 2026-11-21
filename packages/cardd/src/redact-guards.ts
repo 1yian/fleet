@@ -66,7 +66,7 @@ function clippedAfter(prior: Row, row: Row): boolean {
   const gap = row.offset - prior.offset;
   const room = gap - prior.rest.length;
   const fragments = FRAGMENT.test(prior.rest.trim()) && FRAGMENT.test(row.rest.trim());
-  const ended = row.rest.trim() === "";
+  const ended = row.rest.replace(/["'}\]\s]+$/, "") === "";
   const stamped =
     row.stamped && prior.stamped && (fragments || ended) && (room === 1 || room === 2);
   return (prior.rest.length === 64 && gap === 64) || stamped;

@@ -233,6 +233,8 @@ export const COOKIE_COMPLAINTS = [
   '> Authorization: Digest username="demo", response="paper"',
   "> Proxy-Authorization: Basic cGFwZXI6Y2Fub2U=",
   "> X-Api-Key: paper",
+  String.raw`{"trace":"15:16:17.000001 0040: abc; sid=paper\r\n15:16:17.000002 0050: "}`,
+  String.raw`{"log":"{\"trace\":\"15:16:17.000001 0040: abc; sid=paper\\r\\n15:16:17.000002 0050: \"}"}`,
   "15:16:17.000001 0040: abc; sid=paper\n15:16:17.000002 0050: ",
   "15:16:17.000001 0040: abc; sid=paper\n15:16:17.000002 0050:",
   String.raw`{"trace":"15:16:17.000001 0040: abc; sid=paper\r\n15:16:17.000002 0050:"}`,
