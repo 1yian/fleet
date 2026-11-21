@@ -743,6 +743,7 @@ for (const fault of ["failed", "partial"] as const) {
 for (const [paneReply, reconnect] of [
   ["intact", false],
   ["unreadable", false],
+  ["intact", true],
   ["unreadable", true],
 ] as const)
   test(`a generic stop${reconnect ? " and a negative exact retry" : ""} before a delayed fence preserve exact tab cleanup and reject an ${paneReply} pane reply`, async (t) => {
@@ -866,27 +867,30 @@ exec ${quote(herdr)} "$@"
       );
       assert.equal(h.events.some(delivered), false);
       assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === tab));
-      const mark = activities.length;
-      writeFileSync(release, "");
-      const settledActivity = await until(
-        () => activities.slice(mark).findLast((state) => state !== "running"),
-        "the worker to settle after the failed pane reply, before the fence",
-      );
-      assert.equal(settledActivity, "idle");
-      assert.equal(h.events.some(delivered), false);
+      if (paneReply === "unreadable") {
+        const mark = activities.length;
+        writeFileSync(release, "");
+        const settledActivity = await until(
+          () => activities.slice(mark).findLast((state) => state !== "running"),
+          "the worker to settle after the failed pane reply, before the fence",
+        );
+        assert.equal(settledActivity, "idle");
+        assert.equal(h.events.some(delivered), false);
+      }
     }
     fenceDelivery.resolve();
     await h.waitFor(delivered, "the delayed fence before the pane reply");
     await waitTabGone(String(tab), "tab_id");
     assert.ok((await tabsInWorkspace()).some((each) => each["tab_id"] === decoy));
     assert.equal(existsSync(marker), false);
-    if (!reconnect) writeFileSync(release, "");
+    const early = reconnect && paneReply === "unreadable";
+    if (!early) writeFileSync(release, "");
     await h.waitForCall(1);
     assert.ok(
-      said(reconnect ? "Could not confirm dispatch for job 1" : "Job 1 was fenced during dispatch"),
+      said(early ? "Could not confirm dispatch for job 1" : "Job 1 was fenced during dispatch"),
     );
     assert.equal(said("Started job 1"), false);
-    if (!reconnect) assert.equal(said("pane reply unavailable"), false);
+    if (!early) assert.equal(said("pane reply unavailable"), false);
     assert.deepEqual(await jobResults(), [
       [1, 127, "could not start: wrapper did not register before the startup deadline"],
     ]);

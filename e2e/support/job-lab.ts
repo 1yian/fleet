@@ -14,6 +14,7 @@ import {
   parseClientMessage,
   parseServerMessage,
   type Card,
+  type ServerMessage,
 } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import { WebSocket, WebSocketServer } from "ws";
@@ -262,6 +263,12 @@ exec ${quote(herdr)} "$@"
         if (message.t === "call") {
           ops.set(message.id, message.op);
           state.calls.push(message.op);
+          const fault = state.callFaults.get(message.op);
+          if (fault !== undefined && "local" in fault) {
+            ops.delete(message.id);
+            client.send(JSON.stringify({ t: "result", id: message.id, ok: true, ...fault.local }));
+            return;
+          }
         }
         if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
       });
@@ -271,17 +278,11 @@ exec ${quote(herdr)} "$@"
         const op = message.t === "result" ? ops.get(message.id) : undefined;
         if (message.t === "result") ops.delete(message.id);
         if (op === "jobs") state.lists += 1;
-        const fault = op === undefined ? undefined : state.callFaults.get(op);
-        const rewritten =
-          message.t !== "result" || fault === undefined
-            ? text
-            : JSON.stringify(
-                "raw" in fault
-                  ? { ...message, ...fault.raw }
-                  : "error" in fault
-                    ? { t: "result", id: message.id, ok: false, error: fault.error }
-                    : { ...message, value: fault.value },
-              );
+        const rewritten = rewriteResult(
+          message,
+          text,
+          op === undefined ? undefined : state.callFaults.get(op),
+        );
         if (client.readyState === WebSocket.OPEN) client.send(rewritten);
       });
       upstream.on("error", () => client.terminate());
@@ -351,7 +352,19 @@ exec ${quote(herdr)} "$@"
   }
 }
 
-type CallFault = { value: unknown } | { error: string } | { raw: Record<string, unknown> };
+function rewriteResult(message: ServerMessage, text: string, fault: CallFault | undefined): string {
+  if (message.t !== "result" || fault === undefined || "local" in fault) return text;
+  if ("raw" in fault) return JSON.stringify({ ...message, ...fault.raw });
+  if ("error" in fault)
+    return JSON.stringify({ t: "result", id: message.id, ok: false, error: fault.error });
+  return JSON.stringify({ ...message, value: fault.value });
+}
+
+type CallFault =
+  | { value: unknown }
+  | { error: string }
+  | { raw: Record<string, unknown> }
+  | { local: Record<string, unknown> };
 type HttpFault = { redirect: string } | { value: unknown } | { status: number; body: unknown };
 
 class ProxyState {

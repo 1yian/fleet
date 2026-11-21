@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check } from "@fleet/protocol";
@@ -133,19 +133,15 @@ test("a generic stop receipt for a lost job keeps the pending dispatch reconcila
   );
 });
 
-test("a stop reply that is both a success and a failure changes nothing, and the honest reply still stops the job", async (t) => {
+test("a stop reply that is both a success and a failure leaves the held launch intact, and a real cancellation still cleans it up", async (t) => {
   jl.env["PROBE_STOP_RESULT"] = "1";
-  const done = join(jl.jobDir, "gate-done");
-  const { pi, proxy, shim, tab } = await jl.holdDispatch(
-    t,
-    `while [ ! -e ${quote(done)} ]; do sleep 0.05; done; echo gate`,
-  );
-  writeFileSync(shim.release, "");
-  await until(() => (jl.wrapperPid() === null ? undefined : true), "the wrapper to register");
+  const { pi, proxy, shim, input, tab } = await jl.holdDispatch(t, "echo gate");
+  assert.ok(existsSync(input));
+  assert.ok(await jl.hasTab(tab));
   const mark = proxy.activities.length;
   const base = jl.h.events.filter((event) => event["type"] === "settled").length;
   proxy.callFault("job.stop", {
-    raw: {
+    local: {
       value: { label: "gate", running: false, cancelled: true },
       error: "ownership check failed",
     },
@@ -163,6 +159,7 @@ test("a stop reply that is both a success and a failure changes nothing, and the
     base + 1,
     "the worker to settle after the refused reply",
   );
+  assert.ok(existsSync(input));
   assert.equal(existsSync(shim.closes), false);
   assert.ok(await jl.hasTab(tab));
   assert.equal(proxy.activities.slice(mark).includes("idle"), false);
@@ -170,7 +167,7 @@ test("a stop reply that is both a success and a failure changes nothing, and the
 
   proxy.callFault("job.stop", undefined);
   jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
-  jl.h.onModel(() => ({ text: "The stop was sent" }));
+  jl.h.onModel(() => ({ text: "The launch was cancelled" }));
   pi.prompt("Stop the gate job");
   const honest = await jl.h.waitForNth(
     (event) => event["type"] === "stop_result",
@@ -178,9 +175,16 @@ test("a stop reply that is both a success and a failure changes nothing, and the
     "the honest stop reply",
   );
   assert.equal(honest["isError"], false);
+  assert.deepEqual(honest["content"], [
+    {
+      type: "text",
+      text: "job 1 (gate) was stopped before wrapper registration. Its command will not run.",
+    },
+  ]);
   await until(
-    async () => ((await jl.jobResults()).length > 0 ? true : undefined),
-    "the stopped job's result",
+    () => (existsSync(shim.closes) ? readFileSync(shim.closes, "utf8").trim() : undefined),
+    "the cancelled launch's tab to close",
   );
-  assert.deepEqual((await jl.jobResults())[0]?.slice(0, 2), [1, 130]);
+  assert.equal(readFileSync(shim.closes, "utf8").trim(), tab);
+  assert.equal(existsSync(input), false);
 });
