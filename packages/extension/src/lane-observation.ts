@@ -226,9 +226,40 @@ const sameRows = (before: Rows, after: Rows): boolean =>
     );
   });
 
-interface Listed {
+export interface Listed {
   current: Rows;
   legacy: Rows;
+}
+
+const candidatesOf = (lane: string, listed: Rows): Listed => ({
+  current: listed.filter((row) => row["label"] === mateTitle(lane)),
+  legacy: listed.filter(
+    (row) => row["label"] === `${legacyMatePrefix}${lane}` && !isWorkerWorkspace(row),
+  ),
+});
+
+const listWorkspaces = (deadline?: number) =>
+  observeList("workspace", [], ["workspace_id", "label"], deadline);
+
+export async function racedRosters(
+  entries: readonly { lane: string; seen: Listed }[],
+): Promise<Map<string, string>> {
+  const raced = new Map<string, string>();
+  if (entries.length === 0) return raced;
+  let rows: Rows;
+  try {
+    rows = await listWorkspaces();
+  } catch (error) {
+    if (!(error instanceof HostUnread)) throw error;
+    for (const { lane } of entries) raced.set(lane, error.message);
+    return raced;
+  }
+  for (const { lane, seen } of entries) {
+    const now = candidatesOf(lane, rows);
+    if (!sameRows(seen.current, now.current) || !sameRows(seen.legacy, now.legacy))
+      raced.set(lane, `${lane} workspace changed while it was being read`);
+  }
+  return raced;
 }
 
 async function sameEvidence(
@@ -248,16 +279,15 @@ export async function workspaceOf(
   info: { lane: string; home: string },
   purpose: Purpose,
   deadline?: number,
+  seen?: { roster?: Listed },
 ): Promise<LaneMatch | undefined> {
-  const title = mateTitle(info.lane);
-  const legacyTitle = `${legacyMatePrefix}${info.lane}`;
   const read = async () => {
-    const listed = await observeList("workspace", [], ["workspace_id", "label"], deadline);
-    const current = listed.filter((row) => row["label"] === title);
-    if (current.length > 1)
-      throw new HostUnread(`herdr lists ${String(current.length)} workspaces titled ${title}`);
-    const legacy = listed.filter((row) => row["label"] === legacyTitle && !isWorkerWorkspace(row));
-    return { current, legacy };
+    const listed = candidatesOf(info.lane, await listWorkspaces(deadline));
+    if (listed.current.length > 1)
+      throw new HostUnread(
+        `herdr lists ${String(listed.current.length)} workspaces titled ${mateTitle(info.lane)}`,
+      );
+    return listed;
   };
   const changed = () => new HostUnread(`herdr workspace candidates changed for ${info.lane}`);
   const decide = async (rows: Listed, before?: Listed) => {
@@ -293,6 +323,7 @@ export async function workspaceOf(
     !(await sameEvidence(again.obs.checks, [...final.current, ...final.legacy], deadline))
   )
     throw changed();
+  if (seen !== undefined) seen.roster = final;
   return decided.found;
 }
 

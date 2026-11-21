@@ -26,7 +26,6 @@ import {
 import {
   CRASH_WINDOW_MS,
   confirmLifecycle,
-  lifecycleMoved,
   heldReasonOf,
   readState,
   recentStartsOf,
@@ -48,6 +47,8 @@ import { remainingMs } from "./maintenance-budget.ts";
 import { withCompileCache } from "./scratch.ts";
 import { mateTitle } from "./titles.ts";
 
+export { placementStatus, status } from "./lane-status.ts";
+
 export {
   codeRoot,
   discoverLanes,
@@ -59,11 +60,6 @@ export {
 
 const git = (cwd: string, ...args: string[]): string => gitWithin(cwd, args);
 
-export interface Status {
-  readonly lane: string;
-  readonly state: "running" | "down" | "stopped" | "unknown";
-  readonly reason?: string;
-}
 export interface Outcome {
   readonly lane: string;
   readonly action: "started" | "running" | "held" | "stopped" | "unread";
@@ -152,63 +148,6 @@ const ifUnread =
 
 function heldReason(home: string): string | undefined {
   return heldReasonOf(readState(stoppedFile(home), "state/stopped"));
-}
-
-async function statusOf(info: LaneHome): Promise<{ row: Status; sample?: Lifecycle }> {
-  const { lane, home } = info;
-  try {
-    const sample = sampleLifecycle(home);
-    const reason = heldReasonOf(sample[0]);
-    recentStartsOf(sample[1], Date.now());
-    const observed = await workspaceOf(info, "liveness");
-    if (observed?.state === "running") return { row: { lane, state: "running" }, sample };
-    if (reason === undefined) return { row: { lane, state: "down" }, sample };
-    return { row: { lane, state: "stopped", reason }, sample };
-  } catch (error) {
-    if (error instanceof HostUnread)
-      return { row: { lane, state: "unknown", reason: error.message } };
-    throw error;
-  }
-}
-
-export async function status(root: string): Promise<Status[]> {
-  const { homes, unread } = discoverLanes(root);
-  const read: { info: LaneHome; row: Status; sample?: Lifecycle }[] = [];
-  for (const info of homes) read.push({ info, ...(await statusOf(info)) });
-  const { changed, added } = laneClaimsRaced(root, homes, unread);
-  const out = read.map(({ info, row, sample }): Status => {
-    if (sample === undefined) return row;
-    const reason = changed.get(row.lane) ?? lifecycleMoved(info, sample);
-    return reason === undefined ? row : { lane: row.lane, state: "unknown", reason };
-  });
-  for (const { lane, message } of [...unread, ...added])
-    out.push({ lane, state: "unknown", reason: message });
-  return out;
-}
-
-export async function placementStatus(
-  root: string,
-): Promise<{ lane: string; mate: boolean; host?: string }[]> {
-  const { homes, unread } = discoverLanes(root);
-  if (unread.length > 0) throw new Error(unreadFailure(unread));
-  const out: { lane: string; mate: boolean; host?: string }[] = [];
-  const samples: Lifecycle[] = [];
-  for (const info of homes) {
-    samples.push(sampleLifecycle(info.home));
-    const mate = (await workspaceOf(info, "placement")) !== undefined;
-    out.push({
-      lane: info.lane,
-      mate,
-      ...(info.config.host === undefined ? {} : { host: info.config.host }),
-    });
-  }
-  const { changed, added } = laneClaimsRaced(root, homes);
-  const [first] = changed.values();
-  if (first !== undefined) throw new HostUnread(first);
-  if (added.length > 0)
-    throw new HostUnread("the lane roster changed while placement was being read");
-  for (const [at, info] of homes.entries()) confirmLifecycle(info, samples[at] ?? ["", ""]);
-  return out;
 }
 
 function syncHome(root: string, home: string, deadline?: number): void {

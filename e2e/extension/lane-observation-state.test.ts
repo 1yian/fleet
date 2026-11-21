@@ -137,7 +137,7 @@ test("a stop that lands while a later lane is read refuses placement", async () 
   const stop = `${process.execPath} ${here.launch} stop ops`;
   assert.throws(
     () => fleet(["status", "--placement", "--json"], "run-later", stop),
-    /ops lifecycle state changed after it was checked/,
+    /ops (lifecycle state changed after it was checked|workspace changed while it was being read)/,
   );
   assert.ok(existsSync(`${faultLog()}.ran`));
 });
