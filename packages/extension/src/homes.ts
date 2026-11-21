@@ -351,14 +351,14 @@ export async function up(
         };
   const expected = [...lanes, ...unread].map(({ lane }) => lane);
   const unreadFailed = unreadFailure(unread);
-  const appeared = (): string =>
-    discovered === undefined
-      ? ""
-      : unreadFailure(
-          laneClaimsRaced(root, lanes, unread).added.filter(
-            (each) => only === undefined || each.lane === only,
-          ),
-        );
+  const appeared = (): string => {
+    if (discovered === undefined) return "";
+    const { changed, added, failed } = laneClaimsRaced(root, lanes, unread);
+    const gone = [...changed].map(([lane, message]) => ({ lane, message }));
+    const raced = [...gone, ...added].filter((each) => only === undefined || each.lane === only);
+    const lost = failed ? "lane discovery could not be read again after the sweep" : "";
+    return [unreadFailure(raced), lost].filter(Boolean).join("\n");
+  };
   const first = offset % Math.max(1, lanes.length);
   const outcomes: Outcome[] = [];
   for (const info of [...lanes.slice(first), ...lanes.slice(0, first)]) {

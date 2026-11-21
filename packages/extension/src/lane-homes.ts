@@ -138,7 +138,7 @@ export function laneClaimsRaced(
   root: string,
   captured: readonly LaneHome[],
   alsoKnown: readonly UnreadLane[] = [],
-): { changed: Map<string, string>; added: UnreadLane[] } {
+): { changed: Map<string, string>; added: UnreadLane[]; failed: boolean } {
   const changed = new Map<string, string>();
   let now: Discovery;
   try {
@@ -146,7 +146,7 @@ export function laneClaimsRaced(
   } catch {
     for (const { lane } of captured)
       changed.set(lane, `${lane} claim could not be read again after it was checked`);
-    return { changed, added: [] };
+    return { changed, added: [], failed: true };
   }
   for (const info of captured) {
     const same = now.homes.find((each) => each.lane === info.lane);
@@ -161,5 +161,5 @@ export function laneClaimsRaced(
     })),
     ...now.unread,
   ].filter(({ lane }) => !known.has(lane));
-  return { changed, added };
+  return { changed, added, failed: false };
 }

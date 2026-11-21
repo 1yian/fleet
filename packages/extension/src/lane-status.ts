@@ -81,9 +81,10 @@ export async function placementStatus(
     });
   }
   const rosters = await racedRosters(seen);
-  const { changed, added } = laneClaimsRaced(root, homes);
+  const { changed, added, failed } = laneClaimsRaced(root, homes);
   const [first] = [...changed.values(), ...rosters.values()];
   if (first !== undefined) throw new HostUnread(first);
+  if (failed) throw new HostUnread("the lane roster could not be read again after placement");
   if (added.length > 0)
     throw new HostUnread("the lane roster changed while placement was being read");
   for (const [at, info] of homes.entries()) confirmLifecycle(info, samples[at] ?? ["", ""]);

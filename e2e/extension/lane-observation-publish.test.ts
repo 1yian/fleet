@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { isRecord, records } from "../support/json.ts";
@@ -168,4 +168,30 @@ test("a lane config published while an existing lane is read keeps the sweep's c
   assert.deepEqual(reply["expected"], ["ops"]);
   assert.deepEqual(reply["outcomes"], action("ops", "started"));
   assert.match(String(reply["failed"]), /lane yy could not be read: .*not valid JSON/);
+});
+
+test("a confirmed start whose claim is removed before the sweep ends blocks recovery", () => {
+  const config = join(ops(), "config", "lane.json");
+  const reply: unknown = JSON.parse(fleet(typedMaintenance, "after-run", `rm ${config}`));
+  assert.ok(!existsSync(config));
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["expected"], ["ops"]);
+  assert.deepEqual(reply["outcomes"], action("ops", "started"));
+  assert.match(String(reply["failed"]), /lane ops could not be read: .*claim changed/);
+});
+
+test("a confirmed start followed by a failed final discovery blocks recovery", () => {
+  const worktrees = `${here.root}.worktrees`;
+  try {
+    const reply: unknown = JSON.parse(
+      fleet(typedMaintenance, "after-run", `chmod 300 ${worktrees}`),
+    );
+    chmodSync(worktrees, 0o700);
+    assert.ok(isRecord(reply));
+    assert.deepEqual(reply["expected"], ["ops"]);
+    assert.deepEqual(reply["outcomes"], action("ops", "started"));
+    assert.match(String(reply["failed"]), /could not be read again/);
+  } finally {
+    chmodSync(worktrees, 0o700);
+  }
 });
