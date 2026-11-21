@@ -152,6 +152,7 @@ test("a refunded restart leaves the worker's model pin as it was, so the same ke
   assert.match(results.at(-4) ?? "", /did not become idle/);
   assert.match(results.at(-3) ?? "", /,openai-codex\/gpt-fixture$/m);
   assert.doesNotMatch(results.at(-3) ?? "", /tier\/quick/);
+  assert.match(results.at(-2) ?? "", /^Started c-1-a1 again on far, /);
   assert.doesNotMatch(results.at(-2) ?? "", /already recorded|did not become idle|restarted 3 times/);
   const replacement = h.modelsOf("worker").slice(before.calls);
   assert.ok(replacement.length > 0);
