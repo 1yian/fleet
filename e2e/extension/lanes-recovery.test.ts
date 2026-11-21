@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { toolResults } from "../support/dispatch-lab.ts";
@@ -184,6 +193,22 @@ test("a mate that keeps dying is held, and only naming it starts it again", asyn
 
 test("main stops, restarts, and starts lanes with lane, its board shows them, and it never starts a lane held by hand", async () => {
   let kicked: number | undefined;
+  const folder = join(realpathSync(here.parent), "far-env");
+  mkdirSync(join(folder, "bin"), { recursive: true });
+  writeFileSync(
+    join(folder, "bin", "pi"),
+    '#!/usr/bin/env node\nprocess.title = "pi";\nprocess.stdin.resume();\n',
+    { mode: 0o755 },
+  );
+  writeFileSync(join(folder, ".envrc"), "PATH_add bin\n");
+  mkdirSync(join(here.parent, "direnv"));
+  writeFileSync(
+    join(here.parent, "direnv", "direnv.toml"),
+    `[whitelist]\nexact = [${JSON.stringify(join(folder, ".envrc"))}]\n`,
+  );
+  const farConfig = join(p620.addLane("far", { url: cardd.url }), "config", "lane.json");
+  const config: unknown = JSON.parse(readFileSync(farConfig, "utf8"));
+  writeFileSync(farConfig, JSON.stringify({ ...Object(config), direnv: folder }));
   h.onModel(() => ({ tool: "lane", args: { name: "ops", action: "stop" } }), "mate");
   h.onModel(async (turns) => {
     assert.match(toolResults(turns).at(-1) ?? "", /^ops \(local\): stopped$/);
