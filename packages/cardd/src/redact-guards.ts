@@ -30,7 +30,7 @@ export function logicalView(text: string): string {
 }
 
 const TRACE_ROW = new RegExp(
-  String.raw`(?:^|[\n\u0001"'\u0060])[ \t>*+-]*(?:(\d{2}:\d{2}:\d{2}(?:\.\d+)?)[ \t]+)?([\da-f]{4}):[ \t]([^\n\u0001]*)`,
+  String.raw`(?:^|[\n\u0001"'\u0060])[ \t>*+-]*(?:(\d{2}:\d{2}:\d{2}(?:\.\d+)?)[ \t]+)?([\da-f]{4}):(?:[ \t]([^\n\u0001]*)|(?=[\n\u0001"'}\]]|$))`,
   "gi",
 );
 const FRAGMENT = /^\S*$/;
@@ -66,7 +66,9 @@ function clippedAfter(prior: Row, row: Row): boolean {
   const gap = row.offset - prior.offset;
   const room = gap - prior.rest.length;
   const fragments = FRAGMENT.test(prior.rest.trim()) && FRAGMENT.test(row.rest.trim());
-  const stamped = row.stamped && prior.stamped && fragments && (room === 1 || room === 2);
+  const ended = row.rest.trim() === "";
+  const stamped =
+    row.stamped && prior.stamped && (fragments || ended) && (room === 1 || room === 2);
   return (prior.rest.length === 64 && gap === 64) || stamped;
 }
 
