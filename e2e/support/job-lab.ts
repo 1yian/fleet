@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { TestContext } from "node:test";
@@ -131,7 +131,7 @@ export class JobLab {
       .map((entry) => [entry.fields["job"], entry.fields["exitCode"], entry.body]);
   }
 
-  installShim() {
+  installShim(swallowKeys = false) {
     const bin = join(this.jobDir, "bin");
     mkdirSync(bin);
     const logs = {
@@ -150,6 +150,9 @@ fi
 if [ "$1 $2" = 'tab create' ]; then
   echo tab >> ${quote(logs.creates)}
 fi
+if [ "$1 $2" = 'pane send-keys' ] && ${swallowKeys ? "true" : "false"}; then
+  exit 0
+fi
 if [ "$1 $2" = 'pane run' ]; then
   echo run >> ${quote(logs.runs)}
   exec ${quote(herdr)} pane run "$3" "while [ ! -e ${quote(logs.release)} ]; do sleep 0.05; done; $4"
@@ -162,9 +165,9 @@ exec ${quote(herdr)} "$@"
     return logs;
   }
 
-  async holdDispatch(t: TestContext, command: string) {
+  async holdDispatch(t: TestContext, command: string, swallowKeys = false) {
     const proxy = await this.proxy(t);
-    const shim = this.installShim();
+    const shim = this.installShim(swallowKeys);
     this.h.onModel(() => ({ tool: "run_long", args: { label: "gate", command } }));
     this.h.onModel(() => ({ text: "waiting for the gate" }));
     const pi = this.worker();
@@ -188,7 +191,7 @@ exec ${quote(herdr)} "$@"
     };
   }
 
-  private httpProxy(takePrepare: () => HeldPrepare | undefined) {
+  private httpProxy(state: ProxyState) {
     return createServer((req, res) => {
       let body = "";
       req.setEncoding("utf8").on("data", (chunk: string) => {
@@ -197,8 +200,17 @@ exec ${quote(herdr)} "$@"
       req.on("end", () => {
         void (async () => {
           const { op, args } = check(HttpCallSchema, JSON.parse(body));
+          const fault = state.takeHttpFault(op);
+          if (fault !== undefined) {
+            if ("redirect" in fault) res.writeHead(307, { location: fault.redirect }).end();
+            else
+              res
+                .writeHead(200, { "content-type": "application/json" })
+                .end(JSON.stringify({ ok: true, value: fault.value }));
+            return;
+          }
           const result = await this.fleet.cardd.post(this.env["FLEET_TOKEN"] ?? "", op, args);
-          const held = op === "job.prepare" ? takePrepare() : undefined;
+          const held = op === "job.prepare" ? state.takePrepare() : undefined;
           if (held !== undefined) {
             held.reached.resolve(check(OPS["job.prepare"].args, args).launch);
             await held.release;
@@ -210,54 +222,56 @@ exec ${quote(herdr)} "$@"
     });
   }
 
-  async proxy(t: TestContext) {
-    const clients = new Set<WebSocket>();
-    const activities: string[] = [];
-    let lists = 0;
-    let prepare: HeldPrepare | undefined;
-    let stopReply: unknown;
-    const server = this.httpProxy(() => {
-      const held = prepare;
-      prepare = undefined;
-      return held;
-    });
+  private sessionProxy(server: Server, state: ProxyState): WebSocketServer {
     const sockets = new WebSocketServer({ server });
     sockets.on("connection", (client) => {
       const upstream = new WebSocket(this.fleet.cardd.url);
-      const listReads = new Set<number>();
-      const stopReads = new Set<number>();
-      clients.add(client);
+      const ops = new Map<number, string>();
+      state.clients.add(client);
       client.pause();
       upstream.on("open", () => client.resume());
       client.on("message", (raw) => {
         const text = rawText(raw);
         const message = parseClientMessage(text);
-        if (message.t === "activity") activities.push(message.state);
-        if (message.t === "call" && message.op === "jobs") listReads.add(message.id);
-        if (message.t === "call" && message.op === "job.stop") stopReads.add(message.id);
+        if (message.t === "activity") state.activities.push(message.state);
+        if (message.t === "call") ops.set(message.id, message.op);
         if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
       });
       upstream.on("message", (raw) => {
         const text = rawText(raw);
         const message = parseServerMessage(text);
+        const op = message.t === "result" ? ops.get(message.id) : undefined;
+        if (message.t === "result") ops.delete(message.id);
+        if (op === "jobs") state.lists += 1;
+        const fault = op === undefined ? undefined : state.callFaults.get(op);
         const rewritten =
-          message.t === "result" && stopReads.delete(message.id) && stopReply !== undefined
-            ? JSON.stringify({ ...message, value: stopReply })
-            : text;
+          message.t !== "result" || fault === undefined
+            ? text
+            : JSON.stringify(
+                "error" in fault
+                  ? { t: "result", id: message.id, ok: false, error: fault.error }
+                  : { ...message, value: fault.value },
+              );
         if (client.readyState === WebSocket.OPEN) client.send(rewritten);
-        if (message.t === "result" && listReads.delete(message.id)) lists += 1;
       });
       upstream.on("error", () => client.terminate());
       upstream.on("close", () => client.terminate());
       client.on("error", () => upstream.terminate());
       client.on("close", () => upstream.terminate());
     });
+    return sockets;
+  }
+
+  async proxy(t: TestContext) {
+    const state = new ProxyState();
+    const server = this.httpProxy(state);
+    const sockets = this.sessionProxy(server, state);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     assert.ok(address && typeof address !== "string");
     this.env["FLEET_URL"] = `ws://127.0.0.1:${String(address.port)}/session`;
     const drop = (): void => {
-      for (const client of clients) client.terminate();
+      for (const client of state.clients) client.terminate();
     };
     t.after(() => {
       drop();
@@ -266,17 +280,21 @@ exec ${quote(herdr)} "$@"
       server.close();
     });
     return {
-      activities,
-      lists: (): number => lists,
+      activities: state.activities,
+      lists: (): number => state.lists,
       drop,
-      rewriteStop: (value: unknown): void => {
-        stopReply = value;
+      callFault: (op: string, fault: CallFault | undefined): void => {
+        if (fault === undefined) state.callFaults.delete(op);
+        else state.callFaults.set(op, fault);
+      },
+      httpFault: (op: string, fault: HttpFault, times: number): void => {
+        state.httpFaults.set(op, { fault, times });
       },
       holdPrepare: () => {
         const reached = Promise.withResolvers<string>();
         const release = Promise.withResolvers<undefined>();
         t.after(() => release.resolve(undefined));
-        prepare = { reached, release: release.promise };
+        state.prepare = { reached, release: release.promise };
         return { reached: reached.promise, release: () => release.resolve(undefined) };
       },
       push: (id: number, fields: Record<string, unknown>): void => {
@@ -294,9 +312,34 @@ exec ${quote(herdr)} "$@"
           name: "users-see-one-scrollbar",
           mode: "followUp",
         });
-        for (const client of clients)
+        for (const client of state.clients)
           if (client.readyState === WebSocket.OPEN) client.send(message);
       },
     };
+  }
+}
+
+type CallFault = { value: unknown } | { error: string };
+type HttpFault = { redirect: string } | { value: unknown };
+
+class ProxyState {
+  readonly clients = new Set<WebSocket>();
+  readonly activities: string[] = [];
+  readonly callFaults = new Map<string, CallFault>();
+  readonly httpFaults = new Map<string, { fault: HttpFault; times: number }>();
+  prepare: HeldPrepare | undefined;
+  lists = 0;
+
+  takePrepare(): HeldPrepare | undefined {
+    const held = this.prepare;
+    this.prepare = undefined;
+    return held;
+  }
+
+  takeHttpFault(op: string): HttpFault | undefined {
+    const entry = this.httpFaults.get(op);
+    if (entry === undefined || entry.times <= 0) return undefined;
+    entry.times -= 1;
+    return entry.fault;
   }
 }

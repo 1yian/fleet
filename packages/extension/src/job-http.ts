@@ -17,6 +17,7 @@ export async function jobHandshake<N extends "job.prepare" | "job.register">(
     method: "POST",
     headers: { authorization: `Bearer ${endpoint.token}`, "content-type": "application/json" },
     body: JSON.stringify({ op, args }),
+    redirect: "error",
     signal: AbortSignal.timeout(5000),
   });
   const outcome = check(HttpOutcomeSchema, await response.json());

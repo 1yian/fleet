@@ -139,3 +139,102 @@ test("an early expiry fence is not displaced by incomplete or other-job fences b
   assert.equal(existsSync(shim.runs), false);
   assert.deepEqual(await jl.jobResults(), EXPIRED);
 });
+
+const matching = (launch: string) => ({
+  job: 1,
+  exitCode: 127,
+  startupFenced: true,
+  startupLaunch: launch,
+});
+
+test("a genuine registered-wrapper loss retires fence eligibility even when the exact read fails", async (t) => {
+  const done = join(jl.jobDir, "gate-done");
+  const { proxy, shim, launch, tab } = await jl.holdDispatch(
+    t,
+    `while [ ! -e ${quote(done)} ]; do sleep 0.05; done; echo gate`,
+  );
+  writeFileSync(shim.release, "");
+  await until(() => (jl.wrapperPid() === null ? undefined : true), "the wrapper to register");
+  proxy.callFault("job.running", { error: "injected exact read failure" });
+  const mark = proxy.activities.length;
+  const wrapper = Number(jl.wrapperPid());
+  process.kill(wrapper, "SIGSTOP");
+  const resume = (): void => {
+    try {
+      process.kill(wrapper, "SIGCONT");
+    } catch {
+      return;
+    }
+  };
+  t.after(resume);
+  const lost = await until(
+    async () =>
+      check(CardViewSchema, await jl.fleet.main.call("card", { card: jl.card.id })).entries.find(
+        (entry) => entry.fields["lost"] === true,
+      ),
+    "the detector to report the silent wrapper",
+  );
+  await jl.h.waitFor(
+    (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
+    "the loss notice",
+  );
+  const delivered = jl.deliveredCount();
+  proxy.push(1001, matching(launch));
+  await jl.h.waitForNth(
+    (event) => event["type"] === "fleet_delivered",
+    delivered + 1,
+    "the contradictory fence",
+  );
+  await settleWindow();
+  assert.equal(existsSync(shim.closes), false);
+  assert.ok(await jl.hasTab(tab));
+  assert.equal(proxy.activities.slice(mark).includes("idle"), false);
+
+  proxy.callFault("job.running", undefined);
+  resume();
+  writeFileSync(done, "");
+  await until(
+    () => (proxy.activities.slice(mark).includes("idle") ? true : undefined),
+    "the real result to end the wait",
+  );
+  assert.ok((await jl.jobResults()).some((row) => row[0] === 1 && row[1] === 0));
+});
+
+test("a running stop receipt for a modern launch retires fence eligibility", async (t) => {
+  jl.env["PROBE_STOP_RESULT"] = "1";
+  const done = join(jl.jobDir, "gate-done");
+  const { pi, proxy, shim, launch, tab } = await jl.holdDispatch(
+    t,
+    `while [ ! -e ${quote(done)} ]; do sleep 0.05; done; echo gate`,
+    true,
+  );
+  writeFileSync(shim.release, "");
+  await until(() => (jl.wrapperPid() === null ? undefined : true), "the wrapper to register");
+  const mark = proxy.activities.length;
+  jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
+  jl.h.onModel(() => ({ text: "The stop was sent" }));
+  pi.prompt("Stop the gate job");
+  const stopped = await jl.h.waitFor(
+    (event) => event["type"] === "stop_result",
+    "the running stop receipt",
+  );
+  assert.equal(stopped["isError"], false);
+  const delivered = jl.deliveredCount();
+  proxy.push(1001, matching(launch));
+  await jl.h.waitForNth(
+    (event) => event["type"] === "fleet_delivered",
+    delivered + 1,
+    "the contradictory fence",
+  );
+  await settleWindow();
+  assert.equal(existsSync(shim.closes), false);
+  assert.ok(await jl.hasTab(tab));
+  assert.equal(proxy.activities.slice(mark).includes("idle"), false);
+
+  writeFileSync(done, "");
+  await until(
+    () => (proxy.activities.slice(mark).includes("idle") ? true : undefined),
+    "the real result to end the wait",
+  );
+  assert.deepEqual(await jl.jobResults(), [[1, 0, "gate"]]);
+});

@@ -88,8 +88,9 @@ export function nextJob(life: JobLife, event: JobEvent, at: number): JobStep | u
 const JobLaunchId = Type.String({
   pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
 });
+const JobId = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 export const StartupFenceFields = Type.Object({
-  job: Type.Integer({ minimum: 1 }),
+  job: JobId,
   startupFenced: Type.Literal(true),
   startupLaunch: JobLaunchId,
   exitCode: Type.Integer(),
@@ -101,11 +102,11 @@ const StartJob = Type.Object({
   command: Type.String({ minLength: 1 }),
 });
 const StartedJob = Type.Object({
-  job: Type.Integer(),
+  job: JobId,
   heartbeatMs: Type.Integer({ minimum: 1 }),
 });
 const CutoverBlocker = Type.Object({
-  job: Type.Integer(),
+  job: JobId,
   card: Type.Integer(),
   host: Type.String(),
   label: Type.String(),
@@ -123,7 +124,7 @@ export const JOB_OPS = {
     args: Type.Object({ ...StartJob.properties, launch: JobLaunchId }),
     result: Type.Union([
       StartedJob,
-      Type.Object({ job: Type.Integer(), unavailable: Type.String({ minLength: 1 }) }),
+      Type.Object({ job: JobId, unavailable: Type.String({ minLength: 1 }) }),
     ]),
   },
   "job.register": {
@@ -214,6 +215,6 @@ export const JOB_OPS = {
   jobs: {
     roles: ["worker"],
     args: Type.Object({}),
-    result: Type.Array(Type.Object({ id: Type.Integer(), label: Type.String() })),
+    result: Type.Array(Type.Object({ id: JobId, label: Type.String() })),
   },
 } as const;

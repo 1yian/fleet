@@ -170,6 +170,7 @@ export class Jobs {
       this.observeFence(job, entry);
       return;
     }
+    if (lost === true || revived === true) this.launches.delete(job);
     if (typeof exitCode !== "number" && lost !== true && revived !== true) return;
     this.lastResult.set(job, entry.id);
     if (typeof exitCode === "number") {
@@ -428,6 +429,7 @@ export class Jobs {
     const { label, running } = receipt;
     const cancelled = "cancelled" in receipt && receipt.cancelled === true;
     const legacy = "legacy" in receipt && receipt.legacy === true;
+    if (running) this.launches.delete(job);
     const named = `job ${String(job)} (${label})`;
     if (cancelled) this.cancelledJobs.add(job);
     if (!running) {

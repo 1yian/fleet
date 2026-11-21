@@ -222,7 +222,7 @@ async function run(job: Job): Promise<JobResult> {
 function call(job: Job, op: string, args: object): Promise<Response | undefined> {
   const headers = { authorization: `Bearer ${job.token}`, "content-type": "application/json" };
   const body = JSON.stringify({ op, args });
-  return fetch(job.url, { method: "POST", headers, body }).then(
+  return fetch(job.url, { method: "POST", headers, body, redirect: "error" }).then(
     (response) => response,
     () => undefined,
   );

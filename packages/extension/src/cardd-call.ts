@@ -31,6 +31,7 @@ export async function callCardd<N extends OpName>(
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ op, args: checked }),
+    redirect: "error",
     ...(signal === undefined ? {} : { signal }),
   });
   const outcome = check(HttpOutcomeSchema, await response.json());

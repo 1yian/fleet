@@ -34,7 +34,7 @@ test("a contradictory stop receipt changes nothing, and an honest receipt still 
   let stops = 0;
   for (const receipt of contradictions) {
     const base = settles();
-    proxy.rewriteStop(receipt);
+    proxy.callFault("job.stop", { value: receipt });
     jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
     jl.h.onModel(() => ({ text: "The stop receipt was refused" }));
     pi.prompt("Stop the gate job");
@@ -57,7 +57,7 @@ test("a contradictory stop receipt changes nothing, and an honest receipt still 
   assert.equal(proxy.activities.slice(mark).includes("idle"), false);
   assert.deepEqual(await jl.jobResults(), []);
 
-  proxy.rewriteStop(undefined);
+  proxy.callFault("job.stop", undefined);
   jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
   jl.h.onModel(() => ({ text: "The stop was sent" }));
   pi.prompt("Stop the gate job");
