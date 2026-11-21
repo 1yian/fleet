@@ -5,6 +5,7 @@ import {
   hasCookieRecord,
   hasEncodedCredentialParam,
   hasEscapedCredentialKey,
+  hasExplicitCredentialKey,
   logicalView,
   normalizeInput,
   SECRET_NAME,
@@ -324,7 +325,9 @@ function withheldCommand(text: string): string | undefined {
 
 function redactNormalized(source: string, scope: "public" | "diagnostic"): string {
   const views = [source, logicalView(source)];
-  const unclear = views.some((v) => hasCredentialCollection(v) || hasEscapedCredentialKey(v));
+  const unclear = views.some(
+    (v) => hasCredentialCollection(v) || hasEscapedCredentialKey(v) || hasExplicitCredentialKey(v),
+  );
   if (unclear || yamlSplicesDisagree(source) || SCHEME_CONTINUATION.test(views[1] ?? ""))
     return YAML_WITHHELD;
   const yaml = redactYamlScalars(source);

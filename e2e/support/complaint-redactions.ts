@@ -363,8 +363,8 @@ const COOKIE_COMPLAINTS = [
   "cookie: paper=canoe; river=sail",
   "Cookie: [hidden]; session=paper",
   "Set-Cookie2: [hidden]; session=paper",
-  String.raw`Headers {"Co\u006fkie":"session=paper"}`,
-  String.raw`Headers {\"Set-Co\u006fkie\":\"session=paper\"}`,
+  String.raw`[{"name":"Co\x6fkie","value":"sid=paper"}]`,
+  String.raw`{"trace":"GET / HTTP/1.1\x0d\x0aCookie: sid=paper"}`,
   "Cookie2: session=paper",
   String.raw`{"trace":"GET / HTTP/1.1\u000d\u000aAuthorization: Basic cGFwZXI6Y2Fub2U="}`,
   String.raw`{"trace":"GET / HTTP/1.1\u000d\u000aProxy-Authorization: Basic cGFwZXI6Y2Fub2U="}`,
@@ -461,6 +461,24 @@ const CURL_DATA_COMPLAINTS = [
   "curl --form=api_key=paper\\ canoe https://localhost",
 ];
 
+const ESCAPED_KEY_COMPLAINTS = [
+  String.raw`{"pass\u0077ord":["paper","canoe"]}`,
+  String.raw`{"pass\u0077ord":"paper canoe"}`,
+  String.raw`{"to\u006Ben": "paper canoe"}`,
+  String.raw`{"api\u0020key":"paper canoe"}`,
+  String.raw`{"pass\x77ord": "paper canoe"}`,
+  String.raw`{"pass\U00000077ord": "paper canoe"}`,
+  String.raw`{"pass\u{77}ord": "paper canoe"}`,
+  String.raw`Headers {"Co\u006fkie":"session=paper"}`,
+  String.raw`Headers {\"Set-Co\u006fkie\":\"session=paper\"}`,
+  String.raw`{"Co\x6fkie": "sid=paper"}`,
+  String.raw`{"Set-Co\x6fkie": "sid=paper"}`,
+  "? password\n: paper canoe",
+  '? "pass\\x77ord"\n: paper canoe',
+  "? \n  token\n: paper canoe",
+  "{? password : paper canoe}",
+];
+
 const RECORD_WITHHELD = "[credential record withheld: credential boundaries unclear]";
 
 export const withheldFor = (text: string): string =>
@@ -471,5 +489,6 @@ export const withheldFor = (text: string): string =>
 export const FIXTURES = {
   cookies: COOKIE_COMPLAINTS,
   curlData: CURL_DATA_COMPLAINTS,
+  escapedKeys: ESCAPED_KEY_COMPLAINTS,
   redacted: REDACTED_COMPLAINTS,
 };

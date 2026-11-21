@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Session } from "../support/cardd.ts";
 import { newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { FIXTURES } from "../support/complaint-redactions.ts";
 import { is, reportFailure, SYNTHETIC_CURL_LOGIN } from "../support/incidents.ts";
 
 let fleet: Fleet;
@@ -67,8 +68,7 @@ for (const [name, diagnostic] of [
   ["merge key", "defaults: &shared\n  note: paper canoe\nsettings:\n  <<: *shared"],
   ["truncated quoted value", 'Tool returned {"password":"paper canoe'],
   ["truncated shell value", 'password="paper canoe'],
-  ["escaped credential key", String.raw`{"pass\u0077ord":"paper canoe"}`],
-  ["escaped credential key with a space", String.raw`{"api\u0020key":"paper canoe"}`],
+  ...FIXTURES.escapedKeys.map((text) => [text, text] as const),
   ["partially quoted shell value", 'password=prefix"paper canoe'],
   ["unterminated fleet token option", '--fleet-token "paper canoe'],
   ["structured prefix before a quote", 'Tool printed password: prefix"paper canoe'],
@@ -79,7 +79,6 @@ for (const [name, diagnostic] of [
   ["attached backtick shell value", "Tool printed password=prefix`paper canoe"],
   ["spliced attached backtick value", "Tool printed password=pre\\\nfix`paper canoe"],
   ["spliced credential collection", "Tool printed pass\\\nword: [paper, canoe]"],
-  ["hex escaped credential key", 'Tool printed {"pass\\x77ord":"paper canoe"}'],
   ["spliced escaped credential key", 'Tool printed {"pass\\\n\\u0077ord":"paper canoe"}'],
   ["spliced unbounded YAML", "Tool printed to\\\nken: !!str >\n paper canoe"],
   ["spliced multiline scalar", "pass\\\nword: paper\n  canoe"],
@@ -90,7 +89,6 @@ for (const [name, diagnostic] of [
   ["spliced scalar value", "password: pa\\\nper\n  canoe"],
   ["spliced URL userinfo", "Git printed https://build:pa@ss\\\nword@localhost/path"],
   ["spliced unterminated value", 'Tool printed password=\\\n"paper canoe'],
-  ["escaped credential key collection", String.raw`{"pass\u0077ord":["paper","canoe"]}`],
   ["curl credential option", `curl -u '${SYNTHETIC_CURL_LOGIN}' https://localhost`],
   ["curl flag-shaped output file", `curl -o -u '${SYNTHETIC_CURL_LOGIN}' https://localhost`],
   ["curl quoted credential option", `curl '-u' '${SYNTHETIC_CURL_LOGIN}' https://localhost`],

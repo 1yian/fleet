@@ -17,6 +17,12 @@ const ESCAPED_KEY = /\\?["']((?:[^"'\\\n]|\\+[^\\\n])+)\\?["']\s*:/g;
 const KEY_ESCAPE =
   /\\+(?:u\{([\da-fA-F]+)\}|u([\da-fA-F]{4})|x([\da-fA-F]{2})|U([\da-fA-F]{8})|[^\\\n])/g;
 const CREDENTIAL_KEY = new RegExp(String.raw`^${SECRET_NAME}$`, "i");
+const RECORD_KEY = new RegExp(String.raw`^${RECORD_NAME}$`, "i");
+const RECORD_MENTION = new RegExp(String.raw`(?<![\w-])${RECORD_NAME}(?![\w-])`, "i");
+const EXPLICIT_KEY = new RegExp(
+  String.raw`(?:^|[{\[,])[ \t]*(?:-[ \t]+)*\?(?:[ \t]*\n[ \t]+|[ \t]+)([^\n,}\]]*)`,
+  "gm",
+);
 const UNICODE_ESCAPE = /\\+u([\da-f]{4})/gi;
 
 export function normalizeInput(text: string): string {
@@ -53,7 +59,7 @@ interface Decoded {
   readonly literal: readonly boolean[];
 }
 
-const DECODE_TOKEN = /\\+u([\da-fA-F]{4})|(\\+[rntbf])|\\+|[\s\S]/g;
+const DECODE_TOKEN = /\\+(?:u([\da-fA-F]{4})|x([\da-fA-F]{2}))|(\\+[rntbf])|\\+|[\s\S]/g;
 
 function decode(text: string): Decoded {
   let view = "";
@@ -65,8 +71,9 @@ function decode(text: string): Decoded {
     literal.push(plain);
   };
   for (const match of text.matchAll(DECODE_TOKEN)) {
-    const [token = "", hex, control] = match;
+    const [token = "", unicode, byte, control] = match;
     const start = match.index;
+    const hex = unicode ?? byte;
     if (hex !== undefined) {
       const code = Number.parseInt(hex, 16);
       if (code < 0x20) emit("\u0001", start, false);
@@ -119,15 +126,26 @@ const hasCookieHeader = (text: string): boolean => {
 export const hasCookieRecord = (text: string): boolean =>
   [text, logicalView(text)].some(hasCookieHeader);
 
+function decodeKeyEscapes(key: string): string {
+  return key.replace(KEY_ESCAPE, (_escape, ...groups: (string | undefined)[]) => {
+    const hex = groups.slice(0, 4).find((group) => group !== undefined);
+    if (hex === undefined) return "";
+    const code = Number.parseInt(hex, 16);
+    return code > 0x10ffff ? "" : String.fromCodePoint(code);
+  });
+}
+
 export function hasEscapedCredentialKey(text: string): boolean {
   for (const [, key = ""] of text.matchAll(ESCAPED_KEY)) {
-    const decoded = key.replace(KEY_ESCAPE, (_escape, ...groups: (string | undefined)[]) => {
-      const hex = groups.slice(0, 4).find((group) => group !== undefined);
-      if (hex === undefined) return "";
-      const code = Number.parseInt(hex, 16);
-      return code > 0x10ffff ? "" : String.fromCodePoint(code);
-    });
-    if (decoded !== key && CREDENTIAL_KEY.test(decoded)) return true;
+    const decoded = decodeKeyEscapes(key);
+    if (decoded !== key && RECORD_KEY.test(decoded)) return true;
+  }
+  return false;
+}
+
+export function hasExplicitCredentialKey(text: string): boolean {
+  for (const [, key = ""] of text.matchAll(EXPLICIT_KEY)) {
+    if (RECORD_MENTION.test(decodeKeyEscapes(key))) return true;
   }
   return false;
 }
