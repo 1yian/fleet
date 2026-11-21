@@ -26,6 +26,7 @@ import {
 import {
   CRASH_WINDOW_MS,
   confirmLifecycle,
+  lifecycleMoved,
   heldReasonOf,
   readState,
   recentStartsOf,
@@ -170,16 +171,6 @@ async function statusOf(info: LaneHome): Promise<{ row: Status; sample?: Lifecyc
   }
 }
 
-function lifecycleMoved(info: LaneHome, sample: Lifecycle): string | undefined {
-  try {
-    confirmLifecycle(info, sample);
-  } catch (error) {
-    if (error instanceof HostUnread) return error.message;
-    throw error;
-  }
-  return undefined;
-}
-
 export async function status(root: string): Promise<Status[]> {
   const { homes, unread } = discoverLanes(root);
   const read: { info: LaneHome; row: Status; sample?: Lifecycle }[] = [];
@@ -201,7 +192,9 @@ export async function placementStatus(
   const { homes, unread } = discoverLanes(root);
   if (unread.length > 0) throw new Error(unreadFailure(unread));
   const out: { lane: string; mate: boolean; host?: string }[] = [];
+  const samples: Lifecycle[] = [];
   for (const info of homes) {
+    samples.push(sampleLifecycle(info.home));
     const mate = (await workspaceOf(info, "placement")) !== undefined;
     out.push({
       lane: info.lane,
@@ -214,6 +207,7 @@ export async function placementStatus(
   if (first !== undefined) throw new HostUnread(first);
   if (added.length > 0)
     throw new HostUnread("the lane roster changed while placement was being read");
+  for (const [at, info] of homes.entries()) confirmLifecycle(info, samples[at] ?? ["", ""]);
   return out;
 }
 

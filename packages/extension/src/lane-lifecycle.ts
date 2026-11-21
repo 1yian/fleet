@@ -41,3 +41,16 @@ export function confirmLifecycle(info: { lane: string; home: string }, sample: L
   if (now.some((text, at) => text !== sample[at]))
     throw new HostUnread(`${info.lane} lifecycle state changed after it was checked`);
 }
+
+export function lifecycleMoved(
+  info: { lane: string; home: string },
+  sample: Lifecycle,
+): string | undefined {
+  try {
+    confirmLifecycle(info, sample);
+  } catch (error) {
+    if (error instanceof HostUnread) return error.message;
+    throw error;
+  }
+  return undefined;
+}

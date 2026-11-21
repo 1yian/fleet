@@ -124,6 +124,22 @@ test("a stop that lands while a later lane is read makes only the stopped lane u
   assert.equal(rows.find((row) => row["lane"] === "ops")?.["state"], "unknown");
   assert.match(String(rows.find((row) => row["lane"] === "ops")?.["reason"]), /lifecycle state/);
   assert.equal(rows.find((row) => row["lane"] === "zz")?.["state"], "down");
+  assert.deepEqual(JSON.parse(fleet(["status", "--placement", "--json"])), [
+    { lane: "ops", mate: false },
+    { lane: "zz", mate: false },
+  ]);
+});
+
+test("a stop that lands while a later lane is read refuses placement", async () => {
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  addLane("zz");
+  const stop = `${process.execPath} ${here.launch} stop ops`;
+  assert.throws(
+    () => fleet(["status", "--placement", "--json"], "run-later", stop),
+    /ops lifecycle state changed after it was checked/,
+  );
+  assert.ok(existsSync(`${faultLog()}.ran`));
 });
 
 test("lanes that appear while status reads are reported once as unknown beside definite siblings", () => {
