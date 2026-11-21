@@ -356,7 +356,6 @@ async function upOne(
   only: string | undefined,
   deadline: number | undefined,
   confirm: (info: LaneHome, sample: Lifecycle) => void,
-  reconfirm: (info: LaneHome, sample: Lifecycle) => void,
 ): Promise<Outcome> {
   const { lane, home } = info;
   const observationDeadline =
@@ -366,7 +365,7 @@ async function upOne(
   const sample = sampleLifecycle(home);
   confirm(info, sample);
   const observed = await workspaceOf(info, "liveness", observationDeadline);
-  reconfirm(info, sample);
+  confirm(info, sample);
   const reason = heldReasonOf(sample[0]);
   const history = recentStartsOf(sample[1], Date.now());
   if (observed?.state === "running") {
@@ -400,7 +399,6 @@ export async function up(
           discovered.confirm?.(info);
           confirmLifecycle(info, sample);
         };
-  const reconfirm = discovered === undefined ? noClaimCheck : confirmLifecycle;
   const expected = [...lanes, ...unread].map(({ lane }) => lane);
   const unreadFailed = unreadFailure(unread);
   const first = offset % Math.max(1, lanes.length);
@@ -411,7 +409,7 @@ export async function up(
         await withLifecycleLock(
           info.home,
           info.lane,
-          () => upOne(root, info, only, deadline, confirm, reconfirm),
+          () => upOne(root, info, only, deadline, confirm),
           deadline,
         ),
       );

@@ -43,6 +43,24 @@ test("a stop marker that lands while a running mate is being sampled is neither 
   assert.ok((await workspace("ops")) !== undefined);
 });
 
+test("a lane claim that changes while a running mate is being sampled leaves the lane unread with its hold intact", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  const marker = join(home, "state", "stopped");
+  writeFileSync(marker, "stopped by hand\n");
+  const config = join(home, "config", "lane.json");
+  const raw: unknown = JSON.parse(readFileSync(config, "utf8"));
+  assert.ok(isRecord(raw));
+  writeFileSync(`${config}.next`, JSON.stringify({ ...raw, args: ["--changed-while-sampling"] }));
+  const reply: unknown = JSON.parse(fleet(typedMaintenance, "swap-memory", config));
+  assert.ok(existsSync(`${config}.swapped`));
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["outcomes"], action("ops", "unread"));
+  assert.equal(readFileSync(marker, "utf8"), "stopped by hand\n");
+  assert.ok((await workspace("ops")) !== undefined);
+});
+
 test("an unreadable lane config is reported safely while healthy lanes still converge and start", async () => {
   addLane("zz");
   const ops = `${here.root}.worktrees/lane-ops`;
