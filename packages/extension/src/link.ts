@@ -26,6 +26,11 @@ function checkResult(op: OpName, value: unknown): unknown {
   return check(OPS[op].result, value);
 }
 
+const isJobOp = (op: OpName): boolean => op === "jobs" || op.startsWith("job.");
+
+const contradictory = (result: Result): boolean =>
+  result.ok ? "error" in result : "value" in result;
+
 const unreadableResult = (op: OpName, error: unknown): string =>
   `cardd's answer to ${op} cannot be read by this session (${error instanceof Error ? error.message : String(error)}). This session runs other code than cardd, most likely loaded before an update: restart this session so it loads the current code (main: lane(<lane>, "restart")).`;
 
@@ -122,7 +127,11 @@ export class Link {
             }, deadlineMs);
       this.pending.set(id, (result) => {
         clearTimeout(timer);
-        if (!result.ok) reject(new Error(result.error));
+        if (isJobOp(op) && contradictory(result))
+          reject(
+            new Error(`cardd's answer to ${op} is both a success and a failure; it was ignored`),
+          );
+        else if (!result.ok) reject(new Error(result.error));
         else
           try {
             resolve(checkResult(op, result.value));

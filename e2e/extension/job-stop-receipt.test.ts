@@ -132,3 +132,55 @@ test("a generic stop receipt for a lost job keeps the pending dispatch reconcila
     "the reconnect's exact read to end the wait",
   );
 });
+
+test("a stop reply that is both a success and a failure changes nothing, and the honest reply still stops the job", async (t) => {
+  jl.env["PROBE_STOP_RESULT"] = "1";
+  const done = join(jl.jobDir, "gate-done");
+  const { pi, proxy, shim, tab } = await jl.holdDispatch(
+    t,
+    `while [ ! -e ${quote(done)} ]; do sleep 0.05; done; echo gate`,
+  );
+  writeFileSync(shim.release, "");
+  await until(() => (jl.wrapperPid() === null ? undefined : true), "the wrapper to register");
+  const mark = proxy.activities.length;
+  const base = jl.h.events.filter((event) => event["type"] === "settled").length;
+  proxy.callFault("job.stop", {
+    raw: {
+      value: { label: "gate", running: false, cancelled: true },
+      error: "ownership check failed",
+    },
+  });
+  jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
+  jl.h.onModel(() => ({ text: "The stop reply was refused" }));
+  pi.prompt("Stop the gate job");
+  const refused = await jl.h.waitFor(
+    (event) => event["type"] === "stop_result",
+    "the contradictory stop reply",
+  );
+  assert.equal(refused["isError"], true);
+  await jl.h.waitForNth(
+    (event) => event["type"] === "settled",
+    base + 1,
+    "the worker to settle after the refused reply",
+  );
+  assert.equal(existsSync(shim.closes), false);
+  assert.ok(await jl.hasTab(tab));
+  assert.equal(proxy.activities.slice(mark).includes("idle"), false);
+  assert.deepEqual(await jl.jobResults(), []);
+
+  proxy.callFault("job.stop", undefined);
+  jl.h.onModel(() => ({ tool: "stop_job", args: { job: 1 } }));
+  jl.h.onModel(() => ({ text: "The stop was sent" }));
+  pi.prompt("Stop the gate job");
+  const honest = await jl.h.waitForNth(
+    (event) => event["type"] === "stop_result",
+    2,
+    "the honest stop reply",
+  );
+  assert.equal(honest["isError"], false);
+  await until(
+    async () => ((await jl.jobResults()).length > 0 ? true : undefined),
+    "the stopped job's result",
+  );
+  assert.deepEqual((await jl.jobResults())[0]?.slice(0, 2), [1, 130]);
+});

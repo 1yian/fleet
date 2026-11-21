@@ -276,9 +276,11 @@ exec ${quote(herdr)} "$@"
           message.t !== "result" || fault === undefined
             ? text
             : JSON.stringify(
-                "error" in fault
-                  ? { t: "result", id: message.id, ok: false, error: fault.error }
-                  : { ...message, value: fault.value },
+                "raw" in fault
+                  ? { ...message, ...fault.raw }
+                  : "error" in fault
+                    ? { t: "result", id: message.id, ok: false, error: fault.error }
+                    : { ...message, value: fault.value },
               );
         if (client.readyState === WebSocket.OPEN) client.send(rewritten);
       });
@@ -349,7 +351,7 @@ exec ${quote(herdr)} "$@"
   }
 }
 
-type CallFault = { value: unknown } | { error: string };
+type CallFault = { value: unknown } | { error: string } | { raw: Record<string, unknown> };
 type HttpFault = { redirect: string } | { value: unknown } | { status: number; body: unknown };
 
 class ProxyState {
