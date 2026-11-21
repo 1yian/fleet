@@ -20,9 +20,10 @@ case "$?:$err" in
   *"No such process"*) echo "fleet-probe absent"; exit 0 ;;
   *) echo "fleet-probe unknown"; exit 0 ;;
 esac
-args=$(ps -ww -p "$pid" -o args= 2>/dev/null | sed 's/^[[:space:]]*//')
+args=$(ps -ww -p "$pid" -o args= 2>/dev/null) || { echo "fleet-probe unknown"; exit 0; }
+args=$(printf '%s' "$args" | sed 's/^[[:space:]]*//')
 case "$args" in
-  "" | "["*) echo "fleet-probe unknown" ;;
+  "" | "["* | "("*) echo "fleet-probe unknown" ;;
   *"$token"*) echo "fleet-probe alive" ;;
   *) echo "fleet-probe absent" ;;
 esac`;
