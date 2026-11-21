@@ -109,7 +109,7 @@ export function hasEscapedCredentialKey(text: string): boolean {
 const PARAM_NAME = /[?&#;]([^=&\s#?]*(?:%[\da-f]{2}|\+)[^=&\s#?]*)=/gi;
 const PERCENT = /%([\da-f]{2})/gi;
 
-function percentDecoded(name: string): string {
+export function percentDecoded(name: string): string {
   let current = name.replaceAll("+", " ");
   for (let pass = 0; pass < 4; pass += 1) {
     const next = current.replace(PERCENT, (_all, hex: string) =>

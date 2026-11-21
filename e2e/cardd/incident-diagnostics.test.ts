@@ -114,6 +114,9 @@ for (const [name, diagnostic] of [
   ["curl multipart secret", "curl -F 'client_secret=paper canoe' https://localhost"],
   ["curl attached data argument", "curl -d'password=paper canoe' https://localhost"],
   ["curl percent-encoded field name", "curl -d 'pass%77ord=paper%20canoe' https://localhost"],
+  ["curl form-encoded short data", "curl -d 'a%70i+key=paper' https://localhost"],
+  ["curl form-encoded long data", "curl --data-raw 'a%70i+key=paper' https://localhost"],
+  ["curl form-encoded raw url query", "curl --url-query 'client+secret=paper' https://localhost"],
   [
     "curl percent-encoded url query",
     "curl --url-query 'pass%77ord=paper%20canoe' https://localhost",

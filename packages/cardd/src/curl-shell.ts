@@ -1,4 +1,4 @@
-import { SECRET_NAME } from "./redact-guards.ts";
+import { percentDecoded, SECRET_NAME } from "./redact-guards.ts";
 
 const TICK = String.raw`\u0060`;
 const OUTSIDE_SPAN = String.raw`(?<=^(?:[^${TICK}\n]*${TICK}[^${TICK}\n]*${TICK})*[^${TICK}\n]*)`;
@@ -17,10 +17,5 @@ const DATA_SECRET = new RegExp(
 );
 
 export const CURL_DATA_SECRET = {
-  test: (command: string): boolean =>
-    DATA_SECRET.test(
-      command.replace(/%([\da-f]{2})/gi, (_all, hex: string) =>
-        String.fromCharCode(Number.parseInt(hex, 16)),
-      ),
-    ),
+  test: (command: string): boolean => DATA_SECRET.test(percentDecoded(command)),
 };
