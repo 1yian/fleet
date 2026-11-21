@@ -78,6 +78,12 @@ interface Preparing {
   readonly fences: Map<number, Entry>;
 }
 
+function present(value: string | undefined, what: string): string {
+  if (value === undefined || value.trim() === "")
+    throw new Error(`herdr did not return the job ${what}`);
+  return value;
+}
+
 export class Jobs {
   private readonly preparing = new Map<string, Preparing>();
   private readonly launches = new Map<number, string>();
@@ -93,7 +99,7 @@ export class Jobs {
   private readonly files: JobFiles;
   private readonly cancelledJobs = new Set<number>();
   private readonly ownedTabs = new Map<number, string>();
-  private readonly dispatching = new Set<number>();
+  private readonly dispatchPanes = new Map<number, string>();
   private readonly link: Link;
   private readonly endpoint: { url: string; token: string };
   private readonly warn: (text: string) => void;
@@ -204,7 +210,7 @@ export class Jobs {
 
   private forgetTab(job: number): void {
     this.ownedTabs.delete(job);
-    this.dispatching.delete(job);
+    this.dispatchPanes.delete(job);
   }
 
   private observeFence(entry: Entry): void {
@@ -360,21 +366,20 @@ export class Jobs {
         "--no-focus",
         ...forwardedEnvironment(process.env).flatMap((pair) => ["--env", pair]),
       ]);
-      const tabId = field(records([created["tab"]])[0], "tab_id");
-      if (tabId === undefined) throw new Error("herdr did not return the job tab ID");
+      const tabId = present(field(records([created["tab"]])[0], "tab_id"), "tab ID");
       if (pending?.fenced === true) {
         void this.closeStartupTab(job, tabId);
         throw new Error(`Job ${String(job)} was fenced before dispatch`);
       }
+      const pane = present(rootPane(created), "pane ID");
       this.ownedTabs.set(job, tabId);
-      const pane = rootPane(created);
       await joinContained("local", pane, process.cwd());
       if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced before dispatch`);
       if (launching.legacy && this.lastResult.has(job))
         throw new Error(`Job ${String(job)} was reported lost before dispatch; nothing was run`);
       if (pending !== undefined) pending.dispatched = true;
       dispatched = true;
-      this.dispatching.add(job);
+      this.dispatchPanes.set(job, pane);
       const paneFailure = await herdr("local", [
         "pane",
         "run",
@@ -460,25 +465,22 @@ export class Jobs {
     }
     if (stale()) return superseded;
     const tab = this.ownedTabs.get(job);
+    const dispatched = this.dispatchPanes.get(job);
     const ready = (): boolean =>
-      tab !== undefined && this.ownedTabs.get(job) === tab && this.dispatching.has(job);
+      this.ownedTabs.get(job) === tab && this.dispatchPanes.get(job) === dispatched;
     const refusal = (): string =>
       this.launching.has(job)
         ? `${named} is still starting in this worker, so nothing was signalled.`
         : `${named} has no verified tab ID in this worker session, so nothing was signalled. After a worker replacement its tab cannot be proven, and a tab name is never used as proof.`;
-    if (!ready()) return refusal();
+    if (tab === undefined || dispatched === undefined) return refusal();
     const panes = records(
       (await herdr("local", ["pane", "list", "--workspace", workspace]))["panes"],
     );
     if (stale()) return superseded;
     if (!ready()) return refusal();
-    const pane = field(
-      panes.find((each) => each["tab_id"] === tab),
-      "pane_id",
-    );
-    if (pane === undefined)
-      return `${named} has no tab left in your workspace, so nothing was signalled. If it is still recorded as running, it is reported lost soon.`;
-    await herdr("local", ["pane", "send-keys", pane, "ctrl+c"]);
+    if (!panes.some((each) => each["tab_id"] === tab && each["pane_id"] === dispatched))
+      return `${named} has no pane left in its tab in your workspace, so nothing was signalled. If it is still recorded as running, it is reported lost soon.`;
+    await herdr("local", ["pane", "send-keys", dispatched, "ctrl+c"]);
     return `Sent a stop to ${named}. Its result arrives as a [fleet] message, exited 130 when the stop took.`;
   }
 

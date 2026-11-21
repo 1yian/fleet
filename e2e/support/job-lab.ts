@@ -173,6 +173,7 @@ export class JobLab {
       failTab: join(this.jobDir, "fail-tab-create"),
       holdContain: join(this.jobDir, "hold-contain"),
       noTabId: join(this.jobDir, "no-tab-id"),
+      blankTabId: join(this.jobDir, "blank-tab-id"),
       release: join(this.jobDir, "release-dispatch"),
     };
     const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
@@ -189,6 +190,11 @@ fi
 if [ "$1 $2" = 'tab create' ]; then
   echo tab >> ${quote(logs.creates)}
   if [ -e ${quote(logs.failTab)} ]; then echo 'tab create refused' >&2; exit 1; fi
+  if [ -e ${quote(logs.blankTabId)} ]; then
+    out=$(${quote(herdr)} "$@") || exit $?
+    echo "$out" | sed 's/"tab_id": *"[^"]*"/"tab_id":""/g'
+    exit 0
+  fi
   if [ -e ${quote(logs.noTabId)} ]; then
     out=$(${quote(herdr)} "$@") || exit $?
     echo "$out" | sed 's/"tab_id"/"tab_ref"/g'

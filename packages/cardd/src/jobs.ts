@@ -290,7 +290,7 @@ export function stopJob(db: DatabaseSync, session: string, job: number) {
     throw new Error(`job ${String(job)} is not one of this worker's jobs: nothing was stopped`);
   const { label, life, launched } = owned;
   const running = jobIsRunning(life.state);
-  if (!running || launched) return { label, running, legacy: running && owned.launch === null };
+  if (!running || launched) return { label, running };
 
   const result = { exitCode: 130, outputTail: "stopped before wrapper registration" };
   transitionJob(db, owned, { name: "finish", ...result }, Date.now());

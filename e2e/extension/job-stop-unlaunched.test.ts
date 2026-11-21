@@ -56,6 +56,11 @@ const scenarios: {
     setup: (proxy) => proxy.callFault("job.start", { lose: true }),
   },
   {
+    name: "the tab receipt carried a blank tab ID",
+    connections: 1,
+    setup: (_proxy, shim) => writeFileSync(shim.blankTabId, ""),
+  },
+  {
     name: "the tab receipt carried no tab ID",
     connections: 1,
     setup: (_proxy, shim) => writeFileSync(shim.noTabId, ""),
@@ -106,6 +111,7 @@ for (const scenario of scenarios)
       assert.equal(stopped["isError"], false);
       assert.deepEqual(stopped["content"], NO_TAB);
       assert.equal(existsSync(shim.keys), false);
+      assert.equal(existsSync(shim.runs), false);
     });
 
 test("a stop while the launch's tab exists but its command is not dispatched signals nothing", async (t) => {

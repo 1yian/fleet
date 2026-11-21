@@ -202,7 +202,6 @@ export const JOB_OPS = {
         {
           label: Type.String({ minLength: 1 }),
           running: Type.Literal(true),
-          legacy: Type.Optional(Type.Literal(true)),
         },
         { additionalProperties: false },
       ),

@@ -59,7 +59,6 @@ test("a legacy stop reply that crosses the job's exit does not interrupt a same-
   assert.deepEqual(check(OPS["job.stop"].result, reply.value), {
     label: "gate",
     running: true,
-    legacy: true,
   });
 
   writeFileSync(done, "");
