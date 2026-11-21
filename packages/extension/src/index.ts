@@ -255,12 +255,20 @@ function tellUnreadable(pi: ExtensionAPI, error: string, reloading: boolean): vo
   );
 }
 
-function workerTools(pi: ExtensionAPI, link: Link, cardd: { url: string; token: string }): Jobs {
-  const jobs = new Jobs(link, cardd, (text) => {
+function workerTools(
+  pi: ExtensionAPI,
+  link: Link,
+  cardd: { url: string; token: string },
+  runInProgress: () => boolean,
+): Jobs {
+  const warn = (text: string): void => {
     pi.sendMessage(
       { customType: "fleet-job-cleanup", content: `[fleet] ${text}`, display: true },
       { triggerTurn: false },
     );
+  };
+  const jobs = new Jobs(link, cardd, warn, () => {
+    if (!runInProgress()) link.activity(jobs.waiting ? "waiting" : "idle");
   });
   jobs.register(pi);
   registerBranch(pi, link);
@@ -361,7 +369,7 @@ function start(
       deliver("");
     }
   };
-  const jobs = role === "worker" ? workerTools(pi, link, { url, token }) : undefined;
+  const jobs = role === "worker" ? workerTools(pi, link, { url, token }, runInProgress) : undefined;
   registerDropJob(pi, link);
   registerGuard(pi);
   const failures = new Failures(link);

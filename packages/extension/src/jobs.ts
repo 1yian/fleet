@@ -1,7 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -10,9 +10,10 @@ import { quote } from "@fleet/protocol/route";
 import Type from "typebox";
 import { joinContained } from "./containment.ts";
 import { field, herdr, records, rootPane } from "./host.ts";
+import { JobFiles } from "./job-files.ts";
 import { confirmLegacyStop, jobHandshake } from "./job-http.ts";
 import type { Link } from "./link.ts";
-import { forwardedEnvironment, hostDir } from "./scratch.ts";
+import { forwardedEnvironment } from "./scratch.ts";
 
 const WRAPPER = fileURLToPath(new URL("./job.ts", import.meta.url));
 const DEFAULT_TIMEOUT_MINUTES = 60;
@@ -80,27 +81,35 @@ export class Jobs {
   private readonly preparing = new Map<string, Preparing>();
   private readonly running = new Set<number>();
   private readonly lastResult = new Map<number, number>();
-  private readonly noticed = new Set<number>();
+  private readonly revisions = new Map<number, number>();
   private readonly unresolved = new Set<number>();
   private readonly pending = new Map<number, PendingDispatch>();
   private readonly launching = new Map<
     number,
     { unstarted: boolean; ran: boolean; legacy: boolean }
   >();
-  private readonly unsettled = new Set<number>();
+  private readonly files: JobFiles;
   private readonly cancelledJobs = new Set<number>();
   private readonly ownedTabs = new Map<number, string>();
   private readonly link: Link;
   private readonly endpoint: { url: string; token: string };
   private readonly warn: (text: string) => void;
+  private readonly onWaitChanged: () => void;
 
-  constructor(link: Link, cardd: { url: string; token: string }, warn: (text: string) => void) {
+  constructor(
+    link: Link,
+    cardd: { url: string; token: string },
+    warn: (text: string) => void,
+    onWaitChanged: () => void,
+  ) {
     this.link = link;
     this.endpoint = {
       ...cardd,
       url: cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/call"),
     };
     this.warn = warn;
+    this.onWaitChanged = onWaitChanged;
+    this.files = new JobFiles(cardd.token, warn);
   }
 
   get waiting(): boolean {
@@ -108,35 +117,45 @@ export class Jobs {
   }
 
   async sync(): Promise<void> {
-    this.resumeLaunchCleanup();
+    this.files.resumeLaunchCleanup();
     const retry = Promise.all([...this.unresolved].map((job) => this.reconcile(job)));
-    const before = new Map(this.lastResult);
+    const before = new Map(this.revisions);
     try {
       const jobs = await this.link.call("jobs", {}, 5000);
+      const wasWaiting = this.waiting;
       for (const { id } of jobs) {
-        if (this.lastResult.get(id) !== before.get(id) && !this.noticed.has(id)) continue;
+        if (this.revisions.get(id) !== before.get(id)) continue;
         this.running.add(id);
         this.clearPending(id);
       }
+      if (this.waiting !== wasWaiting) this.onWaitChanged();
     } finally {
       await retry;
     }
   }
 
+  private advance(job: number): void {
+    this.revisions.set(job, (this.revisions.get(job) ?? 0) + 1);
+  }
+
   private async reconcile(job: number): Promise<void> {
     this.unresolved.add(job);
-    const seen = this.lastResult.get(job);
+    const seen = this.revisions.get(job);
+    const result = this.lastResult.get(job);
     let running: boolean;
     try {
       running = (await this.link.call("job.running", { job }, 5000)).running;
     } catch {
       return;
     }
-    if (this.lastResult.get(job) !== seen) return;
+    if (this.revisions.get(job) !== seen || this.lastResult.get(job) !== result) return;
+    this.advance(job);
     this.unresolved.delete(job);
+    const wasWaiting = this.waiting;
     this.clearPending(job);
     if (running) this.running.add(job);
     else this.running.delete(job);
+    if (this.waiting !== wasWaiting) this.onWaitChanged();
   }
 
   observeResult(entry: Entry): void {
@@ -145,9 +164,8 @@ export class Jobs {
     if (startupFenced !== true && typeof exitCode !== "number" && lost !== true && revived !== true)
       return;
     this.lastResult.set(job, entry.id);
-    if (startupFenced !== true && typeof exitCode !== "number") this.noticed.add(job);
-    else {
-      this.noticed.delete(job);
+    if (startupFenced === true || typeof exitCode === "number") {
+      this.advance(job);
       this.unresolved.delete(job);
     }
     if (startupFenced === true) {
@@ -158,7 +176,7 @@ export class Jobs {
       );
       return;
     }
-    if (lost === true || typeof exitCode === "number") this.settleLaunchFile(job);
+    if (lost === true || typeof exitCode === "number") this.files.settleLaunchFile(job);
     const launching = this.launching.get(job);
     if (launching !== undefined && entry.fields["commandNotStarted"] === true)
       launching.unstarted = true;
@@ -173,91 +191,6 @@ export class Jobs {
       this.running.delete(job);
       this.forgetTab(job);
     } else void this.reconcile(job);
-  }
-
-  private owner(job: number): string {
-    return createHash("sha256")
-      .update(`${this.endpoint.token}:${String(job)}`)
-      .digest("hex")
-      .slice(0, 32);
-  }
-
-  private legacyLaunchName(job: number): string {
-    return `fleet-job-${String(job)}-${this.owner(job)}.json`;
-  }
-
-  private ownerDir(): string {
-    const owner = createHash("sha256").update(this.endpoint.token).digest("hex").slice(0, 32);
-    return join(hostDir(), "job-launch-files", owner);
-  }
-
-  private launchRecord(job: number): string {
-    return join(this.ownerDir(), `${String(job)}.path`);
-  }
-
-  private pendingRecord(job: number): string {
-    return join(this.ownerDir(), `${String(job)}.pending`);
-  }
-
-  private settleLaunchFile(job: number): void {
-    try {
-      renameSync(this.launchRecord(job), this.pendingRecord(job));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        const why = error instanceof Error ? error.message : String(error);
-        this.unsettled.add(job);
-        this.warn(`Job ${String(job)}'s launch record could not be marked for removal: ${why}`);
-        return;
-      }
-    }
-    this.cleanLaunchFile(job);
-  }
-
-  private cleanLaunchFile(job: number): void {
-    const marker = this.pendingRecord(job);
-    let file: string;
-    try {
-      file = readFileSync(marker, "utf8").trim();
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        const why = error instanceof Error ? error.message : String(error);
-        this.warn(`Job ${String(job)}'s launch record ${marker} could not be read: ${why}`);
-      }
-      return;
-    }
-    if (!isAbsolute(file) || basename(file) !== this.legacyLaunchName(job)) {
-      this.warn(`Job ${String(job)}'s launch record ${marker} does not name its launch file`);
-      return;
-    }
-    if (this.removeFile(job, file)) this.removeFile(job, marker);
-  }
-
-  private resumeLaunchCleanup(): void {
-    for (const job of [...this.unsettled]) {
-      this.unsettled.delete(job);
-      this.settleLaunchFile(job);
-    }
-    let names: string[];
-    try {
-      names = readdirSync(this.ownerDir());
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      const match = /^(\d+)\.pending$/.exec(name);
-      if (match?.[1] !== undefined) this.cleanLaunchFile(Number(match[1]));
-    }
-  }
-
-  private removeFile(job: number, file: string): boolean {
-    try {
-      rmSync(file, { force: true });
-      return true;
-    } catch (error) {
-      const why = error instanceof Error ? error.message : String(error);
-      this.warn(`Job ${String(job)}'s launch file ${file} could not be removed: ${why}`);
-      return false;
-    }
   }
 
   private forgetTab(job: number): void {
@@ -286,7 +219,7 @@ export class Jobs {
     const pending = this.pending.get(job);
     if (pending === undefined) return;
     this.pending.delete(job);
-    this.removeFile(job, pending.file);
+    this.files.removeFile(job, pending.file);
   }
 
   private async closeStartupTab(job: number, tab: string): Promise<void> {
@@ -346,7 +279,7 @@ export class Jobs {
   ): Promise<{ job: number; tab: string; started: boolean }> {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error(`${label} needs a worker inside a herdr pane`);
-    this.resumeLaunchCleanup();
+    this.files.resumeLaunchCleanup();
     const id = randomUUID();
     const preparing: Preparing = {};
     this.preparing.set(id, preparing);
@@ -363,7 +296,7 @@ export class Jobs {
       throw new Error(`Job ${String(job)} cannot start: it was stopped before dispatch`);
     const file = join(
       resolve(tmpdir()),
-      registeredLaunch ? `fleet-job-${String(job)}-${id}.json` : this.legacyLaunchName(job),
+      registeredLaunch ? `fleet-job-${String(job)}-${id}.json` : this.files.legacyLaunchName(job),
     );
     const tab = tabName(job, label);
     const pending: PendingDispatch | undefined = registeredLaunch
@@ -384,10 +317,7 @@ export class Jobs {
         tailLines,
         lineChars,
       };
-      if (!registeredLaunch) {
-        mkdirSync(this.ownerDir(), { recursive: true });
-        writeFileSync(this.launchRecord(job), file, { mode: 0o600 });
-      }
+      if (!registeredLaunch) this.files.remember(job, file);
       writeFileSync(file, JSON.stringify(body), { mode: 0o600 });
       if (pending !== undefined) this.pending.set(job, pending);
       const created = await herdr("local", [
@@ -443,11 +373,11 @@ export class Jobs {
           { cause: error },
         );
       if (launching.legacy) {
-        this.settleLaunchFile(job);
+        this.files.settleLaunchFile(job);
         this.running.delete(job);
         throw error;
       }
-      this.removeFile(job, file);
+      this.files.removeFile(job, file);
       const outputTail = `could not start: ${why}`;
       this.running.delete(job);
       const finished = await this.link
@@ -459,6 +389,8 @@ export class Jobs {
         })
         .catch(() => undefined);
       if (finished?.recorded === true) {
+        this.advance(job);
+        this.unresolved.delete(job);
         if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
         if (pending !== undefined) this.confirmStartupFence(job);
       }
@@ -472,13 +404,15 @@ export class Jobs {
   async stop(job: number): Promise<string> {
     const workspace = process.env["HERDR_WORKSPACE_ID"];
     if (workspace === undefined) throw new Error("stop_job needs a worker inside a herdr pane");
-    const before = this.lastResult.get(job);
+    const before = this.revisions.get(job);
     const { label, running, cancelled, legacy } = await this.link.call("job.stop", { job });
     const named = `job ${String(job)} (${label})`;
     if (cancelled === true) this.cancelledJobs.add(job);
     if (!running) {
-      if (this.lastResult.get(job) === before) {
-        if (before === undefined) this.lastResult.set(job, 0);
+      if (cancelled === true || this.revisions.get(job) === before) {
+        this.advance(job);
+        this.unresolved.delete(job);
+        if (!this.lastResult.has(job)) this.lastResult.set(job, 0);
         this.running.delete(job);
         if (cancelled === true) this.confirmStartupFence(job);
       }

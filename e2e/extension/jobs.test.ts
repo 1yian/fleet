@@ -104,7 +104,7 @@ async function jobProxy(
   t: TestContext,
   call: (op: string, args: unknown) => Promise<{ status: number; body: unknown; close?: boolean }>,
   dropFence: boolean | Promise<void> = false,
-  jobsReply?: (reply: CallResult) => CallResult | undefined,
+  jobsReply?: (reply: CallResult, send: (reply: CallResult) => void) => CallResult | undefined,
   reportReply?: (reply: CallResult) => CallResult | undefined,
   beforeStop?: Promise<void>,
   idleReply?: (reply: CallResult) => CallResult | undefined,
@@ -112,6 +112,7 @@ async function jobProxy(
   exactReply?: (reply: CallResult) => CallResult | undefined,
   holdOn: (fields: Record<string, unknown>) => boolean = (fields) =>
     fields["startupFenced"] === true || fields["lost"] === true,
+  holdAcrossReconnect = false,
 ) {
   const proxy = createServer((req, res) => {
     let body = "";
@@ -131,6 +132,8 @@ async function jobProxy(
     });
   });
   const sockets = new WebSocketServer({ server: proxy });
+  let holdNext = dropFence;
+  let heldReplay: { id: number; release: Promise<void> } | undefined;
   const disconnect = (): void => {
     for (const client of sockets.clients) client.terminate();
   };
@@ -140,7 +143,7 @@ async function jobProxy(
     const reports = new Set<number>();
     const idleReads = new Set<number>();
     const exactReads = new Set<number>();
-    let held: { id: number; release: true | Promise<void> } | undefined;
+    let heldOnSocket: typeof heldReplay;
     client.pause();
     upstream.on("open", () => {
       client.resume();
@@ -176,25 +179,29 @@ async function jobProxy(
     upstream.on("message", (raw) => {
       const text = rawText(raw);
       const message = parseServerMessage(text);
-      if (
-        held === undefined &&
-        dropFence &&
-        message.t === "entry" &&
-        holdOn(message.entry.fields)
-      ) {
-        held = { id: message.entry.id, release: dropFence };
-        dropFence = false;
+      if (holdNext && message.t === "entry" && holdOn(message.entry.fields)) {
+        const release = holdNext;
+        holdNext = false;
+        if (release === true) {
+          client.terminate();
+          return;
+        }
+        const held = { id: message.entry.id, release };
+        if (holdAcrossReconnect) heldReplay = held;
+        else heldOnSocket = held;
       }
+      const held = heldOnSocket ?? heldReplay;
       if (held !== undefined && message.t === "entry" && message.entry.id === held.id) {
-        if (held.release === true) client.terminate();
-        else
-          void held.release.then(() => {
-            if (client.readyState === WebSocket.OPEN) client.send(text);
-          });
+        void held.release.then(() => {
+          if (client.readyState === WebSocket.OPEN) client.send(text);
+        });
       } else if (client.readyState === WebSocket.OPEN) {
         if (message.t === "result" && jobReads.delete(message.id) && jobsReply !== undefined) {
-          const reply = jobsReply(message);
-          if (reply !== undefined) client.send(JSON.stringify(reply));
+          const send = (reply: CallResult): void => {
+            if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(reply));
+          };
+          const reply = jobsReply(message, send);
+          if (reply !== undefined) send(reply);
         } else if (
           message.t === "result" &&
           exactReads.delete(message.id) &&
@@ -1593,10 +1600,17 @@ exec ${quote(herdr)} "$@"
   assert.equal(existsSync(marker), false);
 });
 
-type ExactRead = "complete" | "failed" | "hanging";
+function readJobList(body: unknown) {
+  const outcome = check(HttpOutcomeSchema, body);
+  if (!outcome.ok) throw new Error(outcome.error);
+  return check(OPS.jobs.result, outcome.value);
+}
 
-for (const older of ["loss", "revival"] as const)
-  for (const exactRead of ["complete", "failed", "hanging"] as ExactRead[])
+const notices = ["loss", "revival"] as const;
+const exactReadModes = ["complete", "failed", "hanging"] as const;
+
+for (const older of notices)
+  for (const exactRead of exactReadModes)
     test(`a replayed older ${older} cannot change the replacement worker's wait (${exactRead} exact read)`, async (t) => {
       const activities: string[] = [];
       const release = Promise.withResolvers<void>();
@@ -1604,6 +1618,9 @@ for (const older of ["loss", "revival"] as const)
       let faulty = false;
       let listReads = 0;
       let exactReads = 0;
+      let exactVerdict: boolean | undefined;
+      let runningSnapshot: ReturnType<typeof readJobList> | undefined;
+      const seedNegative = older === "revival" && exactRead === "complete";
       const fault = (reply: CallResult): CallResult | undefined => {
         if (exactRead === "complete") return reply;
         if (exactRead === "hanging") return undefined;
@@ -1617,6 +1634,7 @@ for (const older of ["loss", "revival"] as const)
           if (!faulty) return reply;
           listReads += 1;
           if (listReads > 1) return fault(reply);
+          if (runningSnapshot !== undefined) return { ...reply, value: runningSnapshot };
           return older === "loss" && exactRead === "complete" ? { ...reply, value: [] } : reply;
         },
         undefined,
@@ -1626,10 +1644,14 @@ for (const older of ["loss", "revival"] as const)
           if (message.t === "activity") activities.push(message.state);
         },
         (reply) => {
-          if (faulty) exactReads += 1;
+          if (faulty) {
+            exactReads += 1;
+            if (reply.ok) exactVerdict = check(OPS["job.running"].result, reply.value).running;
+          }
           return faulty ? fault(reply) : reply;
         },
         (fields) => (older === "loss" ? fields["lost"] === true : fields["revived"] === true),
+        seedNegative,
       );
       const slow = commandAwaitingGo(86);
       t.after(() => {
@@ -1668,6 +1690,10 @@ for (const older of ["loss", "revival"] as const)
           (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
           "the loss to reach the first worker",
         );
+        await untilAsync(
+          () => (acknowledged(lost.id) ? true : undefined),
+          "cardd to persist the acknowledgment of the earlier loss",
+        );
       }
       process.kill(wrapper, "SIGCONT");
       const revived = await untilAsync(
@@ -1685,6 +1711,12 @@ for (const older of ["loss", "revival"] as const)
           "cardd to persist the acknowledgment of the revival",
         );
       } else {
+        if (seedNegative) {
+          const listed = await callCardd("jobs", {});
+          assert.equal(listed.status, 200);
+          runningSnapshot = readJobList(listed.body);
+          assert.deepEqual(runningSnapshot, [{ id: 1, label: "replayed" }]);
+        }
         writeFileSync(slow.go, "");
         const done = await untilAsync(
           async () => (await view()).find((entry) => entry.fields["exitCode"] === 0),
@@ -1703,9 +1735,24 @@ for (const older of ["loss", "revival"] as const)
       assert.equal(acknowledged(held.id), false);
       await first.kill();
       faulty = true;
-      const settledBefore = h.events.filter((event) => event["type"] === "settled").length;
+      const replacementActivity = activities.length;
+      const connectedBefore = h.events.filter(
+        (event) => event["type"] === "fleet_connected",
+      ).length;
       const second = worker();
-      await h.waitFor((event) => event["type"] === "fleet_connected", "the replacement to connect");
+      await h.waitForNth(
+        (event) => event["type"] === "fleet_connected",
+        connectedBefore + 1,
+        "the replacement to connect",
+      );
+      if (seedNegative) {
+        await until(
+          () => (activities.slice(replacementActivity).at(-1) === "waiting" ? true : undefined),
+          "the replacement to publish the wait before receiving the replay",
+        );
+        assert.equal(exactReads, 0);
+      }
+      const settledBefore = h.events.filter((event) => event["type"] === "settled").length;
       release.resolve();
       await h.waitFor(
         (event) => event["type"] === "fleet_delivered" && event["entryId"] === held.id,
@@ -1728,6 +1775,7 @@ for (const older of ["loss", "revival"] as const)
         return after.includes("running") && after.at(-1) !== "running" ? after.at(-1) : undefined;
       }, "the worker to send its settled activity after the follow-up turn");
       assert.equal(settledActivity, older === "loss" ? "waiting" : "idle");
+      if (seedNegative) assert.equal(exactVerdict, false);
       assert.equal(existsSync(slow.ready), true);
       assert.ok(exactReads > 0);
     });
@@ -1764,6 +1812,7 @@ test("a failed exact read keeps a known wait through a genuine loss, and the rec
   const pi = worker();
   const wrapper = await wrapperOf(1, slow.ready);
   await settled(1);
+  await until(() => (activities.at(-1) === "waiting" ? true : undefined), "the initial wait");
   failExact = true;
   process.kill(wrapper, "SIGSTOP");
   const lost = await untilAsync(
@@ -1791,9 +1840,76 @@ test("a failed exact read keeps a known wait through a genuine loss, and the rec
   assert.equal(await turn("Is the job still being waited on?"), "waiting");
   failExact = false;
   const readsBefore = exactReads;
+  const activitiesBefore = activities.length;
   disconnect();
   await until(() => (exactReads > readsBefore ? true : undefined), "the reconnect exact read");
-  assert.equal(await turn("And now?"), "idle");
+  await until(() => (activities.at(-1) === "idle" ? true : undefined), "idle without a new turn");
+  assert.deepEqual(activities.slice(activitiesBefore), ["waiting", "idle"]);
+});
+
+test("a delayed positive job list cannot restore a wait after confirmed loss", async (t) => {
+  const activities: string[] = [];
+  const snapshot = Promise.withResolvers<() => void>();
+  let holdList = false;
+  let confirmedLoss = false;
+  const disconnect = await jobProxy(
+    t,
+    callCardd,
+    false,
+    (reply, send) => {
+      if (!holdList || !reply.ok) return reply;
+      assert.deepEqual(check(OPS.jobs.result, reply.value), [{ id: 1, label: "delayed" }]);
+      holdList = false;
+      snapshot.resolve(() => {
+        send(reply);
+      });
+      return undefined;
+    },
+    undefined,
+    undefined,
+    undefined,
+    (message) => {
+      if (message.t === "activity") activities.push(message.state);
+    },
+    (reply) => {
+      if (reply.ok) confirmedLoss = !check(OPS["job.running"].result, reply.value).running;
+      return reply;
+    },
+  );
+  const slow = commandAwaitingGo(88);
+  t.after(() => {
+    if (existsSync(h.dir)) writeFileSync(slow.go, "");
+  });
+  h.onModel(() => ({ tool: "run_long", args: { label: "delayed", command: slow.command } }));
+  h.onModel(() => ({ text: "Waiting for the job" }));
+  for (let i = 0; i < 12; i++) h.onModel(() => ({ text: "Noted" }));
+  worker();
+  const wrapper = await wrapperOf(1, slow.ready);
+  await settled(1);
+  await until(() => (activities.at(-1) === "waiting" ? true : undefined), "the initial wait");
+  holdList = true;
+  disconnect();
+  const releaseList = await snapshot.promise;
+  process.kill(wrapper, "SIGSTOP");
+  try {
+    await until(
+      () => (confirmedLoss && activities.at(-1) === "idle" ? true : undefined),
+      "the worker to publish idle after the exact loss read",
+    );
+    const before = activities.length;
+    releaseList();
+    await fleet.main.call("comment", {
+      card: card.id,
+      text: "Check activity after the delayed list",
+    });
+    const activity = await until(() => {
+      const after = activities.slice(before);
+      return after.includes("running") && after.at(-1) !== "running" ? after.at(-1) : undefined;
+    }, "the worker to settle after the delayed list");
+    assert.equal(activity, "idle");
+  } finally {
+    process.kill(wrapper, "SIGCONT");
+  }
 });
 
 test("run_long reports a dispatch as awaiting startup confirmation while registration is held, then delivers the result", async (t) => {
