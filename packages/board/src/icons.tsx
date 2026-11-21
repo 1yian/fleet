@@ -1,5 +1,13 @@
 export type Glyph =
-  "queued" | "later" | "working" | "review" | "mate" | "needs" | "merging" | "done" | "dropped";
+  | "queued"
+  | "later"
+  | "working"
+  | "review"
+  | "mate"
+  | "needs"
+  | "merging"
+  | "done"
+  | "dropped";
 
 const CENTER = 7;
 const RADIUS = 3.2;

@@ -18,12 +18,29 @@ import {
   discoverLanes,
   gitWithin,
   homeOf,
-  isMissing,
+  laneClaimsRaced,
   unreadFailure,
+  type Discovery,
   type LaneHome,
-  type UnreadLane,
 } from "./lane-homes.ts";
-import { idlePaneOf, lanePaneState, workspaceOf } from "./lane-observation.ts";
+import {
+  CRASH_WINDOW_MS,
+  confirmLifecycle,
+  heldReasonOf,
+  readState,
+  recentStartsOf,
+  sampleLifecycle,
+  startsFile,
+  stoppedFile,
+  type Lifecycle,
+} from "./lane-lifecycle.ts";
+import {
+  idlePaneOf,
+  lanePaneState,
+  racedRosters,
+  workspaceOf,
+  type Listed,
+} from "./lane-observation.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
 import {
   isRecord,
@@ -36,6 +53,8 @@ import { remainingMs } from "./maintenance-budget.ts";
 import { withCompileCache } from "./scratch.ts";
 import { mateTitle } from "./titles.ts";
 
+export { placementStatus, status } from "./lane-status.ts";
+
 export {
   codeRoot,
   discoverLanes,
@@ -47,11 +66,6 @@ export {
 
 const git = (cwd: string, ...args: string[]): string => gitWithin(cwd, args);
 
-export interface Status {
-  readonly lane: string;
-  readonly state: "running" | "down" | "stopped" | "unknown";
-  readonly reason?: string;
-}
 export interface Outcome {
   readonly lane: string;
   readonly action: "started" | "running" | "held" | "stopped" | "unread";
@@ -65,11 +79,8 @@ interface SweepResult {
 }
 
 const STARTS_BEFORE_HOLD = 3;
-const CRASH_WINDOW_MS = 10 * 60_000;
 
-const stoppedFile = (home: string): string => join(home, "state", "stopped");
 const HELD_AT_CREATION = "held since the home was made\n";
-const startsFile = (home: string): string => join(home, "state", "starts");
 
 function liftHold(home: string): void {
   rmSync(stoppedFile(home), { force: true });
@@ -141,58 +152,8 @@ const ifUnread =
     throw error;
   };
 
-function readState(file: string, name: string): string | undefined {
-  try {
-    return readFileSync(file, "utf8");
-  } catch (error) {
-    if (isMissing(error)) return undefined;
-    const code = error instanceof Error && "code" in error ? String(error.code) : "unknown";
-    throw new HostUnread(`could not read ${name} (${code})`);
-  }
-}
-
 function heldReason(home: string): string | undefined {
-  const text = readState(stoppedFile(home), "state/stopped");
-  return text === undefined ? undefined : text.trim() || "stopped";
-}
-
-async function statusOf(info: LaneHome): Promise<Status> {
-  const { lane, home } = info;
-  try {
-    const reason = heldReason(home);
-    recentStarts(home, Date.now());
-    if ((await workspaceOf(info, "liveness"))?.state === "running")
-      return { lane, state: "running" };
-    return reason === undefined ? { lane, state: "down" } : { lane, state: "stopped", reason };
-  } catch (error) {
-    if (error instanceof HostUnread) return { lane, state: "unknown", reason: error.message };
-    throw error;
-  }
-}
-
-export async function status(root: string): Promise<Status[]> {
-  const { homes, unread } = discoverLanes(root);
-  const out: Status[] = [];
-  for (const info of homes) out.push(await statusOf(info));
-  for (const { lane, message } of unread) out.push({ lane, state: "unknown", reason: message });
-  return out;
-}
-
-export async function placementStatus(
-  root: string,
-): Promise<{ lane: string; mate: boolean; host?: string }[]> {
-  const { homes, unread } = discoverLanes(root);
-  if (unread.length > 0) throw new Error(unreadFailure(unread));
-  const out: { lane: string; mate: boolean; host?: string }[] = [];
-  for (const info of homes) {
-    const mate = (await workspaceOf(info, "placement")) !== undefined;
-    out.push({
-      lane: info.lane,
-      mate,
-      ...(info.config.host === undefined ? {} : { host: info.config.host }),
-    });
-  }
-  return out;
+  return heldReasonOf(readState(stoppedFile(home), "state/stopped"));
 }
 
 function syncHome(root: string, home: string, deadline?: number): void {
@@ -203,13 +164,7 @@ function syncHome(root: string, home: string, deadline?: number): void {
 }
 
 function recentStarts(home: string, now: number): number[] {
-  const text = readState(startsFile(home), "state/starts");
-  if (text === undefined) return [];
-  const lines = text.split("\n");
-  const complete = lines.pop() === "";
-  if (!complete || lines.length === 0 || !lines.every((line) => /^[1-9]\d{0,15}$/.test(line)))
-    throw new HostUnread("state/starts is incomplete");
-  return lines.map(Number).filter((time) => time > now - CRASH_WINDOW_MS);
+  return recentStartsOf(readState(startsFile(home), "state/starts"), now);
 }
 
 const LANE_OBSERVATION_MS = 18_000;
@@ -260,17 +215,50 @@ function startDeadline(deadline: number | undefined): number | undefined {
   return limit;
 }
 
+async function confirmTarget(
+  info: LaneHome,
+  expected: string | undefined,
+  deadline: number | undefined,
+): Promise<void> {
+  const now = await workspaceOf(info, "liveness", deadline);
+  if (idlePaneOf(now) !== expected || (now === undefined) !== (expected === undefined))
+    throw new HostUnread(`${info.lane} changed while its start was being prepared`);
+}
+
+const noClaimCheck = (): void => undefined;
+
+function confirmClaim(root: string, info: LaneHome): void {
+  const reason = laneClaimsRaced(root, [info]).changed.get(info.lane);
+  if (reason !== undefined) throw new HostUnread(reason);
+}
+
+async function createConfirmedPane(
+  info: LaneHome,
+  deadline: number | undefined,
+  confirm: (info: LaneHome, sample: Lifecycle) => void,
+  sample: Lifecycle,
+): Promise<string> {
+  confirm(info, sample);
+  const pane = await createMatePane(info, deadline);
+  await confirmTarget(info, pane, deadline);
+  return pane;
+}
+
 async function start(
   root: string,
   info: LaneHome,
   existingPane: string | undefined,
   lift: boolean,
+  sample: Lifecycle,
   deadline?: number,
+  confirm: (info: LaneHome, sample: Lifecycle) => void = noClaimCheck,
 ): Promise<void> {
   const launchDeadline = startDeadline(deadline);
-  const history = recentStarts(info.home, Date.now());
+  const history = recentStartsOf(sample[1], Date.now());
   syncHome(root, info.home, launchDeadline);
-  const pane = existingPane ?? (await createMatePane(info, launchDeadline));
+  await confirmTarget(info, existingPane, launchDeadline);
+  const pane = existingPane ?? (await createConfirmedPane(info, launchDeadline, confirm, sample));
+  confirm(info, sample);
   const pi = ["pi", "--continue", TRUST_ARG, ...mateStartArgs(info.config.args, info.config.tier)];
   const { direnv } = info.config;
   const command = withCompileCache(direnv === undefined ? pi : ["direnv", "exec", direnv, ...pi]);
@@ -306,11 +294,8 @@ async function arrangeAfterStart(host: string, deadline?: number): Promise<void>
   );
 }
 
-const named = (
-  root: string,
-  lane: string | undefined,
-): { homes: LaneHome[]; unread: UnreadLane[] } => {
-  const all = discoverLanes(root);
+const named = (root: string, lane: string | undefined, discovered?: Discovery): Discovery => {
+  const all = discovered ?? discoverLanes(root);
   if (lane === undefined) return all;
   const found = {
     homes: all.homes.filter((each) => each.lane === lane),
@@ -325,28 +310,38 @@ async function upOne(
   root: string,
   info: LaneHome,
   only: string | undefined,
-  deadline?: number,
+  deadline: number | undefined,
+  confirm: (info: LaneHome, sample: Lifecycle) => void,
+  evidence: { lane: string; seen: Listed }[],
 ): Promise<Outcome> {
   const { lane, home } = info;
   const observationDeadline =
     deadline === undefined
       ? undefined
       : Math.min(deadline, performance.now() + LANE_OBSERVATION_MS);
-  const observed = await workspaceOf(info, "liveness", observationDeadline);
-  const reason = heldReason(home);
-  const history = recentStarts(home, Date.now());
+  const sample = sampleLifecycle(home);
+  confirm(info, sample);
+  const roster: { roster?: Listed } = {};
+  const observed = await workspaceOf(info, "liveness", observationDeadline, roster);
+  confirm(info, sample);
+  const settled = (outcome: Outcome): Outcome => {
+    if (roster.roster !== undefined) evidence.push({ lane, seen: roster.roster });
+    return outcome;
+  };
+  const reason = heldReasonOf(sample[0]);
+  const history = recentStartsOf(sample[1], Date.now());
   if (observed?.state === "running") {
     if (reason !== undefined) liftHold(home);
-    return { lane, action: "running" };
+    return settled({ lane, action: "running" });
   }
   const lift = only !== undefined && reason !== undefined;
-  if (reason !== undefined && !lift) return { lane, action: "stopped", detail: reason };
+  if (reason !== undefined && !lift) return settled({ lane, action: "stopped", detail: reason });
   if (!lift && history.length >= STARTS_BEFORE_HOLD) {
     const detail = `started ${String(STARTS_BEFORE_HOLD)} times in ${String(CRASH_WINDOW_MS / 60_000)} minutes`;
     writeFileSync(stoppedFile(home), `crash loop: ${detail}\n`);
-    return { lane, action: "held", detail };
+    return settled({ lane, action: "held", detail });
   }
-  await start(root, info, idlePaneOf(observed), lift, deadline);
+  await start(root, info, idlePaneOf(observed), lift, sample, deadline, confirm);
   return { lane, action: "started" };
 }
 
@@ -355,10 +350,32 @@ export async function up(
   only: string | undefined,
   deadline?: number,
   offset = 0,
+  discovered?: Discovery,
 ): Promise<SweepResult> {
-  const { homes: lanes, unread } = named(root, only);
+  const { homes: lanes, unread } = named(root, only, discovered);
+  const confirm =
+    discovered === undefined
+      ? noClaimCheck
+      : (info: LaneHome, sample: Lifecycle): void => {
+          confirmClaim(root, info);
+          discovered.confirm?.(info);
+          confirmLifecycle(info, sample);
+        };
   const expected = [...lanes, ...unread].map(({ lane }) => lane);
   const unreadFailed = unreadFailure(unread);
+  const evidence: { lane: string; seen: Listed }[] = [];
+  const appeared = async (): Promise<string> => {
+    if (discovered === undefined) return "";
+    const rosters = await racedRosters(evidence, deadline);
+    const { changed, added, failed } = laneClaimsRaced(root, lanes, unread);
+    const gone = [...changed].map(([lane, message]) => ({ lane, message }));
+    const moved = [...rosters].map(([lane, message]) => ({ lane, message }));
+    const raced = [...gone, ...moved, ...added].filter(
+      (each) => only === undefined || each.lane === only,
+    );
+    const lost = failed ? "lane discovery could not be read again after the sweep" : "";
+    return [unreadFailure(raced), lost].filter(Boolean).join("\n");
+  };
   const first = offset % Math.max(1, lanes.length);
   const outcomes: Outcome[] = [];
   for (const info of [...lanes.slice(first), ...lanes.slice(0, first)]) {
@@ -367,7 +384,7 @@ export async function up(
         await withLifecycleLock(
           info.home,
           info.lane,
-          () => upOne(root, info, only, deadline),
+          () => upOne(root, info, only, deadline, confirm, evidence),
           deadline,
         ),
       );
@@ -379,12 +396,13 @@ export async function up(
         return {
           expected,
           outcomes,
-          failed: [messageOf(error), unreadFailed].filter(Boolean).join("\n"),
+          failed: [messageOf(error), unreadFailed, await appeared()].filter(Boolean).join("\n"),
         };
       outcomes.push({ lane: info.lane, action: "unread" });
     }
   }
-  return { expected, outcomes, ...(unreadFailed === "" ? {} : { failed: unreadFailed }) };
+  const failed = [unreadFailed, await appeared()].filter(Boolean).join("\n");
+  return { expected, outcomes, ...(failed === "" ? {} : { failed }) };
 }
 
 const messageOf = (error: unknown): string =>
@@ -423,7 +441,7 @@ async function restartOne(root: string, info: LaneHome, all: boolean): Promise<O
     throw new HostUnread(
       `${info.lane} still has a running mate in workspace ${observed.workspace} after restart closed its own`,
     );
-  await start(root, info, idlePaneOf(observed), true);
+  await start(root, info, idlePaneOf(observed), true, sampleLifecycle(info.home));
   return { lane: info.lane, action: "started" };
 }
 

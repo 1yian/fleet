@@ -5,6 +5,7 @@ import { arrangeHere } from "./arrange.ts";
 import { homeTransport } from "./home-transport.ts";
 import {
   codeRoot,
+  discoverLanes,
   existingHome,
   homeOf,
   laneHomes,
@@ -29,7 +30,7 @@ import {
 import { scratchLines } from "./scratch-command.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 import { convergeSharedPreferences, PRESERVED_PREFIX } from "./standing.ts";
-import { hostProblems } from "./prerequisites.ts";
+import { eligibleLanes, hostProblems, newSnapshot, type SweepSnapshot } from "./prerequisites.ts";
 import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 
@@ -246,12 +247,12 @@ function lane(): string {
 const maintenance = command === "up" && values.maintenance === true;
 const maintenanceDeadline = maintenance ? performance.now() + MAINTENANCE_SWEEP_MS : undefined;
 
-function checkLaunchPrerequisites(root: string): void {
+function checkLaunchPrerequisites(root: string, snapshot?: SweepSnapshot): void {
   if (values.host !== undefined) {
     console.error(USAGE);
     process.exit(2);
   }
-  const problems = hostProblems(root, values.maintenance !== true, maintenanceDeadline);
+  const problems = hostProblems(root, values.maintenance !== true, maintenanceDeadline, snapshot);
   if (problems.length > 0) {
     if (typedMaintenance) throw new Error(problems.join("\n"));
     console.error(problems.join("\n"));
@@ -259,14 +260,28 @@ function checkLaunchPrerequisites(root: string): void {
   }
 }
 
+const writeReply = (text: string): Promise<void> =>
+  new Promise((resolve) => {
+    process.stdout.write(`${text}\n`, () => {
+      resolve();
+    });
+  });
+
 async function showTypedMaintenance(): Promise<void> {
+  const retained: string[] = [];
+  const withRetained = (failed: string | undefined): { failed?: string } => {
+    const all = [...(failed === undefined ? [] : [failed]), ...retained].join("\n");
+    return all === "" ? {} : { failed: all };
+  };
   try {
     const root = codeRoot(maintenanceDeadline);
-    checkLaunchPrerequisites(root);
-    console.log(JSON.stringify(await up(root, rest[0], maintenanceDeadline, offset)));
+    const snapshot = newSnapshot(retained, discoverLanes(root));
+    checkLaunchPrerequisites(root, snapshot);
+    const result = await up(root, rest[0], maintenanceDeadline, offset, eligibleLanes(snapshot));
+    await writeReply(JSON.stringify({ ...result, ...withRetained(result.failed) }));
   } catch (error) {
     const failed = error instanceof Error ? error.message : String(error);
-    console.log(JSON.stringify({ failed, expected: [], outcomes: [] }));
+    await writeReply(JSON.stringify({ ...withRetained(failed), expected: [], outcomes: [] }));
   }
 }
 

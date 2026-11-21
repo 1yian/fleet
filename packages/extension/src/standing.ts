@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { discoverLanes, unreadFailure } from "./homes.ts";
+import { isAbsent, readRegular } from "./lane-config.ts";
 
 type Tier = "pinned" | "aging" | "perishable";
 type Standing = "captain.md" | "captain-shared.md" | "learnings.md";
@@ -36,14 +37,14 @@ export const PRESERVED_PREFIX = "fleet-preserved: ";
 
 function readStrict(path: string): string | undefined {
   try {
-    return readFileSync(path, "utf8");
+    return readRegular(path);
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    if (isAbsent(path, error)) return undefined;
     throw error;
   }
 }
 
-export const readShared = (home: string): string | undefined => readIfPresent(pathOf(home, SHARED));
+export const readShared = (home: string): string | undefined => readStrict(pathOf(home, SHARED));
 
 export function standingRules(home: string): string {
   const sections = STANDING.flatMap(({ file, heading }) => {

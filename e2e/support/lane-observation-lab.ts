@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach } from "node:test";
 import { Cardd } from "./cardd.ts";
 import { Harness } from "./harness.ts";
@@ -9,10 +10,71 @@ import { HerdrLab } from "./herdr.ts";
 import { isRecord, records, type JsonRecord } from "./json.ts";
 import { configureMain, mateArgs, Scratch } from "./scratch.ts";
 
+const NODE_BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
+
 const HERDR_SHIM = `#!/bin/sh
 case "$1 $2:$HERDR_FAULT" in
   'workspace list:failed') printf '%s' '{"result":{"workspaces":[]}}'; exit 1 ;;
   'workspace list:blank') exit 0 ;;
+  'workspace list:no-count')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      for (const row of reply.result.workspaces) delete row.pane_count;
+      console.log(JSON.stringify(reply));
+    '
+    exit $? ;;
+  'workspace list:no-legacy-count')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      for (const row of reply.result.workspaces)
+        if (row.label.startsWith("fleet-")) delete row.pane_count;
+      console.log(JSON.stringify(reply));
+    '
+    exit $? ;;
+  '--version :swap-config')
+    if [ ! -e "$FAULT_PANE.swapped" ]; then
+      : > "$FAULT_PANE.swapped"
+      cp "$FAULT_PANE.next" "$FAULT_PANE.swap" && mv "$FAULT_PANE.swap" "$FAULT_PANE"
+    fi ;;
+  'workspace list:swap-memory')
+    if [ ! -e "$FAULT_PANE.swapped" ]; then
+      : > "$FAULT_PANE.swapped"
+      cp "$FAULT_PANE.next" "$FAULT_PANE.swap" && mv "$FAULT_PANE.swap" "$FAULT_PANE"
+    fi ;;
+  'workspace list:swap-later')
+    printf 'x\\n' >> "$HERDR_FAULT_LOG.lists"
+    if [ "$(wc -l < "$HERDR_FAULT_LOG.lists")" -eq 6 ]; then
+      : > "$FAULT_PANE.swapped"
+      cp "$FAULT_PANE.next" "$FAULT_PANE.swap" && mv "$FAULT_PANE.swap" "$FAULT_PANE"
+    fi ;;
+  'workspace list:swap-final')
+    printf 'x\\n' >> "$HERDR_FAULT_LOG.lists"
+    if [ "$(wc -l < "$HERDR_FAULT_LOG.lists")" -eq 6 ]; then
+      : > "$FAULT_PANE.swapped"
+      cp "$FAULT_PANE.next" "$FAULT_PANE.swap" && mv "$FAULT_PANE.swap" "$FAULT_PANE"
+    fi ;;
+  'pane run:after-run')
+    "$REAL_HERDR" "$@" || exit $?
+    sh -c "$FAULT_PANE" >/dev/null || exit $?
+    exit 0 ;;
+  'workspace list:run-later')
+    printf 'x\\n' >> "$HERDR_FAULT_LOG.lists"
+    if [ "$(wc -l < "$HERDR_FAULT_LOG.lists")" -eq 6 ]; then
+      : > "$HERDR_FAULT_LOG.ran"
+      sh -c "$FAULT_PANE" >/dev/null || exit $?
+    fi ;;
+  'workspace list:fifo-input')
+    if [ ! -e "$FAULT_PANE.swapped" ]; then
+      : > "$FAULT_PANE.swapped"
+      rm -f "$FAULT_PANE" && mkfifo "$FAULT_PANE"
+    fi ;;
+  'workspace list:stop-lane')
+    if [ ! -e "$HERDR_FAULT_LOG.stopped" ]; then
+      : > "$HERDR_FAULT_LOG.stopped"
+      sh -c "$FAULT_PANE" >/dev/null || exit $?
+    fi ;;
   'workspace list:partial') printf '%s' '{"result":{"workspaces":[{"label":"2ndmate-ops"}]}}'; exit 0 ;;
   'workspace list:timeout') printf '%s' '{"result":{"workspaces":[]}}'; exec sleep 60 ;;
   'workspace list:omit-once')
@@ -53,9 +115,153 @@ case "$1 $2:$HERDR_FAULT" in
     if [ "\${4%:*}" = "$FAULT_PANE" ]; then
       "$REAL_HERDR" workspace close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
     fi ;;
-  'pane process-info:pi-in-split')
+  'pane process-info:pi-only')
     if [ "$4" = "$FAULT_PANE" ]; then
       printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
+  'pane process-info:pi-alone-same-group')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1,"foreground_processes":[{"pid":2,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
+  'pane process-info:pi-and-child-same-group')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1,"foreground_processes":[{"pid":2,"name":"pi","argv":["pi"]},{"pid":3,"name":"sleep","argv":["sleep","60"]}]}}}'
+      exit 0
+    fi ;;
+  'pane process-info:shared-group-child')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1,"foreground_processes":[{"pid":2,"name":"sleep","argv":["sleep","60"]}]}}}'
+      exit 0
+    fi ;;
+  'pane process-info:pi-then-busy')
+    if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.pi" ]; then
+      : > "$HERDR_FAULT_LOG.pi"
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":2,"foreground_processes":[{"pid":2,"name":"sleep","argv":["sleep","60"]}]}}}'
+      exit 0
+    fi ;;
+  'pane process-info:pi-stays-split-at-second-info')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf 'x\\n' >> "$HERDR_FAULT_LOG.calls"
+      if [ "$(wc -l < "$HERDR_FAULT_LOG.calls")" -eq 2 ]; then
+        "$REAL_HERDR" pane split "$4" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
+      fi
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
+  'pane run:split-after-create'|'workspace close:split-after-create')
+    printf '%s %s\\n' "$1" "$2" >> "$HERDR_FAULT_LOG.mutations"
+    ;;
+  'workspace create:split-after-create')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    pane=$(printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      console.log(reply.result.root_pane.pane_id);
+    ')
+    "$REAL_HERDR" pane split "$pane" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
+    printf '%s' "$reply"
+    exit 0 ;;
+  'pane process-info:pi-stays-split-at-info')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      if [ ! -e "$HERDR_FAULT_LOG.split" ]; then
+        : > "$HERDR_FAULT_LOG.split"
+        "$REAL_HERDR" pane split "$4" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
+      fi
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
+  'pane process-info:split-at-info'|'pane process-info:pi-split-at-info')
+    if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.split" ]; then
+      : > "$HERDR_FAULT_LOG.split"
+      "$REAL_HERDR" pane split "$4" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
+      if [ "$HERDR_FAULT" = 'pi-split-at-info' ]; then
+        printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+        exit 0
+      fi
+    fi ;;
+  'pane process-info:pi-then-shell')
+    if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.pi" ]; then
+      : > "$HERDR_FAULT_LOG.pi"
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
+  'pane process-info:split-utility-flip')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
+  'pane process-info:cwd-drop-final'|'pane process-info:cwd-relative-final'|'pane process-info:cwd-nul-final')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
+      exit 0
+    fi ;;
+  'pane list:cwd-drop-final'|'pane list:cwd-relative-final'|'pane list:cwd-nul-final')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    printf 'x\\n' >> "$HERDR_FAULT_LOG.lists"
+    if [ "$(wc -l < "$HERDR_FAULT_LOG.lists")" -lt 3 ]; then
+      printf '%s' "$reply"
+      exit 0
+    fi
+    printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      const fault = process.env.HERDR_FAULT;
+      for (const row of reply.result.panes) {
+        if (row.pane_id !== process.env.FAULT_PANE) continue;
+        if (fault === "cwd-relative-final") row.cwd = "tmp";
+        else if (fault === "cwd-nul-final") row.cwd = "/tmp\\u0000x";
+        else delete row.cwd;
+      }
+      console.log(JSON.stringify(reply));
+    '
+    exit $? ;;
+  'pane list:rename-final')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    printf 'x\\n' >> "$HERDR_FAULT_LOG.panes"
+    if [ "$(wc -l < "$HERDR_FAULT_LOG.panes")" -eq 3 ]; then
+      "$REAL_HERDR" workspace rename "$4" fleet-utility --session "$HERDR_SESSION" >/dev/null || exit $?
+    fi
+    printf '%s' "$reply"
+    exit 0 ;;
+  'pane list:replace-between')
+    printf 'x\\n' >> "$HERDR_FAULT_LOG.panes"
+    if [ "$(wc -l < "$HERDR_FAULT_LOG.panes")" -eq 2 ]; then
+      "$REAL_HERDR" pane split "$FAULT_PANE" --direction right --no-focus --session "$HERDR_SESSION" >/dev/null || exit $?
+      "$REAL_HERDR" pane close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
+    fi ;;
+  'pane list:split-utility-flip')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    if [ ! -e "$HERDR_FAULT_LOG.utility" ]; then
+      : > "$HERDR_FAULT_LOG.utility"
+      printf '%s' "$reply"
+      exit 0
+    fi
+    printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      for (const row of reply.result.panes) if (row.pane_id !== process.env.FAULT_PANE) row.cwd = "/tmp";
+      console.log(JSON.stringify(reply));
+    '
+    exit $? ;;
+  'pane list:cwd-flip')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    if [ ! -e "$HERDR_FAULT_LOG.listed" ]; then
+      : > "$HERDR_FAULT_LOG.listed"
+      printf '%s' "$reply"
+      exit 0
+    fi
+    printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      for (const row of reply.result.panes) if (row.pane_id === process.env.FAULT_PANE) delete row.cwd;
+      console.log(JSON.stringify(reply));
+    '
+    exit $? ;;
+  'pane process-info:pi-in-split')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'
       exit 0
     fi ;;
   'pane process-info:empty-busy')
@@ -136,7 +342,7 @@ beforeEach(async () => {
   writeFileSync(join(bin, "herdr"), HERDR_SHIM, { mode: 0o755 });
   lab = await HerdrLab.start({
     ...h.piEnv("mate"),
-    PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+    PATH: `${bin}:${NODE_BIN}:${process.env["PATH"] ?? ""}`,
     REAL_HERDR: real,
     HERDR_FAULT: "hanging-panes",
     HERDR_FAULT_LOG: faultLog(),
@@ -160,22 +366,26 @@ function addLane(lane: string): string {
 
 const faultLog = () => join(bin, "observations");
 
+function fleetEnv(fault = "", pane = "", probeTimeout = "1000"): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...lab.env,
+    HERDR_SESSION: lab.name,
+    REAL_HERDR: real,
+    HERDR_FAULT: fault,
+    HERDR_FAULT_LOG: faultLog(),
+    FAULT_PANE: pane,
+    FLEET_PROBE_TIMEOUT_MS: probeTimeout,
+    FLEET_LIFECYCLE_WAIT_MS: "100",
+    PATH: `${bin}:${NODE_BIN}:${process.env["PATH"] ?? ""}`,
+  };
+}
+
 function fleet(args: readonly string[], fault = "", pane = "", probeTimeout = "1000"): string {
   return execFileSync(process.execPath, [here.launch, ...args], {
     encoding: "utf8",
     timeout: 90_000,
-    env: {
-      ...process.env,
-      ...lab.env,
-      HERDR_SESSION: lab.name,
-      REAL_HERDR: real,
-      HERDR_FAULT: fault,
-      HERDR_FAULT_LOG: faultLog(),
-      FAULT_PANE: pane,
-      FLEET_PROBE_TIMEOUT_MS: probeTimeout,
-      FLEET_LIFECYCLE_WAIT_MS: "100",
-      PATH: `${bin}:${process.env["PATH"] ?? ""}`,
-    },
+    env: fleetEnv(fault, pane, probeTimeout),
   });
 }
 
@@ -201,6 +411,15 @@ async function workspace(lane: string): Promise<JsonRecord | undefined> {
   return records((await lab.run(["workspace", "list"]))["workspaces"]).find(
     (row) => row["label"] === `2ndmate-${lane}`,
   );
+}
+
+async function untilRunning(lane: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const rows: unknown = JSON.parse(fleet(["status", "--json"]));
+    if (records(rows).some((row) => row["lane"] === lane && row["state"] === "running")) return;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  assert.fail(`${lane} never became running`);
 }
 
 const action = (lane: string, value: string) => [{ lane, action: value }];
@@ -229,11 +448,13 @@ export {
   addLane,
   faultLog,
   fleet,
+  fleetEnv,
   legacyMaintenance,
   typedMaintenance,
   maintenanceOutcomes,
   maintain,
   workspace,
+  untilRunning,
   action,
   idlePane,
 };

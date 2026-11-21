@@ -26,7 +26,140 @@ import {
   workspace,
   action,
   idlePane,
+  untilRunning,
 } from "../support/lane-observation-lab.ts";
+
+test("a stop marker that lands while a running mate is being sampled is neither cleared nor reported as a definite outcome", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  const marker = join(home, "state", "stopped");
+  const land = `printf 'stopped by hand\\n' > ${marker}`;
+  const reply: unknown = JSON.parse(fleet(typedMaintenance, "stop-lane", land));
+  assert.ok(existsSync(`${faultLog()}.stopped`));
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["outcomes"], action("ops", "unread"));
+  assert.equal(readFileSync(marker, "utf8"), "stopped by hand\n");
+  assert.ok((await workspace("ops")) !== undefined);
+});
+
+test("a lane claim that changes while a running mate is being sampled leaves the lane unread with its hold intact", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  const marker = join(home, "state", "stopped");
+  writeFileSync(marker, "stopped by hand\n");
+  const config = join(home, "config", "lane.json");
+  const raw: unknown = JSON.parse(readFileSync(config, "utf8"));
+  assert.ok(isRecord(raw));
+  writeFileSync(`${config}.next`, JSON.stringify({ ...raw, args: ["--changed-while-sampling"] }));
+  const reply: unknown = JSON.parse(fleet(typedMaintenance, "swap-memory", config));
+  assert.ok(existsSync(`${config}.swapped`));
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["outcomes"], action("ops", "unread"));
+  assert.equal(readFileSync(marker, "utf8"), "stopped by hand\n");
+  assert.ok((await workspace("ops")) !== undefined);
+});
+
+test("a lane config truncated while status or placement reads Herdr is never published as a definite result", async () => {
+  const home = `${here.root}.worktrees/lane-ops`;
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  const config = join(home, "config", "lane.json");
+  const good = readFileSync(config, "utf8");
+  const truncate = () => {
+    rmSync(`${config}.swapped`, { force: true });
+    writeFileSync(`${config}.next`, "{");
+  };
+  truncate();
+  const rows: unknown = JSON.parse(fleet(["status", "--json"], "swap-memory", config));
+  assert.ok(existsSync(`${config}.swapped`));
+  assert.equal(records(rows)[0]?.["state"], "unknown");
+  assert.match(String(records(rows)[0]?.["reason"]), /claim changed or became ambiguous/);
+  writeFileSync(config, good);
+  truncate();
+  assert.throws(
+    () => fleet(["status", "--placement", "--json"], "swap-memory", config),
+    /claim changed or became ambiguous/,
+  );
+  assert.ok(existsSync(`${config}.swapped`));
+  writeFileSync(config, good);
+  assert.deepEqual(JSON.parse(fleet(["status", "--placement", "--json"])), [
+    { lane: "ops", mate: true },
+  ]);
+});
+
+test("an earlier lane's claim that changes while a later lane is read is unknown in status and refuses placement", () => {
+  addLane("zz");
+  const home = `${here.root}.worktrees/lane-ops`;
+  const config = join(home, "config", "lane.json");
+  const good = readFileSync(config, "utf8");
+  const race = () => {
+    rmSync(`${config}.swapped`, { force: true });
+    rmSync(`${faultLog()}.lists`, { force: true });
+    writeFileSync(config, good);
+    writeFileSync(`${config}.next`, "{");
+  };
+  race();
+  const rows = records(JSON.parse(fleet(["status", "--json"], "swap-later", config)));
+  assert.ok(existsSync(`${config}.swapped`));
+  assert.equal(rows.find((row) => row["lane"] === "ops")?.["state"], "unknown");
+  assert.match(String(rows.find((row) => row["lane"] === "ops")?.["reason"]), /claim changed/);
+  assert.equal(rows.find((row) => row["lane"] === "zz")?.["state"], "down");
+  race();
+  assert.throws(
+    () => fleet(["status", "--placement", "--json"], "swap-later", config),
+    /ops claim changed or became ambiguous/,
+  );
+  assert.ok(existsSync(`${config}.swapped`));
+});
+
+test("a stop that lands while a later lane is read makes only the stopped lane unknown", async () => {
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  addLane("zz");
+  const stop = `${process.execPath} ${here.launch} stop ops`;
+  const rows = records(JSON.parse(fleet(["status", "--json"], "run-later", stop)));
+  assert.ok(existsSync(`${faultLog()}.ran`));
+  assert.equal(rows.find((row) => row["lane"] === "ops")?.["state"], "unknown");
+  assert.match(String(rows.find((row) => row["lane"] === "ops")?.["reason"]), /lifecycle state/);
+  assert.equal(rows.find((row) => row["lane"] === "zz")?.["state"], "down");
+  assert.deepEqual(JSON.parse(fleet(["status", "--placement", "--json"])), [
+    { lane: "ops", mate: false },
+    { lane: "zz", mate: false },
+  ]);
+});
+
+test("a stop that lands while a later lane is read refuses placement", async () => {
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  addLane("zz");
+  const stop = `${process.execPath} ${here.launch} stop ops`;
+  assert.throws(
+    () => fleet(["status", "--placement", "--json"], "run-later", stop),
+    /ops (lifecycle state changed after it was checked|workspace changed while it was being read)/,
+  );
+  assert.ok(existsSync(`${faultLog()}.ran`));
+});
+
+test("lanes that appear while status reads are reported once as unknown beside definite siblings", () => {
+  const zz = addLane("zz");
+  const worktrees = `${here.root}.worktrees`;
+  const make = [
+    `mkdir -p ${worktrees}/lane-yy/config ${worktrees}/lane-xx/config`,
+    `printf '{' > ${worktrees}/lane-yy/config/lane.json`,
+    `sed 's/"zz"/"xx"/' ${zz}/config/lane.json > ${worktrees}/lane-xx/config/lane.json`,
+  ].join(" && ");
+  const rows = records(JSON.parse(fleet(["status", "--json"], "run-later", make)));
+  assert.ok(existsSync(`${faultLog()}.ran`));
+  assert.equal(rows.find((row) => row["lane"] === "ops")?.["state"], "down");
+  assert.equal(rows.find((row) => row["lane"] === "zz")?.["state"], "down");
+  for (const lane of ["yy", "xx"]) {
+    assert.equal(rows.filter((row) => row["lane"] === lane).length, 1, lane);
+    assert.equal(rows.find((row) => row["lane"] === lane)?.["state"], "unknown", lane);
+  }
+  assert.throws(() => fleet(["status", "--placement", "--json"]), /lane yy could not be read/);
+});
 
 test("an unreadable lane config is reported safely while healthy lanes still converge and start", async () => {
   addLane("zz");

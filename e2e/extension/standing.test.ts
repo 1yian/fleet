@@ -163,7 +163,8 @@ async function reloaded(home: string): Promise<void> {
 const readOnly = (file: string): boolean => (statSync(file).mode & 0o222) === 0;
 
 type Move =
-  { readonly text: string } | { readonly tool: string; readonly args: Record<string, string> };
+  | { readonly text: string }
+  | { readonly tool: string; readonly args: Record<string, string> };
 
 function stowScript(plan: (system: string) => Move[]): void {
   for (let call = 0; call < 80; call += 1)

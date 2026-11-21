@@ -155,6 +155,43 @@ test("main tells the captain when a host cannot be reached, and when it is back"
   assert.match(users(next), /\[fleet\] lanes: p620 can be reached again/);
 });
 
+test("an unreadable main preference file never removes a healthy sibling's published copy while another lane is unreadable", async () => {
+  const worktrees = `${p620.root}.worktrees`;
+  p620.addLane("near", {
+    url: cardd.url,
+    token: cardd.addLane("near", "main"),
+    args: mateArgs(h),
+  });
+  const copy = join(worktrees, "lane-near", "data", "captain-shared.md");
+  const baseline = join(worktrees, "lane-near", "state", "captain-shared.published");
+  mkdirSync(join(worktrees, "lane-near", "state"), { recursive: true });
+  writeFileSync(copy, "- published\n");
+  writeFileSync(baseline, "- published\n");
+  writeFileSync(join(worktrees, "lane-far", "config", "lane.json"), "");
+  const source = join(here.root, "data", "captain-shared.md");
+  rmSync(source, { force: true });
+  mkdirSync(source, { recursive: true });
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  const heard = (): string => {
+    try {
+      return sessionText();
+    } catch {
+      return "";
+    }
+  };
+  await until(
+    () => (heard().includes("shared preferences did not reach p620") ? true : undefined),
+    "main to report that the shared preferences were not published",
+  );
+  await until(
+    () => (heard().includes("near started on p620") ? true : undefined),
+    "the healthy sibling to start",
+  );
+  assert.equal(readFileSync(copy, "utf8"), "- published\n");
+  assert.equal(readFileSync(baseline, "utf8"), "- published\n");
+});
+
 for (const fault of ["malformed", "unreadable"]) {
   test(`an ${fault === "malformed" ? "invalid" : fault} lane config prevents maintenance recovery until repaired`, async () => {
     const config = join(`${p620.root}.worktrees`, "lane-far", "config", "lane.json");

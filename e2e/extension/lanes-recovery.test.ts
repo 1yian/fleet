@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { toolResults } from "../support/dispatch-lab.ts";
@@ -76,6 +76,44 @@ test("unread transport and nested observations neither report failure nor clear 
   assert.ok(notices.indexOf(failure) < notices.indexOf(recovery));
   assert.doesNotMatch(notices, /obsolete envelope|unconfirmed|p620 could not be read/);
   await waitState(p620, "far", "running");
+});
+
+test("a host with a dangling lane config directory starts healthy lanes but does not report recovery", async () => {
+  const spare = p620.addLane("spare", {
+    url: cardd.url,
+    token: cardd.addLane("spare", "main"),
+    hold: true,
+  });
+  const config = join(spare, "config");
+  const saved = join(p620.parent, "spare-config");
+  const target = join(p620.parent, "mounted-config");
+  renameSync(config, saved);
+  symlinkSync(target, config);
+  writeFileSync(marker, "down");
+
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  await until(() => {
+    if (!existsSync(join(h.dir, "sessions"))) return undefined;
+    return sessionText().includes("p620 cannot be reached") ? true : undefined;
+  }, "the host outage to be reported");
+  rmSync(marker);
+  const recovery = "p620 can be reached again";
+  await until(() => {
+    const notices = sessionText();
+    assert.doesNotMatch(notices, /p620 can be reached again/);
+    return notices.includes("far started on p620") &&
+      notices.includes("p620 failed: lane spare could not be read")
+      ? true
+      : undefined;
+  }, "the healthy sibling start and the unread lane to be reported together");
+
+  renameSync(saved, target);
+  await until(
+    () => (sessionText().includes(recovery) ? true : undefined),
+    "the host to recover once the config directory is readable",
+  );
+  await waitState(p620, "spare", "stopped");
 });
 
 test("a capability probe that ignores SIGTERM is stopped without running a sweep", async () => {
