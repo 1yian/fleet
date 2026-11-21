@@ -34,7 +34,13 @@ import {
   stoppedFile,
   type Lifecycle,
 } from "./lane-lifecycle.ts";
-import { idlePaneOf, lanePaneState, workspaceOf } from "./lane-observation.ts";
+import {
+  idlePaneOf,
+  lanePaneState,
+  racedRosters,
+  workspaceOf,
+  type Listed,
+} from "./lane-observation.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
 import {
   isRecord,
@@ -306,6 +312,7 @@ async function upOne(
   only: string | undefined,
   deadline: number | undefined,
   confirm: (info: LaneHome, sample: Lifecycle) => void,
+  evidence: { lane: string; seen: Listed }[],
 ): Promise<Outcome> {
   const { lane, home } = info;
   const observationDeadline =
@@ -314,20 +321,25 @@ async function upOne(
       : Math.min(deadline, performance.now() + LANE_OBSERVATION_MS);
   const sample = sampleLifecycle(home);
   confirm(info, sample);
-  const observed = await workspaceOf(info, "liveness", observationDeadline);
+  const roster: { roster?: Listed } = {};
+  const observed = await workspaceOf(info, "liveness", observationDeadline, roster);
   confirm(info, sample);
+  const settled = (outcome: Outcome): Outcome => {
+    if (roster.roster !== undefined) evidence.push({ lane, seen: roster.roster });
+    return outcome;
+  };
   const reason = heldReasonOf(sample[0]);
   const history = recentStartsOf(sample[1], Date.now());
   if (observed?.state === "running") {
     if (reason !== undefined) liftHold(home);
-    return { lane, action: "running" };
+    return settled({ lane, action: "running" });
   }
   const lift = only !== undefined && reason !== undefined;
-  if (reason !== undefined && !lift) return { lane, action: "stopped", detail: reason };
+  if (reason !== undefined && !lift) return settled({ lane, action: "stopped", detail: reason });
   if (!lift && history.length >= STARTS_BEFORE_HOLD) {
     const detail = `started ${String(STARTS_BEFORE_HOLD)} times in ${String(CRASH_WINDOW_MS / 60_000)} minutes`;
     writeFileSync(stoppedFile(home), `crash loop: ${detail}\n`);
-    return { lane, action: "held", detail };
+    return settled({ lane, action: "held", detail });
   }
   await start(root, info, idlePaneOf(observed), lift, sample, deadline, confirm);
   return { lane, action: "started" };
@@ -351,11 +363,16 @@ export async function up(
         };
   const expected = [...lanes, ...unread].map(({ lane }) => lane);
   const unreadFailed = unreadFailure(unread);
-  const appeared = (): string => {
+  const evidence: { lane: string; seen: Listed }[] = [];
+  const appeared = async (): Promise<string> => {
     if (discovered === undefined) return "";
+    const rosters = await racedRosters(evidence, deadline);
     const { changed, added, failed } = laneClaimsRaced(root, lanes, unread);
     const gone = [...changed].map(([lane, message]) => ({ lane, message }));
-    const raced = [...gone, ...added].filter((each) => only === undefined || each.lane === only);
+    const moved = [...rosters].map(([lane, message]) => ({ lane, message }));
+    const raced = [...gone, ...moved, ...added].filter(
+      (each) => only === undefined || each.lane === only,
+    );
     const lost = failed ? "lane discovery could not be read again after the sweep" : "";
     return [unreadFailure(raced), lost].filter(Boolean).join("\n");
   };
@@ -367,7 +384,7 @@ export async function up(
         await withLifecycleLock(
           info.home,
           info.lane,
-          () => upOne(root, info, only, deadline, confirm),
+          () => upOne(root, info, only, deadline, confirm, evidence),
           deadline,
         ),
       );
@@ -379,12 +396,12 @@ export async function up(
         return {
           expected,
           outcomes,
-          failed: [messageOf(error), unreadFailed, appeared()].filter(Boolean).join("\n"),
+          failed: [messageOf(error), unreadFailed, await appeared()].filter(Boolean).join("\n"),
         };
       outcomes.push({ lane: info.lane, action: "unread" });
     }
   }
-  const failed = [unreadFailed, appeared()].filter(Boolean).join("\n");
+  const failed = [unreadFailed, await appeared()].filter(Boolean).join("\n");
   return { expected, outcomes, ...(failed === "" ? {} : { failed }) };
 }
 

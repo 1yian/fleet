@@ -195,3 +195,21 @@ test("a confirmed start followed by a failed final discovery blocks recovery", (
     chmodSync(worktrees, 0o700);
   }
 });
+
+test("a confirmed lane whose workspace closes while a later lane is read blocks recovery but keeps both outcomes", async () => {
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  const id = (await workspace("ops"))?.["workspace_id"];
+  assert.ok(typeof id === "string");
+  addLane("zz");
+  const close = `"$REAL_HERDR" workspace close ${id} --session "$HERDR_SESSION"`;
+  const reply: unknown = JSON.parse(fleet(typedMaintenance, "run-later", close));
+  assert.ok(existsSync(`${faultLog()}.ran`));
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["expected"], ["ops", "zz"]);
+  assert.deepEqual(reply["outcomes"], [
+    { lane: "ops", action: "running" },
+    { lane: "zz", action: "started" },
+  ]);
+  assert.match(String(reply["failed"]), /lane ops could not be read: ops workspace changed/);
+});

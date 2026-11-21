@@ -244,12 +244,13 @@ const listWorkspaces = (deadline?: number) =>
 
 export async function racedRosters(
   entries: readonly { lane: string; seen: Listed }[],
+  deadline?: number,
 ): Promise<Map<string, string>> {
   const raced = new Map<string, string>();
   if (entries.length === 0) return raced;
   let rows: Rows;
   try {
-    rows = await listWorkspaces();
+    rows = await listWorkspaces(deadline);
   } catch (error) {
     if (!(error instanceof HostUnread)) throw error;
     for (const { lane } of entries) raced.set(lane, error.message);
