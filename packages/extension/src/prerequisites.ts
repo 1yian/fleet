@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { HostUnread } from "./host.ts";
 import { ghLogin, type GhRun } from "./gh-login.ts";
 import { discoverLanes, type Discovery } from "./lane-homes.ts";
-import { isAbsent, isRecord, readLaneConfig, readRegular } from "./lane-config.ts";
+import { isAbsent, isRecord, readLaneConfig, readRegular, verifyRegular } from "./lane-config.ts";
 import { remainingMs } from "./maintenance-budget.ts";
 
 interface Tool {
@@ -220,13 +220,24 @@ function strictSettings(home: string): {
   return { settings: found, text };
 }
 
+function regularInputPresent(path: string): boolean {
+  try {
+    verifyRegular(path);
+    return true;
+  } catch (error) {
+    if (isAbsent(path, error)) return false;
+    throw error;
+  }
+}
+
 function missingProfileFiles(
   home: string,
   settings: Record<string, unknown> | undefined,
+  present: (path: string) => boolean,
 ): string[] {
   if (settings === undefined || settings["enabled"] === false) return [];
   const profile = profileOf(home, settings);
-  return PROFILE_FILES.filter((file) => !existsSync(join(profile, file)));
+  return PROFILE_FILES.filter((file) => !present(join(profile, file)));
 }
 
 const fingerprintOf = (text: string | undefined, missing: readonly string[]): string =>
@@ -236,7 +247,7 @@ function confirmMemory(snapshot: SweepSnapshot, info: { lane: string; home: stri
   let now: string;
   try {
     const { settings, text } = strictSettings(info.home);
-    now = fingerprintOf(text, missingProfileFiles(info.home, settings));
+    now = fingerprintOf(text, missingProfileFiles(info.home, settings, regularInputPresent));
   } catch {
     throw new HostUnread(
       `${info.lane} optchat settings could not be read again after they were checked`,
@@ -254,9 +265,15 @@ function memoryProblem(
 ): string[] {
   let settings: Record<string, unknown> | undefined;
   let text: string | undefined;
+  let missing: string[];
   try {
-    if (snapshot === undefined) settings = settingsOf(home.home);
-    else ({ settings, text } = strictSettings(home.home));
+    if (snapshot === undefined) {
+      settings = settingsOf(home.home);
+      missing = missingProfileFiles(home.home, settings, existsSync);
+    } else {
+      ({ settings, text } = strictSettings(home.home));
+      missing = missingProfileFiles(home.home, settings, regularInputPresent);
+    }
   } catch (error) {
     if (snapshot === undefined) throw error;
     const why = error instanceof Error ? error.message : String(error);
@@ -265,7 +282,6 @@ function memoryProblem(
     else snapshot.unreadable.set(home.lane, `optchat settings could not be read: ${why}`);
     return [];
   }
-  const missing = missingProfileFiles(home.home, settings);
   snapshot?.memory.set(home.lane, fingerprintOf(text, missing));
   if (settings === undefined || missing.length === 0) return [];
   const profile = profileOf(home.home, settings);

@@ -205,6 +205,16 @@ export function readRegular(file: string): string {
   }
 }
 
+export function verifyRegular(file: string): void {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    if (!fstatSync(fd).isFile())
+      throw Object.assign(new Error(`${file} is not a regular file`), { code: "ENOTREGULAR" });
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function readLaneConfig(home: string): LaneConfig | undefined {
   const file = join(home, LANE_FILE);
   let text: string;

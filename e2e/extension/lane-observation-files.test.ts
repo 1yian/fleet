@@ -377,6 +377,50 @@ test("optchat settings that change after preflight leave only that lane unread w
   assert.equal(typeof (await workspace("ops"))?.["workspace_id"], "string");
 });
 
+test("a profile input that stops being a regular file leaves only that lane unread without blocking", async () => {
+  const fix = addLane("fix");
+  const profile = join(fix, "data", "optchat", "profiles");
+  mkdirSync(profile, { recursive: true });
+  writeFileSync(join(profile, "AGENTS.md"), "profile\n");
+  const input = join(profile, "config.json");
+  writeFileSync(input, "{}\n");
+  writeFileSync(join(fix, "config", "optchat.json"), "{}");
+  const run = (fault?: string) => {
+    const out = execFileSync(process.execPath, [here.launch, ...typedMaintenance], {
+      encoding: "utf8",
+      env: fleetEnv(fault, fault === undefined ? "" : input),
+      timeout: 30_000,
+    });
+    const reply: unknown = JSON.parse(out);
+    assert.ok(isRecord(reply));
+    return reply;
+  };
+  const after = run("fifo-input");
+  assert.ok(existsSync(`${input}.swapped`));
+  assert.equal(after["failed"], undefined);
+  assert.deepEqual(
+    records(after["outcomes"]).map((row) => [row["lane"], row["action"]]),
+    [
+      ["fix", "unread"],
+      ["ops", "started"],
+    ],
+  );
+  assert.equal(await workspace("fix"), undefined);
+  assert.equal(existsSync(join(fix, "state", "starts")), false);
+  assert.equal(existsSync(join(fix, "state", "stopped")), false);
+  const before = run();
+  assert.deepEqual(before["expected"], ["ops", "fix"]);
+  assert.match(
+    String(before["failed"]),
+    /lane fix could not be read: optchat settings could not be read: .*not a regular file/,
+  );
+  assert.deepEqual(
+    records(before["outcomes"]).filter((row) => row["lane"] === "fix"),
+    [],
+  );
+  assert.equal(await workspace("fix"), undefined);
+});
+
 test("a malformed legacy row does not hide a valid current-title workspace", async () => {
   const home = lane();
   await idlePane("ops", home);
