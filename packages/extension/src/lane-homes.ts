@@ -105,6 +105,7 @@ function mergeSharedClaims(scanned: Scanned[]): Scanned[] {
 export interface Discovery {
   readonly homes: LaneHome[];
   readonly unread: UnreadLane[];
+  readonly confirm?: (home: LaneHome) => void;
 }
 
 export function discoverLanes(root: string): Discovery {

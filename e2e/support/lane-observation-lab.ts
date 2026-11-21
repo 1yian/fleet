@@ -35,6 +35,11 @@ case "$1 $2:$HERDR_FAULT" in
       : > "$FAULT_PANE.swapped"
       cp "$FAULT_PANE.next" "$FAULT_PANE.swap" && mv "$FAULT_PANE.swap" "$FAULT_PANE"
     fi ;;
+  'workspace list:swap-memory')
+    if [ ! -e "$FAULT_PANE.swapped" ]; then
+      : > "$FAULT_PANE.swapped"
+      cp "$FAULT_PANE.next" "$FAULT_PANE.swap" && mv "$FAULT_PANE.swap" "$FAULT_PANE"
+    fi ;;
   'workspace list:partial') printf '%s' '{"result":{"workspaces":[{"label":"2ndmate-ops"}]}}'; exit 0 ;;
   'workspace list:timeout') printf '%s' '{"result":{"workspaces":[]}}'; exec sleep 60 ;;
   'workspace list:omit-once')

@@ -348,6 +348,35 @@ test("truncated or non-object optchat settings are unread even when the default 
   assert.equal(typeof (await workspace("fix"))?.["workspace_id"], "string");
 });
 
+test("optchat settings that change after preflight leave only that lane unread while a sibling starts", async () => {
+  const fix = addLane("fix");
+  const profile = join(fix, "data", "optchat", "profiles");
+  mkdirSync(profile, { recursive: true });
+  writeFileSync(join(profile, "AGENTS.md"), "profile\n");
+  writeFileSync(join(profile, "config.json"), "{}\n");
+  const settings = join(fix, "config", "optchat.json");
+  const lanes = readFileSync(join(fix, "config", "lane.json"), "utf8");
+  writeFileSync(settings, "{}");
+  writeFileSync(`${settings}.next`, '{"secret-marker":');
+  const reply: unknown = JSON.parse(fleet(typedMaintenance, "swap-memory", settings));
+  assert.ok(existsSync(`${settings}.swapped`));
+  assert.equal(readFileSync(join(fix, "config", "lane.json"), "utf8"), lanes);
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["expected"], ["fix", "ops"]);
+  assert.equal(reply["failed"], undefined);
+  assert.deepEqual(
+    records(reply["outcomes"]).map((row) => [row["lane"], row["action"]]),
+    [
+      ["fix", "unread"],
+      ["ops", "started"],
+    ],
+  );
+  assert.equal(await workspace("fix"), undefined);
+  assert.equal(existsSync(join(fix, "state", "starts")), false);
+  assert.equal(existsSync(join(fix, "state", "stopped")), false);
+  assert.equal(typeof (await workspace("ops"))?.["workspace_id"], "string");
+});
+
 test("a malformed legacy row does not hide a valid current-title workspace", async () => {
   const home = lane();
   await idlePane("ops", home);

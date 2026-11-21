@@ -400,6 +400,7 @@ export async function up(
       ? noClaimCheck
       : (info: LaneHome): void => {
           confirmClaim(root, info);
+          discovered.confirm?.(info);
         };
   const expected = [...lanes, ...unread].map(({ lane }) => lane);
   const unreadFailed = unreadFailure(unread);
