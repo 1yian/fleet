@@ -133,3 +133,24 @@ export function laneHomes(root: string): LaneHome[] {
     return { lane: found.lane, home: found.home, config: found.config };
   });
 }
+
+export function laneClaimsRaced(
+  root: string,
+  captured: readonly LaneHome[],
+): { changed: Map<string, string>; roster: boolean } {
+  const changed = new Map<string, string>();
+  let now: Discovery;
+  try {
+    now = discoverLanes(root);
+  } catch {
+    for (const { lane } of captured)
+      changed.set(lane, `${lane} claim could not be read again after it was checked`);
+    return { changed, roster: true };
+  }
+  for (const info of captured) {
+    const same = now.homes.find((each) => each.lane === info.lane);
+    if (same?.home !== info.home || JSON.stringify(same.config) !== JSON.stringify(info.config))
+      changed.set(info.lane, `${info.lane} claim changed or became ambiguous after it was checked`);
+  }
+  return { changed, roster: now.homes.length + now.unread.length !== captured.length };
+}

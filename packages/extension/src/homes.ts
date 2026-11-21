@@ -18,6 +18,7 @@ import {
   discoverLanes,
   gitWithin,
   homeOf,
+  laneClaimsRaced,
   unreadFailure,
   type Discovery,
   type LaneHome,
@@ -152,7 +153,7 @@ function heldReason(home: string): string | undefined {
   return heldReasonOf(readState(stoppedFile(home), "state/stopped"));
 }
 
-async function statusOf(root: string, info: LaneHome): Promise<Status> {
+async function statusOf(info: LaneHome): Promise<Status> {
   const { lane, home } = info;
   try {
     const before = sampleLifecycle(home);
@@ -161,7 +162,6 @@ async function statusOf(root: string, info: LaneHome): Promise<Status> {
     const observed = await workspaceOf(info, "liveness");
     if (sampleLifecycle(home).some((text, at) => text !== before[at]))
       throw new HostUnread(`${lane} lifecycle state changed while its status was being read`);
-    confirmClaim(root, info);
     if (observed?.state === "running") return { lane, state: "running" };
     return reason === undefined ? { lane, state: "down" } : { lane, state: "stopped", reason };
   } catch (error) {
@@ -172,8 +172,13 @@ async function statusOf(root: string, info: LaneHome): Promise<Status> {
 
 export async function status(root: string): Promise<Status[]> {
   const { homes, unread } = discoverLanes(root);
-  const out: Status[] = [];
-  for (const info of homes) out.push(await statusOf(root, info));
+  const read: Status[] = [];
+  for (const info of homes) read.push(await statusOf(info));
+  const { changed } = laneClaimsRaced(root, homes);
+  const out = read.map((row) => {
+    const reason = changed.get(row.lane);
+    return reason === undefined ? row : { lane: row.lane, state: "unknown" as const, reason };
+  });
   for (const { lane, message } of unread) out.push({ lane, state: "unknown", reason: message });
   return out;
 }
@@ -186,13 +191,16 @@ export async function placementStatus(
   const out: { lane: string; mate: boolean; host?: string }[] = [];
   for (const info of homes) {
     const mate = (await workspaceOf(info, "placement")) !== undefined;
-    confirmClaim(root, info);
     out.push({
       lane: info.lane,
       mate,
       ...(info.config.host === undefined ? {} : { host: info.config.host }),
     });
   }
+  const { changed, roster } = laneClaimsRaced(root, homes);
+  const [first] = changed.values();
+  if (first !== undefined) throw new HostUnread(first);
+  if (roster) throw new HostUnread("the lane roster changed while placement was being read");
   return out;
 }
 
@@ -268,14 +276,8 @@ async function confirmTarget(
 const noClaimCheck = (): void => undefined;
 
 function confirmClaim(root: string, info: LaneHome): void {
-  let now: LaneHome | undefined;
-  try {
-    now = discoverLanes(root).homes.find((each) => each.lane === info.lane);
-  } catch {
-    throw new HostUnread(`${info.lane} claim could not be read again after it was checked`);
-  }
-  if (now?.home !== info.home || JSON.stringify(now.config) !== JSON.stringify(info.config))
-    throw new HostUnread(`${info.lane} claim changed or became ambiguous after it was checked`);
+  const reason = laneClaimsRaced(root, [info]).changed.get(info.lane);
+  if (reason !== undefined) throw new HostUnread(reason);
 }
 
 async function createConfirmedPane(

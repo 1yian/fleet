@@ -89,6 +89,31 @@ test("a lane config truncated while status or placement reads Herdr is never pub
   ]);
 });
 
+test("an earlier lane's claim that changes while a later lane is read is unknown in status and refuses placement", () => {
+  addLane("zz");
+  const home = `${here.root}.worktrees/lane-ops`;
+  const config = join(home, "config", "lane.json");
+  const good = readFileSync(config, "utf8");
+  const race = () => {
+    rmSync(`${config}.swapped`, { force: true });
+    rmSync(`${faultLog()}.lists`, { force: true });
+    writeFileSync(config, good);
+    writeFileSync(`${config}.next`, "{");
+  };
+  race();
+  const rows = records(JSON.parse(fleet(["status", "--json"], "swap-later", config)));
+  assert.ok(existsSync(`${config}.swapped`));
+  assert.equal(rows.find((row) => row["lane"] === "ops")?.["state"], "unknown");
+  assert.match(String(rows.find((row) => row["lane"] === "ops")?.["reason"]), /claim changed/);
+  assert.equal(rows.find((row) => row["lane"] === "zz")?.["state"], "down");
+  race();
+  assert.throws(
+    () => fleet(["status", "--placement", "--json"], "swap-later", config),
+    /ops claim changed or became ambiguous/,
+  );
+  assert.ok(existsSync(`${config}.swapped`));
+});
+
 test("an unreadable lane config is reported safely while healthy lanes still converge and start", async () => {
   addLane("zz");
   const ops = `${here.root}.worktrees/lane-ops`;
