@@ -16,6 +16,7 @@ import {
   workspace,
   action,
   idlePane,
+  untilRunning,
 } from "../support/lane-observation-lab.ts";
 
 test("root discovery fails in the typed reply but keeps the legacy nonzero exit", async () => {
@@ -171,6 +172,7 @@ test("home matching needs the mate's cwd, not the cwd of an unrelated split", as
   await lab.run(["workspace", "rename", id, "2ndmate-ops"]);
 
   assert.deepEqual(maintain("cwd", root), action("ops", "started"));
+  await untilRunning("ops");
   assert.deepEqual(JSON.parse(fleet(["status", "--json"], "cwd", root)), [
     { lane: "ops", state: "running" },
   ]);
