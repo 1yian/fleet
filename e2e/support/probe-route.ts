@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "./run-root.ts";
@@ -14,6 +16,13 @@ case "$mode" in
   missing) exit 127 ;;
 esac
 exec sh -c "$1"`;
+
+export async function exitedPid(): Promise<number> {
+  const child = spawn("true", { stdio: "ignore" });
+  await once(child, "exit");
+  if (child.pid === undefined) throw new Error("the stand-in wrapper did not start");
+  return child.pid;
+}
 
 export class ProbeRoute {
   private readonly mode: string;

@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
@@ -13,7 +11,7 @@ import {
   startFleet,
   type Fleet,
 } from "../support/fleet.ts";
-import { ProbeRoute } from "../support/probe-route.ts";
+import { exitedPid, ProbeRoute } from "../support/probe-route.ts";
 
 let fleet: Fleet;
 beforeEach(async () => {
@@ -25,13 +23,6 @@ afterEach(async () => {
 });
 
 let viewer: Session;
-
-async function exitedPid(): Promise<number> {
-  const child = spawn("true", { stdio: "ignore" });
-  await once(child, "exit");
-  if (child.pid === undefined) throw new Error("the stand-in wrapper did not start");
-  return child.pid;
-}
 
 const findings = async (card: Card): Promise<Entry[]> =>
   check(CardViewSchema, await viewer.call("card", { card: card.id })).entries.filter(
