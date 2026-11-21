@@ -395,7 +395,7 @@ for (const [name, diagnostic] of [
     "a comma then a tab inside a credential value",
     "Callback https://localhost/cb?password=pa,\tper failed",
   ],
-  ["a semicolon inside a credential value", "Callback https://localhost/cb?password=pa;per failed"],
+  ["a Markdown join in a value", "See https://localhost/cb?password=pa](per"],
   [
     "an encoded fragment parameter name",
     "Callback https://localhost/callback#pass%77ord=paper failed",

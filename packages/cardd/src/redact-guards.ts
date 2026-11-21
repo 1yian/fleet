@@ -168,7 +168,8 @@ function withoutBrowserWhitespace(found: Decoded): Decoded {
 }
 
 const VALUE_END = new RegExp(String.raw`[\s"'<>\u0060&#\u0001]`);
-const INNER_PUNCTUATION = /[,;][\s\S]/;
+const VALUE_CORE = /^[\w~%+/=.-]*$/;
+const VALUE_TAIL = /[.,;:!?]+$/;
 
 function valueBoundary(view: string, start: number): number {
   const stop = view.slice(start).search(VALUE_END);
@@ -185,7 +186,8 @@ function hasCredentialAssignment(found: Decoded, candidatesOnly: boolean): boole
     const valueStart = match.index + name.length + 2;
     const valueEnd = candidate ? valueBoundary(found.view, valueStart) : valueStart;
     if (key !== name || !literalSpan(found, match.index, valueEnd - match.index)) return true;
-    if (INNER_PUNCTUATION.test(found.view.slice(valueStart, valueEnd))) return true;
+    if (!VALUE_CORE.test(found.view.slice(valueStart, valueEnd).replace(VALUE_TAIL, "")))
+      return true;
   }
   return false;
 }
