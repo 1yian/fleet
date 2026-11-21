@@ -53,7 +53,7 @@ test("a stop signals no pane of a split job tab once the pane that ran the job l
   assert.deepEqual(stopped["content"], [
     {
       type: "text",
-      text: "job 1 (gate) has no pane left in its tab in your workspace, so nothing was signalled. If it is still recorded as running, it is reported lost soon.",
+      text: "job 1 (gate) is no longer in the tab this worker created for it, so nothing was signalled. The job may still be running.",
     },
   ]);
   assert.equal(existsSync(shim.keys), false);

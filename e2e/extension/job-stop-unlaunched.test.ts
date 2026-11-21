@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
 import { JobLab } from "../support/job-lab.ts";
 import { until } from "../support/live-fleet.ts";
@@ -114,32 +114,59 @@ for (const scenario of scenarios)
       assert.equal(existsSync(shim.runs), false);
     });
 
-test("a stop while the launch's tab exists but its command is not dispatched signals nothing", async (t) => {
-  const proxy = await legacyProxy(t);
+for (const gate of [
+  { name: "the launch's tab exists but its command is not dispatched", hold: "holdContain" },
+  { name: "the pane run has not been accepted", hold: "holdRun" },
+] as const)
+  test(`a stop while ${gate.name} signals nothing`, async (t) => {
+    const proxy = await legacyProxy(t);
+    const shim = jl.installShim();
+    writeFileSync(shim.release, "");
+    const held = jl.holdHerdr(shim[gate.hold]);
+    proxy.callFault("job.stop", { gate: held.held });
+    jl.h.onModel(() => ({
+      tool: "run_long",
+      args: { label: "gate", command: "echo gate" },
+      alongside: [{ tool: "stop_job", args: { job: 1 } }],
+    }));
+    jl.h.onModel(() => ({ text: "The stop came before acceptance" }));
+    jl.worker();
+    const stopped = await jl.h.waitFor(
+      (event) => event["type"] === "stop_result",
+      "the stop that came before acceptance",
+    );
+    assert.equal(stopped["isError"], false);
+    assert.deepEqual(stopped["content"], STILL_STARTING);
+    assert.equal(existsSync(shim.keys), false);
+    assert.ok(await jl.tabs().then((tabs) => tabs.some((tab) => tab["label"] === "job-1-gate")));
+    await held.release();
+    await until(
+      async () => ((await jl.jobResults()).length === 1 ? true : undefined),
+      "the released launch to dispatch and finish",
+    );
+    assert.deepEqual(await jl.jobResults(), [[1, 0, "gate"]]);
+    assert.equal(existsSync(shim.keys), false);
+  });
+
+test("a modern launch whose pane ID is blank closes its exact tab and never dispatches", async (t) => {
+  jl.env["PROBE_STOP_RESULT"] = "1";
+  await jl.proxy(t);
   const shim = jl.installShim();
-  writeFileSync(shim.release, "");
-  const contained = jl.holdHerdr(shim.holdContain);
-  proxy.callFault("job.stop", { gate: contained.held });
-  jl.h.onModel(() => ({
-    tool: "run_long",
-    args: { label: "gate", command: "echo gate" },
-    alongside: [{ tool: "stop_job", args: { job: 1 } }],
-  }));
-  jl.h.onModel(() => ({ text: "The stop came before dispatch" }));
+  writeFileSync(shim.blankPaneId, "");
+  jl.h.onModel(() => ({ tool: "run_long", args: { label: "gate", command: "echo gate" } }));
+  jl.h.onModel(() => ({ text: "The launch failed" }));
   jl.worker();
-  const stopped = await jl.h.waitFor(
-    (event) => event["type"] === "stop_result",
-    "the stop that came before dispatch",
-  );
-  assert.equal(stopped["isError"], false);
-  assert.deepEqual(stopped["content"], STILL_STARTING);
-  assert.equal(existsSync(shim.keys), false);
-  assert.ok(await jl.tabs().then((tabs) => tabs.some((tab) => tab["label"] === "job-1-gate")));
-  await contained.release();
   await until(
-    async () => ((await jl.jobResults()).length === 1 ? true : undefined),
-    "the released launch to dispatch and finish",
+    async () =>
+      existsSync(shim.closes) && !(await jl.tabs()).some((tab) => tab["label"] === "job-1-gate")
+        ? true
+        : undefined,
+    "the failed launch's tab to close",
   );
-  assert.deepEqual(await jl.jobResults(), [[1, 0, "gate"]]);
-  assert.equal(existsSync(shim.keys), false);
+  assert.equal(readFileSync(shim.creates, "utf8").trim().split("\n").length, 1);
+  assert.equal(readFileSync(shim.closes, "utf8").trim().split("\n").length, 1);
+  assert.equal(existsSync(shim.runs), false);
+  assert.deepEqual(await jl.jobResults(), [
+    [1, 127, "could not start: herdr did not return the job pane ID"],
+  ]);
 });

@@ -146,8 +146,12 @@ export const JOB_OPS = {
     roles: ["worker"],
     args: Type.Object({ ...StartJob.properties, launch: JobLaunchId }),
     result: Type.Union([
-      StartedJob,
-      Type.Object({ job: JobId, unavailable: Type.String({ minLength: 1 }) }),
+      Type.Object({ ...StartedJob.properties, unavailable: Type.Optional(Type.Never()) }),
+      Type.Object({
+        job: JobId,
+        unavailable: Type.String({ minLength: 1 }),
+        heartbeatMs: Type.Optional(Type.Never()),
+      }),
     ]),
   },
   "job.register": {

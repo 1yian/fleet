@@ -371,15 +371,15 @@ export class Jobs {
         void this.closeStartupTab(job, tabId);
         throw new Error(`Job ${String(job)} was fenced before dispatch`);
       }
-      const pane = present(rootPane(created), "pane ID");
       this.ownedTabs.set(job, tabId);
+      const pane = present(rootPane(created), "pane ID");
       await joinContained("local", pane, process.cwd());
       if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced before dispatch`);
       if (launching.legacy && this.lastResult.has(job))
         throw new Error(`Job ${String(job)} was reported lost before dispatch; nothing was run`);
       if (pending !== undefined) pending.dispatched = true;
       dispatched = true;
-      this.dispatchPanes.set(job, pane);
+      if (pending !== undefined) this.dispatchPanes.set(job, pane);
       const paneFailure = await herdr("local", [
         "pane",
         "run",
@@ -389,6 +389,8 @@ export class Jobs {
         () => undefined,
         (error: unknown) => (error instanceof Error ? error : new Error(String(error))),
       );
+      if (paneFailure === undefined && this.ownedTabs.get(job) === tabId)
+        this.dispatchPanes.set(job, pane);
       if (startupFenced(pending)) throw new Error(`Job ${String(job)} was fenced during dispatch`);
       if (launching.unstarted)
         throw new Error(
@@ -479,7 +481,7 @@ export class Jobs {
     if (stale()) return superseded;
     if (!ready()) return refusal();
     if (!panes.some((each) => each["tab_id"] === tab && each["pane_id"] === dispatched))
-      return `${named} has no pane left in its tab in your workspace, so nothing was signalled. If it is still recorded as running, it is reported lost soon.`;
+      return `${named} is no longer in the tab this worker created for it, so nothing was signalled. The job may still be running.`;
     await herdr("local", ["pane", "send-keys", dispatched, "ctrl+c"]);
     return `Sent a stop to ${named}. Its result arrives as a [fleet] message, exited 130 when the stop took.`;
   }

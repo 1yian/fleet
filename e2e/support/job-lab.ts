@@ -172,6 +172,8 @@ export class JobLab {
       keys: join(this.jobDir, "pane-keys"),
       failTab: join(this.jobDir, "fail-tab-create"),
       holdContain: join(this.jobDir, "hold-contain"),
+      holdRun: join(this.jobDir, "hold-run"),
+      blankPaneId: join(this.jobDir, "blank-pane-id"),
       noTabId: join(this.jobDir, "no-tab-id"),
       blankTabId: join(this.jobDir, "blank-tab-id"),
       release: join(this.jobDir, "release-dispatch"),
@@ -190,6 +192,11 @@ fi
 if [ "$1 $2" = 'tab create' ]; then
   echo tab >> ${quote(logs.creates)}
   if [ -e ${quote(logs.failTab)} ]; then echo 'tab create refused' >&2; exit 1; fi
+  if [ -e ${quote(logs.blankPaneId)} ]; then
+    out=$(${quote(herdr)} "$@") || exit $?
+    echo "$out" | sed 's/"pane_id": *"[^"]*"/"pane_id":""/g'
+    exit 0
+  fi
   if [ -e ${quote(logs.blankTabId)} ]; then
     out=$(${quote(herdr)} "$@") || exit $?
     echo "$out" | sed 's/"tab_id": *"[^"]*"/"tab_id":""/g'
@@ -206,6 +213,7 @@ if [ "$1 $2" = 'pane send-keys' ]; then
   if ${swallowKeys ? "true" : "false"}; then exit 0; fi
 fi
 if [ "$1 $2" = 'pane run' ]; then
+  hold ${quote(logs.holdRun)}
   echo run >> ${quote(logs.runs)}
   exec ${quote(herdr)} pane run "$3" "while [ ! -e ${quote(logs.release)} ]; do sleep 0.05; done; $4"
 fi
