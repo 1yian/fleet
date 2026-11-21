@@ -351,6 +351,14 @@ export async function up(
         };
   const expected = [...lanes, ...unread].map(({ lane }) => lane);
   const unreadFailed = unreadFailure(unread);
+  const appeared = (): string =>
+    discovered === undefined
+      ? ""
+      : unreadFailure(
+          laneClaimsRaced(root, lanes, unread).added.filter(
+            (each) => only === undefined || each.lane === only,
+          ),
+        );
   const first = offset % Math.max(1, lanes.length);
   const outcomes: Outcome[] = [];
   for (const info of [...lanes.slice(first), ...lanes.slice(0, first)]) {
@@ -371,12 +379,13 @@ export async function up(
         return {
           expected,
           outcomes,
-          failed: [messageOf(error), unreadFailed].filter(Boolean).join("\n"),
+          failed: [messageOf(error), unreadFailed, appeared()].filter(Boolean).join("\n"),
         };
       outcomes.push({ lane: info.lane, action: "unread" });
     }
   }
-  return { expected, outcomes, ...(unreadFailed === "" ? {} : { failed: unreadFailed }) };
+  const failed = [unreadFailed, appeared()].filter(Boolean).join("\n");
+  return { expected, outcomes, ...(failed === "" ? {} : { failed }) };
 }
 
 const messageOf = (error: unknown): string =>

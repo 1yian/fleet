@@ -12,6 +12,7 @@ import {
   idlePane,
   lab,
   maintain,
+  typedMaintenance,
   workspace,
   untilRunning,
 } from "../support/lane-observation-lab.ts";
@@ -157,3 +158,14 @@ heldWithReply(
   "a Pi row beside another child in the shell's own group on a held lane clears no hold and lets restart-all replace nothing",
   "pi-and-child-same-group",
 );
+
+test("a lane config published while an existing lane is read keeps the sweep's coverage incomplete", () => {
+  const worktrees = `${here.root}.worktrees`;
+  const make = `mkdir -p ${worktrees}/lane-yy/config && printf '{' > ${worktrees}/lane-yy/config/lane.json`;
+  const reply: unknown = JSON.parse(fleet(typedMaintenance, "run-later", make));
+  assert.ok(existsSync(`${faultLog()}.ran`));
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["expected"], ["ops"]);
+  assert.deepEqual(reply["outcomes"], action("ops", "started"));
+  assert.match(String(reply["failed"]), /lane yy could not be read: .*not valid JSON/);
+});
