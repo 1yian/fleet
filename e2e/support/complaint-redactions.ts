@@ -31,6 +31,15 @@ export const REDACTED_COMPLAINTS = [
     'Reply {"message":"Unauthorized","field":"token"} omits the header.',
   ],
   ["8080: connection refused", "8080: connection refused"],
+  ["8080: i/o timeout\n9090: connection refused", "8080: i/o timeout 9090: connection refused"],
+  [
+    "Browser URL https:demo:paper@localhost/api failed",
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    "Browser URL https:////demo:paper@localhost/api failed",
+    "[URL withheld: credential boundaries unclear]",
+  ],
   [
     "Dial tcp 127.0.0.1:8080: i/o timeout while 10.0.0.1:9000: connection refused.",
     "Dial tcp 127.0.0.1:8080: i/o timeout while 10.0.0.1:9000: connection refused.",

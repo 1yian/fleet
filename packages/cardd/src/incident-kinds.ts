@@ -1,6 +1,13 @@
 import { CURL_DATA_SECRET, CURL_SHELL_EXPANSION } from "./curl-shell.ts";
 import { VERSIONED_ENVELOPE } from "./http-envelope.ts";
-import { hasCookieRecord, logicalView, normalizeInput, SECRET_NAME } from "./redact-guards.ts";
+import {
+  hasBrowserUserinfo,
+  hasCookieRecord,
+  hasEscapedCredentialKey,
+  logicalView,
+  normalizeInput,
+  SECRET_NAME,
+} from "./redact-guards.ts";
 import type { Timings } from "./timing.ts";
 
 const MAX_RETRIES = 2;
@@ -113,9 +120,6 @@ const STRUCTURED_SECRET = new RegExp(
   String.raw`${SECRET_KEY}((?:\\?["']\s*[:=]|\s*:)\s*)(?:${STRUCTURED_VALUE})|\bBearer\s+[A-Za-z0-9._~+/=-]+`,
   "gi",
 );
-const ESCAPED_KEY = /\\?["']((?:[^"'\\\n]|\\+u[\da-f]{4})+)\\?["']\s*:/gi;
-const KEY_ESCAPE = /\\+u([\da-f]{4})/gi;
-const CREDENTIAL_KEY = new RegExp(String.raw`^${SECRET_NAME}$`, "i");
 const OPENING_QUOTE = new RegExp(
   String.raw`${SECRET_KEY}(?:\\?["']\s*[:=]|\s*[:=])\s*\\?["'\u0060]|--fleet-token(?:\s*[:=]\s*|\s+)["'\u0060]`,
   "gi",
@@ -231,17 +235,8 @@ function redactUrlUserinfo(text: string): string {
   const browser = text.replace(/[\t\n\r]/g, "").replace(/\\/g, "/");
   const spliced = logicalView(found.text) !== scanUrlUserinfo(logicalView(text)).text;
   const hidden = [joined, browser].some((view) => scanUrlUserinfo(view).count > found.count);
-  return found.ambiguous || spliced || hidden ? URL_WITHHELD : found.text;
-}
-
-function hasEscapedCredentialKey(text: string): boolean {
-  for (const [, key = ""] of text.matchAll(ESCAPED_KEY)) {
-    const decoded = key.replace(KEY_ESCAPE, (_escape, hex: string) =>
-      String.fromCharCode(Number.parseInt(hex, 16)),
-    );
-    if (decoded !== key && CREDENTIAL_KEY.test(decoded)) return true;
-  }
-  return false;
+  const leaked = hasBrowserUserinfo(found.text);
+  return found.ambiguous || spliced || hidden || leaked ? URL_WITHHELD : found.text;
 }
 
 function endsAtOpeningQuote(logical: string, end: number): boolean {

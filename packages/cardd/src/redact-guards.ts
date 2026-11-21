@@ -13,6 +13,9 @@ const COOKIE_HEADER = new RegExp(
   ].join("|"),
   "i",
 );
+const ESCAPED_KEY = /\\?["']((?:[^"'\\\n]|\\+u[\da-f]{4})+)\\?["']\s*:/gi;
+const KEY_ESCAPE = /\\+u([\da-f]{4})/gi;
+const CREDENTIAL_KEY = new RegExp(String.raw`^${SECRET_NAME}$`, "i");
 const UNICODE_ESCAPE = /\\+u([\da-f]{4})/gi;
 const CONTROL_ESCAPE = /\\+[rntbf]/g;
 
@@ -27,9 +30,14 @@ export function logicalView(text: string): string {
 }
 
 const TRACE_ROW = new RegExp(
-  String.raw`(?:^|[\n\u0001"'\u0060])[ \t>*+-]*(?:\d{2}:\d{2}:\d{2}(?:\.\d+)?[ \t]+)?([\da-f]{4}):[ \t]`,
+  String.raw`(?:^|[\n\u0001"'\u0060])[ \t>*+-]*(?:\d{2}:\d{2}:\d{2}(?:\.\d+)?[ \t]+)?([\da-f]{4}):[ \t]([^\n\u0001]*)`,
   "gi",
 );
+const HTTP_TEXT = /HTTP\/|^(?:GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s|^[\w-]+:\s/i;
+const BROWSER_USERINFO = /(?<![a-z\d+.-])(?:https?|wss?|ftp):\/*(?!\[hidden\]@)[^\s/?#@]*@/i;
+
+export const hasBrowserUserinfo = (text: string): boolean =>
+  BROWSER_USERINFO.test(text.replace(/[\t\n\r]/g, "").replace(/\\/g, "/"));
 
 const decoded = (text: string): string =>
   text
@@ -41,8 +49,16 @@ const decoded = (text: string): string =>
     .replace(/\\+/g, "");
 
 function hasTraceRows(text: string): boolean {
-  const offsets = Array.from(text.matchAll(TRACE_ROW), (row) => row[1]?.toLowerCase());
-  return offsets.length > 1 || offsets.includes("0000");
+  const rows = Array.from(text.matchAll(TRACE_ROW), (row) => ({
+    offset: Number.parseInt(row[1] ?? "", 16),
+    rest: row[2] ?? "",
+  }));
+  const rising =
+    rows.length > 1 &&
+    rows.every((row, at) => at === 0 || row.offset > (rows[at - 1]?.offset ?? 0));
+  return (
+    rows.some((row) => row.offset === 0) || (rising && rows.some((row) => HTTP_TEXT.test(row.rest)))
+  );
 }
 
 export const hasCookieHeader = (text: string): boolean => {
@@ -52,3 +68,13 @@ export const hasCookieHeader = (text: string): boolean => {
 
 export const hasCookieRecord = (text: string): boolean =>
   [text, logicalView(text)].some(hasCookieHeader);
+
+export function hasEscapedCredentialKey(text: string): boolean {
+  for (const [, key = ""] of text.matchAll(ESCAPED_KEY)) {
+    const decoded = key.replace(KEY_ESCAPE, (_escape, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    );
+    if (decoded !== key && CREDENTIAL_KEY.test(decoded)) return true;
+  }
+  return false;
+}
