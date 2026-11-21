@@ -1,4 +1,4 @@
-import { check, HttpOutcomeSchema, OPS, type OpArgs } from "@fleet/protocol";
+import { check, OPS, PrivateHttpOutcomeSchema, type OpArgs } from "@fleet/protocol";
 import { Agent as HttpAgent, request as httpRequest } from "node:http";
 import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import type { Socket } from "node:net";
@@ -20,7 +20,7 @@ export async function jobHandshake<N extends "job.prepare" | "job.register">(
     redirect: "error",
     signal: AbortSignal.timeout(5000),
   });
-  const outcome = check(HttpOutcomeSchema, await response.json());
+  const outcome = check(PrivateHttpOutcomeSchema, await response.json());
   if (!outcome.ok) {
     if (outcome.retryable === true || response.status >= 500) throw new Error(outcome.error);
     return { ...outcome, status: response.status };
@@ -74,7 +74,7 @@ export async function confirmLegacyStop(
         });
       },
     );
-    return { status, outcome: check(HttpOutcomeSchema, JSON.parse(text)) };
+    return { status, outcome: check(PrivateHttpOutcomeSchema, JSON.parse(text)) };
   };
   try {
     const probe = await call("job.cutover", { action: "status" });

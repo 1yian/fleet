@@ -1852,6 +1852,7 @@ test("a delayed positive job list cannot restore a wait after confirmed loss", a
   const snapshot = Promise.withResolvers<() => void>();
   let holdList = false;
   let confirmedLoss = false;
+  let listAskedAt = 0;
   const disconnect = await jobProxy(
     t,
     callCardd,
@@ -1870,6 +1871,7 @@ test("a delayed positive job list cannot restore a wait after confirmed loss", a
     undefined,
     (message) => {
       if (message.t === "activity") activities.push(message.state);
+      if (message.t === "call" && message.op === "jobs" && holdList) listAskedAt = Date.now();
     },
     (reply) => {
       if (reply.ok) confirmedLoss = !check(OPS["job.running"].result, reply.value).running;
@@ -1892,11 +1894,22 @@ test("a delayed positive job list cannot restore a wait after confirmed loss", a
   const releaseList = await snapshot.promise;
   process.kill(wrapper, "SIGSTOP");
   try {
+    const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+    try {
+      db.prepare("UPDATE jobs SET updated_at = updated_at - 60000 WHERE id = 1").run();
+    } finally {
+      db.close();
+    }
     await until(
       () => (confirmedLoss && activities.at(-1) === "idle" ? true : undefined),
       "the worker to publish idle after the exact loss read",
     );
     const before = activities.length;
+    const heldFor = Date.now() - listAskedAt;
+    assert.ok(
+      listAskedAt > 0 && heldFor < 4000,
+      `the held list expired before release (${String(heldFor)} ms)`,
+    );
     releaseList();
     await fleet.main.call("comment", {
       card: card.id,

@@ -1,6 +1,7 @@
 import {
   check,
   HttpOutcomeSchema,
+  PrivateHttpOutcomeSchema,
   OPS,
   type OpArgs,
   type OpName,
@@ -35,7 +36,10 @@ export async function callCardd<N extends OpName>(
     redirect: strict ? "error" : "follow",
     ...(signal === undefined ? {} : { signal }),
   });
-  const outcome = check(HttpOutcomeSchema, await response.json());
+  const outcome = check(
+    strict ? PrivateHttpOutcomeSchema : HttpOutcomeSchema,
+    await response.json(),
+  );
   if (!outcome.ok) throw new Error(outcome.error);
   if (strict && response.status !== 200)
     throw new Error(`Unexpected response to ${op}: ${String(response.status)}`);

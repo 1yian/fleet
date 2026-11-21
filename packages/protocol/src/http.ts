@@ -27,3 +27,15 @@ export const HttpOutcomeSchema = Type.Union([
   }),
 ]);
 export type HttpOutcome = Static<typeof HttpOutcomeSchema>;
+
+export const PrivateHttpOutcomeSchema = Type.Union([
+  Type.Object({ ok: Type.Literal(true), value: Type.Unknown() }, { additionalProperties: false }),
+  Type.Object(
+    {
+      ok: Type.Literal(false),
+      error: Type.String(),
+      retryable: Type.Optional(Type.Literal(true)),
+    },
+    { additionalProperties: false },
+  ),
+]);
