@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach } from "node:test";
 import { Cardd } from "./cardd.ts";
 import { Harness } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { isRecord, records, type JsonRecord } from "./json.ts";
 import { configureMain, mateArgs, Scratch } from "./scratch.ts";
+
+const NODE_BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 
 const HERDR_SHIM = `#!/bin/sh
 case "$1 $2:$HERDR_FAULT" in
@@ -339,7 +342,7 @@ beforeEach(async () => {
   writeFileSync(join(bin, "herdr"), HERDR_SHIM, { mode: 0o755 });
   lab = await HerdrLab.start({
     ...h.piEnv("mate"),
-    PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+    PATH: `${bin}:${NODE_BIN}:${process.env["PATH"] ?? ""}`,
     REAL_HERDR: real,
     HERDR_FAULT: "hanging-panes",
     HERDR_FAULT_LOG: faultLog(),
@@ -374,7 +377,7 @@ function fleetEnv(fault = "", pane = "", probeTimeout = "1000"): NodeJS.ProcessE
     FAULT_PANE: pane,
     FLEET_PROBE_TIMEOUT_MS: probeTimeout,
     FLEET_LIFECYCLE_WAIT_MS: "100",
-    PATH: `${bin}:${process.env["PATH"] ?? ""}`,
+    PATH: `${bin}:${NODE_BIN}:${process.env["PATH"] ?? ""}`,
   };
 }
 
