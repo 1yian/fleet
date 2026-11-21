@@ -44,7 +44,7 @@ function readStrict(path: string): string | undefined {
   }
 }
 
-export const readShared = (home: string): string | undefined => readIfPresent(pathOf(home, SHARED));
+export const readShared = (home: string): string | undefined => readStrict(pathOf(home, SHARED));
 
 export function standingRules(home: string): string {
   const sections = STANDING.flatMap(({ file, heading }) => {
