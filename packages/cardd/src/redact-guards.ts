@@ -153,19 +153,18 @@ function literalSpan(found: Decoded, from: number, length: number): boolean {
 }
 
 const BROWSER_IGNORED = new Set(["\t", "\n", "\r", "\u0001"]);
-const URL_CANDIDATE = /[a-z][a-z\d+.-]*:\/\/[^\s]*$/i;
+const URL_CANDIDATE = /(?:(?<![a-z\d+.-])(?:https?|wss?|ftp):[/\\]*|[a-z][a-z\d+.-]*:\/\/)\S*$/i;
 
 function withoutBrowserWhitespace(found: Decoded): Decoded {
-  const view: string[] = [];
-  const starts: number[] = [];
-  const literal: boolean[] = [];
-  Array.from(found.view).forEach((char, index) => {
-    if (BROWSER_IGNORED.has(char)) return;
-    view.push(char);
-    starts.push(found.starts[index] ?? 0);
-    literal.push(found.literal[index] === true);
-  });
-  return { view: view.join(""), starts, literal };
+  const kept: number[] = [];
+  for (let index = 0; index < found.view.length; index += 1) {
+    if (!BROWSER_IGNORED.has(found.view[index] ?? "")) kept.push(index);
+  }
+  return {
+    view: kept.map((index) => found.view[index]).join(""),
+    starts: kept.map((index) => found.starts[index] ?? 0),
+    literal: kept.map((index) => found.literal[index] === true),
+  };
 }
 
 function hasCredentialAssignment(found: Decoded, candidatesOnly: boolean): boolean {

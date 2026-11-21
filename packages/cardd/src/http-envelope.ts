@@ -1,3 +1,5 @@
+import { hasCookieRecord } from "./redact-guards.ts";
+
 const CODED_REASONS: readonly (readonly [string, string])[] = [
   ["payment required", "402"],
   ["internal server error", "500"],
@@ -9,7 +11,7 @@ const STATUS_LINE = /^HTTP\/\d(?:\.\d)?[ \t]+(\d{3})(?:[ \t]+([^\r\n]*))?(?=\r?\
 
 const INLINE_RETRY = /^(.*?)\.?[ \t]*Retry-After:[ \t]*(\d+(?:\.\d+)?)[ \t]*$/i;
 
-export const VERSIONED_ENVELOPE = {
+const VERSIONED_ENVELOPE = {
   exec(source: string): (string | undefined)[] | null {
     const found = STATUS_LINE.exec(source);
     if (found === null) return null;
@@ -43,7 +45,32 @@ const HTTP_ENVELOPE = new RegExp(
   "i",
 );
 
+const CONNECT_PREAMBLE =
+  /^HTTP\/\d(?:\.\d)?[ \t]+2\d\d[ \t]+Connection established[ \t]*\r?\n(?:[!#$%&'*+.^_\u0060|~\w-]+:[^\r\n]*\r?\n)*\r?\n/i;
+
+const CONNECT_LINE = /^HTTP\/\d(?:\.\d)?[ \t]+2\d\d[ \t]+Connection established\b/i;
+
+export interface Envelope {
+  readonly status: string;
+  readonly inline: string | undefined;
+  readonly rest: string;
+  readonly blocked: boolean;
+}
+
+function direct(source: string): Envelope | null {
+  const found = HTTP_ENVELOPE.exec(source);
+  const [line = "", status = "", inline] = found ?? VERSIONED_ENVELOPE.exec(source) ?? [];
+  if (found === null && status === "") return null;
+  return { status, inline, rest: source.slice(line.length), blocked: false };
+}
+
+const BLOCKED: Envelope = { status: "", inline: undefined, rest: "", blocked: true };
+
 export const LEADING_ENVELOPE = {
-  exec: (source: string): (string | undefined)[] | null =>
-    HTTP_ENVELOPE.exec(source) ?? VERSIONED_ENVELOPE.exec(source),
+  exec(source: string): Envelope | null {
+    if (!CONNECT_LINE.test(source)) return direct(source);
+    const preamble = CONNECT_PREAMBLE.exec(source)?.[0];
+    if (preamble === undefined || hasCookieRecord(preamble)) return BLOCKED;
+    return direct(source.slice(preamble.length)) ?? BLOCKED;
+  },
 };

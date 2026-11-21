@@ -1,5 +1,5 @@
 import { CURL_DATA_SECRET, CURL_SHELL_EXPANSION } from "./curl-shell.ts";
-import { LEADING_ENVELOPE, milliseconds, retryAfterMs } from "./http-envelope.ts";
+import { LEADING_ENVELOPE, milliseconds, retryAfterMs, type Envelope } from "./http-envelope.ts";
 import {
   hasBrowserUserinfo,
   hasCookieRecord,
@@ -394,10 +394,11 @@ function headerRetryAfter(source: string): string | undefined {
   return RETRY_HEADER.exec(redactNormalized(hint, "diagnostic"))?.[1];
 }
 
-function withheldKind(source: string, status: string, bare: boolean): Kind {
+function withheldKind(source: string, envelope: Envelope | null): Kind {
   const refused =
     hasCookieRecord(source) || [source, logicalView(source)].some(hasEncodedCredentialParam);
-  return status.startsWith("2") || (bare && refused) ? "withheld" : classify(status);
+  if (envelope === null) return refused ? "withheld" : classify("");
+  return envelope.blocked ? "withheld" : classify(envelope.status);
 }
 
 export function diagnoseFailure(text: string): {
@@ -410,12 +411,10 @@ export function diagnoseFailure(text: string): {
   const marked = [YAML_WITHHELD, URL_WITHHELD, CURL_WITHHELD, RECORD_WITHHELD].includes(diagnostic);
   if (marked) {
     const envelope = LEADING_ENVELOPE.exec(source);
-    const [line = "", status = "", inline] = envelope ?? [];
-    const kind = withheldKind(source, status, envelope === null);
-    const seconds =
-      kind === "withheld" || envelope === null
-        ? inline
-        : (inline ?? headerRetryAfter(source.slice(line.length)));
+    const kind = withheldKind(source, envelope);
+    const seconds = envelope?.blocked
+      ? undefined
+      : (envelope?.inline ?? headerRetryAfter(envelope?.rest ?? ""));
     return { error, signals: { kind, retryAfter: milliseconds(seconds) } };
   }
   return { error, signals: { kind: classify(error), retryAfter: retryAfterMs(diagnostic) } };

@@ -392,15 +392,17 @@ for (const [status, separator, recovering] of [
   });
 }
 
-for (const [name, diagnostic, blocked] of RECOVERY_SCOPE) {
+for (const [name, diagnostic, outcome] of RECOVERY_SCOPE) {
   for (const recovering of [false, true]) {
-    test(`${name} ${blocked ? "blocks" : "keeps"} ${recovering ? "further" : "initial"} recovery`, async () => {
+    test(`${name} is ${outcome} on ${recovering ? "further" : "initial"} recovery`, async () => {
       const card = await newCard(cleo, "Restore provider authentication");
+      const before = Date.now();
       const { incident, notice } = await noticeAfter(card, diagnostic, recovering, "the failure");
-      assert.doesNotMatch(notice.body, /paper/);
+      assert.doesNotMatch(notice.body, /paper|99999/);
       const retry = restart(card, incident, { mode: "retry", key: "withheld-retry" });
-      if (blocked) await assert.rejects(retry, /incident \d+ is blocked/);
-      else await retry;
+      if (outcome === "open") return void (await retry);
+      if (outcome === "delayed") assertEligibleAfter(notice.body, before, 120_000);
+      await assert.rejects(retry, /is blocked|not eligible for recovery/);
     });
   }
 }

@@ -384,6 +384,10 @@ for (const [name, diagnostic] of [
     "Callback https://localhost/callback?pass\tword=paper failed",
   ],
   [
+    "a single-slash browser URL with a tab inside a parameter name",
+    "Callback https:/localhost/callback?pass\tword=paper failed",
+  ],
+  [
     "an encoded fragment parameter name",
     "Callback https://localhost/callback#pass%77ord=paper failed",
   ],
