@@ -22,7 +22,7 @@ export async function callCardd<N extends OpName>(
   op: N,
   args: OpArgs<N>,
   signal?: AbortSignal,
-  redirect: "follow" | "error" = "follow",
+  strict = false,
 ): Promise<OpResult<N>> {
   const checked = check(OPS[op].args, args);
   const { value: token, note } = await laneToken(lane, bwsFor(lane.bws));
@@ -32,10 +32,12 @@ export async function callCardd<N extends OpName>(
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ op, args: checked }),
-    redirect,
+    redirect: strict ? "error" : "follow",
     ...(signal === undefined ? {} : { signal }),
   });
   const outcome = check(HttpOutcomeSchema, await response.json());
   if (!outcome.ok) throw new Error(outcome.error);
+  if (strict && response.status !== 200)
+    throw new Error(`Unexpected response to ${op}: ${String(response.status)}`);
   return checkResult(op, outcome.value);
 }

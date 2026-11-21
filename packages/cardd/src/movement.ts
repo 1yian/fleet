@@ -109,7 +109,9 @@ export function movementOf(db: DatabaseSync, { card, entries }: Loaded): Movemen
   const base = Math.max(card.createdAt, changed, progressAt(db, card.id));
   const unstarted = new Set(entries.filter(noStart).map((entry) => Number(entry.fields["job"])));
   const runs = runsOf(db, card.id).filter((run) => !unstarted.has(run.id));
-  const completions = entries.filter(completion);
+  const completions = entries.filter(
+    (entry) => completion(entry) && !unstarted.has(Number(entry.fields["job"])),
+  );
   const differs = changedExits(completions, runs);
   const exitAt = completions.findLast((entry) => differs.has(entry.id))?.createdAt ?? 0;
   const again = startedAgain(runs, Math.max(base, exitAt));

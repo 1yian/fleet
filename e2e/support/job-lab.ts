@@ -120,6 +120,17 @@ export class JobLab {
     }
   }
 
+  jobUpdatedAt(job: number): number {
+    const db = new DatabaseSync(this.fleet.cardd.db, { readOnly: true, timeout: 5000 });
+    try {
+      const at = db.prepare("SELECT updated_at AS at FROM jobs WHERE id = ?").get(job)?.["at"];
+      if (typeof at !== "number") throw new Error(`job ${String(job)} has no update time`);
+      return at;
+    } finally {
+      db.close();
+    }
+  }
+
   deliveredCount(): number {
     return this.h.events.filter((event) => event["type"] === "fleet_delivered").length;
   }

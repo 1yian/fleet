@@ -231,6 +231,44 @@ test("delivered startup fences do not advance card movement, but an executed job
   assert.equal((await pulseOf(card)).movedAt, result.createdAt);
 });
 
+test("a revival before a wrapper's no-start result does not advance card movement", async () => {
+  const card = await newCard(cleo, "Run the suite");
+  const worker = await fleet.cardd.connect(await begin(cleo, card));
+  await worker.call("report", { status: "working", text: "Preparing the suite." });
+  ageCard(fleet.cardd, card, IDLE_LIMIT + MINUTE);
+  const before = await pulseOf(card);
+  assert.equal(before.state, "idle");
+  const job = await registered(worker, "suite", 4321);
+  await worker.waitForEntry(
+    (entry) =>
+      entry.kind === "job-result" && entry.fields["job"] === job && entry.fields["lost"] === true,
+    "the silent wrapper's loss",
+  );
+  await worker.call("job.alive", { job });
+  await worker.waitForEntry(
+    (entry) =>
+      entry.kind === "job-result" &&
+      entry.fields["job"] === job &&
+      entry.fields["revived"] === true,
+    "the wrapper's revival",
+  );
+  await worker.call("job.finish", {
+    job,
+    exitCode: 127,
+    outputTail: "could not start: cardd did not confirm wrapper registration",
+    commandNotStarted: true,
+  });
+  await worker.waitForEntry(
+    (entry) =>
+      entry.kind === "job-result" &&
+      entry.fields["job"] === job &&
+      entry.fields["commandNotStarted"] === true,
+    "the wrapper's no-start result",
+  );
+  const still = await pulseOf(card);
+  assert.deepEqual([still.state, still.movedAt], ["idle", before.movedAt]);
+});
+
 async function registered(worker: Session, label: string, pid: number): Promise<number> {
   const launch = randomUUID();
   const { job } = check(

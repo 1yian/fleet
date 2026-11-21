@@ -370,7 +370,7 @@ switch (command ?? "") {
           : undefined;
     if (args === undefined) throw new Error(CUTOVER_USAGE);
     const { callCardd } = await import("./cardd-call.ts");
-    const result = await callCardd(main, "job.cutover", args, AbortSignal.timeout(5000), "error");
+    const result = await callCardd(main, "job.cutover", args, AbortSignal.timeout(5000), true);
     console.log(JSON.stringify(result));
     if (result.state !== "ready") process.exitCode = 1;
     break;

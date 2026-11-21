@@ -5,7 +5,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { afterEach, beforeEach, test, type TestContext } from "node:test";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { check, HttpOutcomeSchema, OPS } from "@fleet/protocol";
 import { quote } from "@fleet/protocol/route";
 import { wakeMate } from "../../packages/extension/src/wake.ts";
 import { JobLab } from "../support/job-lab.ts";
@@ -121,22 +123,62 @@ test("the cutover command never forwards its body to a redirect target, and an h
   configureMain(scratch, honest, "token");
   const answered = await run("node", [scratch.launch, "job-cutover", "status"]);
   assert.deepEqual(JSON.parse(answered.stdout), { state: "ready", blockers: [] });
+
+  const failing = await serve((req, res) => {
+    req.resume();
+    res
+      .writeHead(503, { "content-type": "application/json" })
+      .end(JSON.stringify({ ok: true, value: { state: "ready", blockers: [] } }));
+  });
+  configureMain(scratch, failing, "token");
+  const unavailable = await run("node", [scratch.launch, "job-cutover", "status"]).then(
+    ({ stdout }) => ({ failed: false, stdout }),
+    (error: unknown) => ({
+      failed: true,
+      stdout: error instanceof Error && "stdout" in error ? String(error.stdout) : "?",
+    }),
+  );
+  assert.deepEqual(unavailable, { failed: true, stdout: "" });
 });
 
-test("legacy heartbeat and result transport still follows a same-origin redirect", async (t) => {
+test("a legacy-launched wrapper's heartbeats and result still reach cardd through a same-origin redirect", async (t) => {
   const proxy = await jl.proxy(t);
-  const followed = `${new URL(jl.env["FLEET_URL"]?.replace(/^ws/, "http") ?? "").origin}/call-followed`;
-  proxy.httpFault("job.finish", { redirect: followed }, 1);
-  const shim = jl.installShim();
-  writeFileSync(shim.release, "");
-  jl.h.onModel(() => ({ tool: "run_long", args: { label: "gate", command: "echo gate" } }));
-  jl.h.onModel(() => ({ text: "The gate was dispatched" }));
-  jl.worker();
-  await until(
-    async () => ((await jl.jobResults()).length > 0 ? true : undefined),
-    "the redirected result to arrive",
+  const origin = new URL(jl.env["FLEET_URL"]?.replace(/^ws/, "http") ?? "").origin;
+  proxy.httpFault("job.alive", { redirect: `${origin}/call-followed` }, 10_000);
+  proxy.httpFault("job.finish", { redirect: `${origin}/call-followed` }, 10_000);
+  const token = jl.env["FLEET_TOKEN"] ?? "";
+  const release = join(jl.jobDir, "release-legacy");
+  const command = `while [ ! -e ${quote(release)} ]; do sleep 0.05; done; echo done`;
+  const reply = await jl.fleet.cardd.post(token, "job.start", { label: "gate", command });
+  const outcome = check(HttpOutcomeSchema, reply.body);
+  assert.ok(outcome.ok);
+  const { job } = check(OPS["job.start"].result, outcome.value);
+  const beatBefore = jl.jobUpdatedAt(job);
+  const input = join(jl.jobDir, "legacy-input.json");
+  writeFileSync(
+    input,
+    JSON.stringify({
+      url: `${origin}/call`,
+      token,
+      job,
+      timeoutMs: 60_000,
+      heartbeatMs: 100,
+      command,
+    }),
   );
-  assert.deepEqual(await jl.jobResults(), [[1, 0, "gate"]]);
+  const wrapper = fileURLToPath(new URL("../../packages/extension/src/job.ts", import.meta.url));
+  const exited = run("node", [wrapper, input]);
+  await until(
+    () =>
+      proxy.requests.some((each) => each.op === "job.alive" && each.url === "/call-followed") &&
+      jl.jobUpdatedAt(job) > beatBefore
+        ? true
+        : undefined,
+    "the forwarded heartbeat to update cardd's live job state",
+  );
+  writeFileSync(release, "");
+  await exited;
+  assert.deepEqual(await jl.jobResults(), [[job, 0, "done"]]);
   assert.ok(
     proxy.requests.some((each) => each.op === "job.finish" && each.url === "/call-followed"),
   );
