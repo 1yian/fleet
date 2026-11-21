@@ -78,6 +78,7 @@ test("legacy split workspaces close by the original pane's home, not by Pi in a 
 });
 
 test("a legacy split listed first cannot mask the current-title lane", async () => {
+  useSteadyPi();
   const home = `${here.root}.worktrees/lane-ops`;
   const legacyPane = await idlePane("ops", home, "fleet-ops");
   await lab.run(["pane", "split", legacyPane, "--direction", "right", "--no-focus"]);
@@ -187,6 +188,7 @@ test("maintenance returns a completed start even when the next lane cannot be re
 });
 
 test("an old supervisor's command still gets array success and nonzero operation failure", async () => {
+  useSteadyPi();
   assert.equal(fleet(["--maintenance-outcomes-v1"]).trim(), "fleet: maintenance outcomes v1");
   assert.equal(await workspace("ops"), undefined);
   assert.deepEqual(JSON.parse(fleet(legacyMaintenance)), action("ops", "started"));
@@ -323,6 +325,7 @@ test("an explicit stop accepts a complete workspace close reply without a type f
 });
 
 test("structured pane run and silent workspace close both succeed", async () => {
+  useSteadyPi();
   assert.deepEqual(maintain("structured-run"), action("ops", "started"));
   assert.deepEqual(maintain(), action("ops", "running"));
   assert.equal(fleet(["stop", "ops"], "silent-close").trim(), "ops: stopped");
