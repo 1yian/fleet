@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { until } from "../support/live-fleet.ts";
 
 let fleet: Fleet;
 let beats: NodeJS.Timeout[] = [];
@@ -94,6 +96,122 @@ test("closing a card abandons its running job and does not call it lost", async 
   assert.equal(abandonedRow["session"], "closed");
   const aboutServer = (await findings(card)).filter((entry) => entry.body.includes("(server)"));
   assert.deepEqual(aboutServer, []);
+  const cutover = check(
+    OPS["job.cutover"].result,
+    await fleet.main.call("job.cutover", { action: "seal" }),
+  );
+  assert.equal(cutover.state, "draining");
+  assert.deepEqual(
+    cutover.blockers.map(({ job, state }) => [job, state]),
+    [
+      [lost, "lost"],
+      [running, "abandoned"],
+    ],
+  );
+});
+
+test("an automatic stopped handoff is deferred while a reservation is outstanding and recorded once it ends", async () => {
+  const card = await newCard(fleet.main, "Hand off only without a wait");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  await worker.call("report", { status: "working", text: "Starting the export" });
+  const args = { launch: randomUUID(), label: "export", command: "echo export" };
+  const { job } = check(OPS["job.prepare"].result, await worker.call("job.prepare", args));
+  const stop = { status: "stopped-if-idle", text: "ended the run without a handoff" };
+  const deferred = check(OPS.report.result, await worker.call("report", stop));
+  assert.equal(deferred.deferred, true);
+  const reports = async () =>
+    check(CardViewSchema, await fleet.main.call("card", { card: card.id })).entries.filter(
+      (entry) => entry.kind === "report" && entry.fields["status"] === "stopped",
+    );
+  assert.deepEqual(await reports(), []);
+
+  assert.deepEqual(await worker.call("job.stop", { job }), {
+    label: "export",
+    running: false,
+    cancelled: true,
+  });
+  const recorded = check(OPS.report.result, await worker.call("report", stop));
+  assert.equal(recorded.deferred, undefined);
+  assert.deepEqual(
+    (await reports()).map((entry) => entry.body),
+    ["ended the run without a handoff"],
+  );
+});
+
+test("a reservation does not enter the job watch until the owning wrapper registers", async () => {
+  const card = await newCard(fleet.main, "A prepare receipt never arrived");
+  const worker = await fleet.cardd.connect(await begin(fleet.main, card));
+  const args = { launch: randomUUID(), label: "reserved", command: "echo reserved" };
+  const prepared = check(OPS["job.prepare"].result, await worker.call("job.prepare", args));
+  const { job } = prepared;
+  assert.deepEqual(await worker.call("job.alive", { job }), { running: false });
+  assert.deepEqual(await worker.call("jobs", {}), []);
+  await assert.rejects(worker.call("job.prepare", { ...args, command: "true" }), /already in use/);
+
+  const other = await newCard(fleet.main, "A separate attempt cannot replay the reservation");
+  const stranger = await fleet.cardd.connect(await begin(fleet.main, other));
+  await assert.rejects(stranger.call("job.prepare", args), /already in use/);
+  const silent = await start(worker, "silent legacy control");
+  await fleet.main.waitForEntry(
+    (entry) =>
+      entry.card === card.id &&
+      entry.fields["job"] === silent &&
+      entry.fields["condition"] === "job-lost",
+    "a legacy job admitted after the reservation is detected as lost",
+  );
+  assert.deepEqual(
+    (await findings(card))
+      .filter((entry) => entry.fields["condition"] === "job-lost")
+      .map((entry) => entry.fields["job"]),
+    [silent],
+  );
+  assert.deepEqual(await worker.call("job.prepare", args), prepared);
+  assert.deepEqual(await worker.call("job.register", { job, launch: args.launch, pid: 1234 }), {
+    registered: true,
+  });
+  assert.deepEqual(await worker.call("jobs", {}), [{ id: job, label: args.label }]);
+  assert.deepEqual(await worker.call("job.alive", { job }), { running: true });
+  assert.deepEqual(await worker.call("job.prepare", args), {
+    job,
+    unavailable: "already registered",
+  });
+  await fleet.main.waitForEntry(
+    (entry) =>
+      entry.card === card.id &&
+      entry.fields["job"] === job &&
+      entry.fields["condition"] === "job-lost",
+    "the silence detector also watches registered wrappers",
+  );
+
+  const pending = check(
+    OPS["job.prepare"].result,
+    await worker.call("job.prepare", { ...args, launch: randomUUID() }),
+  );
+  const launch = randomUUID();
+  const cancelled = check(
+    OPS["job.prepare"].result,
+    await worker.call("job.prepare", { ...args, launch }),
+  );
+  await assert.rejects(stranger.call("job.stop", { job: cancelled.job }), /not one of/);
+  assert.deepEqual(await worker.call("job.stop", { job: cancelled.job }), {
+    label: args.label,
+    running: false,
+    cancelled: true,
+  });
+  assert.deepEqual(await worker.call("job.register", { job: cancelled.job, launch, pid: 1234 }), {
+    registered: false,
+  });
+  assert.deepEqual(await worker.call("job.stop", { job: cancelled.job }), {
+    label: args.label,
+    running: false,
+  });
+  assert.equal(jobRow(cancelled.job)["exit_code"], 130);
+  assert.deepEqual(await worker.call("job.prepare", { ...args, launch }), {
+    job: cancelled.job,
+    unavailable: "already finished: stopped before wrapper registration",
+  });
+  await dropCard(card);
+  assert.equal(jobRow(pending.job)["state"], "abandoned");
 });
 
 test("a dropped lost job can still finish, and the drop mark does not survive finish", async () => {
@@ -119,4 +237,53 @@ test("a dropped lost job can still finish, and the drop mark does not survive fi
   assert.equal(row["exit_code"], 0);
   const again = check(OPS["job.drop"].result, await worker.call("job.drop", { job }));
   assert.deepEqual(again, { label: "server", state: "finished", dropped: false });
+});
+
+test("an expired startup that cannot be recorded does not hold back another card's fence, and recovers", async () => {
+  const poisoned = await newCard(fleet.main, "A startup result cannot be written");
+  const healthy = await newCard(fleet.main, "A startup result can be written");
+  const first = await fleet.cardd.connect(await begin(fleet.main, poisoned));
+  const second = await fleet.cardd.connect(await begin(fleet.main, healthy));
+  const reserve = async (worker: Session, label: string): Promise<number> =>
+    check(
+      OPS["job.prepare"].result,
+      await worker.call("job.prepare", { launch: randomUUID(), label, command: `run ${label}` }),
+    ).job;
+  const refused = await reserve(first, "refused");
+  const fenced = await reserve(second, "fenced");
+  const results = async (card: Card): Promise<Entry[]> =>
+    check(CardViewSchema, await fleet.main.call("card", { card: card.id })).entries.filter(
+      (entry) => entry.kind === "job-result",
+    );
+  const db = new DatabaseSync(fleet.cardd.db, { timeout: 5000 });
+  try {
+    db.exec(`CREATE TRIGGER refuse_expiry BEFORE INSERT ON entries
+      WHEN NEW.kind = 'job-result' AND NEW.card = ${String(poisoned.id)}
+      BEGIN SELECT RAISE(ABORT, 'injected startup write failure'); END;
+      UPDATE jobs SET created_at = created_at - 60000;`);
+    const fence = await until(
+      async () => (await results(healthy)).find((entry) => entry.fields["startupFenced"] === true),
+      "the other card's startup fence despite the failing reservation",
+    );
+    assert.equal(fence.fields["job"], fenced);
+    assert.equal(fence.fields["exitCode"], 127);
+    await until(
+      () => (fleet.cardd.errors.includes("injected startup write failure") ? true : undefined),
+      "cardd to report the failed startup write",
+    );
+    assert.equal(jobRow(refused)["state"], "running");
+    assert.equal(jobRow(fenced)["state"], "finished");
+    assert.deepEqual(await results(poisoned), []);
+    db.exec("DROP TRIGGER refuse_expiry");
+    const recovered = await until(
+      async () => (await results(poisoned)).find((entry) => entry.fields["startupFenced"] === true),
+      "the failing reservation's fence once writes recover",
+    );
+    assert.equal(recovered.fields["job"], refused);
+    assert.equal(jobRow(refused)["state"], "finished");
+    assert.equal((await results(poisoned)).length, 1);
+    assert.equal((await results(healthy)).length, 1);
+  } finally {
+    db.close();
+  }
 });

@@ -311,18 +311,18 @@ test("a session file with a torn last line does not stop the restarted worker fr
   ]);
 });
 
-test("a stopped report filed while cardd is down reaches the mate once cardd is back", async () => {
+test("a pane stop filed while cardd is down reaches the mate once cardd is back", async () => {
   const held = gate();
   h.onModel(async () => {
     await held.wait;
-    return { text: "nothing to report" };
+    return { text: "too late" };
   });
-  h.onModel(() => ({ text: "still nothing" }));
-  await worker("investigate the scrollbar");
+  const pi = await worker("investigate the scrollbar");
   await h.waitForCall(0);
   await fleet.cardd.stop();
+  pi.abort();
+  await h.waitFor((e) => e["type"] === "settled", "the aborted run to settle");
   held.open();
-  await h.waitFor((e) => e["type"] === "settled", "the run to settle");
 
   await fleet.cardd.restart();
   const main = await fleet.cardd.connect(fleet.mainToken);
@@ -330,7 +330,7 @@ test("a stopped report filed while cardd is down reaches the mate once cardd is 
   await main.waitForEntries(1);
   await main.call("board", {});
 
-  assert.deepEqual(reports(main), [["stopped", "ended the run without a handoff: still nothing"]]);
+  assert.deepEqual(reports(main), [["stopped", "stopped from the pane"]]);
 });
 
 test("a cardd restart does not repeat a message the worker already holds", async () => {

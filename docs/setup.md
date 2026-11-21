@@ -761,6 +761,18 @@ A host that skipped it recovers the same way. Install bun, then run `git pull &&
 
 After that one time, `fleet update` refuses a host without bun (below 1.3.13) before it changes anything, and names the fix. `fleet cardd` checks the same way on `cardd`'s host: it refuses a host without bun (below 1.3.13) before the pull, names the host and the fix, and leaves the checkout where it was.
 
+### Job liveness cutover
+
+Install the registration release on the worker hosts and cardd before attempting a release that removes the heartbeat detector. The registration release leaves that detector in place. Old workers and already running jobs keep using their old protocol. Updated wrappers wait for cardd to confirm registration before invoking Bash. If the daemon explicitly says it predates registration, updated workers use the old job protocol until the daemon is upgraded. `stop_job` signals only the exact tab and pane that the worker process recorded when it launched the job. After a worker reload or replacement it signals nothing for an inherited job, legacy or registered, and never uses a tab name as proof of ownership. For a legacy job it also signals nothing unless herdr acknowledged the `pane run` request that started the command, so after a lost acknowledgment the command must be stopped by hand on its owning host.
+
+Upgrade cardd before reloading workers where possible. In the opposite order, updated workers can still make explicit reports and stop the jobs they launched themselves, but old cardd cannot atomically check for jobs and record an automatic `stopped` handoff. Until cardd is upgraded, workers that would normally stop automatically must report explicitly. An empty job list does not authorize an automatic stop.
+
+Before any later detector removal, use main's updated `bin/fleet`:
+
+1. Run `fleet job-cutover seal`. This permanently blocks new legacy launches in cardd, including requests from workers that have not reloaded. It does not stop jobs. A draining result exits nonzero and lists each blocker by job, card, and host. Updated workers can still launch registered jobs.
+2. Let legacy jobs finish, or explicitly stop them on their owning host. A worker that was reloaded or replaced cannot interrupt a job its previous process launched, so inherited jobs must finish or be stopped by hand on their owning host before you confirm the drain. Every legacy job needs a confirmation, including historical jobs and jobs with a successful exit. A result, an exited wrapper, or an absent tab does not rule out surviving helpers. For each blocker, verify on its owning host that the wrapper and the entire command process tree, including helpers that detached or were reparented, can no longer run, and that no pending launch can start them. Once the job is no longer recorded as running, record that evidence with `fleet job-cutover confirm-stop <job> '<evidence>'`. This records an operator confirmation, not a process check, and does not change the job's result. If the history or process inspection is missing, failed, or partial and you cannot establish quiescence, leave the job as a blocker and keep the detector in place.
+3. Run `fleet job-cutover status`. Proceed to a separate detector-removal release only if the command succeeds and reports `ready` against the upgraded daemon. An open seal, a draining result, or an unreadable reply is not ready. Do not restore a database from before the seal while relying on this result.
+
 ### One-time cleanup after the file explorer was removed
 
 Fleet no longer opens a Files tab and never targets one. A Files tab left by an earlier version stays open until someone closes it by hand, or until its workspace closes. Job tabs still close as before.

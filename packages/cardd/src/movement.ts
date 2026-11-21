@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Entry } from "@fleet/protocol";
-import { runningJobSql } from "./jobs.ts";
+import { launchedJobSql, runningJobSql, startedAtSql } from "./jobs.ts";
 import type { Loaded } from "./store.ts";
 import { SCHEDULE, SCRIPT } from "./wakes.ts";
 
@@ -41,9 +41,10 @@ function progressAt(db: DatabaseSync, card: number): number {
 function runsOf(db: DatabaseSync, card: number): Run[] {
   return db
     .prepare(
-      `SELECT j.id AS id, j.label AS label, j.created_at AS at, ${runningJobSql("j.state")} AS running
+      `SELECT j.id AS id, j.label AS label, ${startedAtSql("j")} AS at, ${runningJobSql("j")} AS running
        FROM jobs j JOIN attempts a ON a.id = j.attempt
-       WHERE a.card = ? AND a.state IN ('starting', 'active') ORDER BY j.id`,
+       WHERE a.card = ? AND a.state IN ('starting', 'active') AND ${launchedJobSql("j")}
+       ORDER BY ${startedAtSql("j")}, j.id`,
     )
     .all(card)
     .map((row) => ({
@@ -52,6 +53,18 @@ function runsOf(db: DatabaseSync, card: number): Run[] {
       at: Number(row["at"]),
       running: row["running"] === 1,
     }));
+}
+
+function modernJobs(db: DatabaseSync, card: number): ReadonlySet<number> {
+  return new Set(
+    db
+      .prepare(
+        `SELECT j.id AS id FROM jobs j JOIN attempts a ON a.id = j.attempt
+         WHERE a.card = ? AND j.launch_id IS NOT NULL`,
+      )
+      .all(card)
+      .map((row) => Number(row["id"])),
+  );
 }
 
 function repeatedReports(entries: readonly Entry[]): ReadonlySet<number> {
@@ -71,12 +84,12 @@ const changes =
   (entry: Entry): boolean =>
     MOVEMENT.has(entry.kind) && !AUTOMATIC.has(entry.author) && !repeated.has(entry.id);
 
-const finishes =
-  (again: ReadonlySet<number>, differs: ReadonlySet<number>) =>
-  (entry: Entry): boolean =>
-    entry.kind === "job-result" &&
-    entry.fields["lost"] !== true &&
-    (!again.has(Number(entry.fields["job"])) || differs.has(entry.id));
+const noStart = (entry: Entry): boolean =>
+  entry.kind === "job-result" &&
+  (entry.fields["startupFenced"] === true || entry.fields["commandNotStarted"] === true);
+
+const completion = (entry: Entry): boolean =>
+  entry.kind === "job-result" && entry.fields["lost"] !== true && !noStart(entry);
 
 function changedExits(entries: readonly Entry[], runs: readonly Run[]): ReadonlySet<number> {
   const labels = new Map(runs.map((run) => [run.id, run.label]));
@@ -85,7 +98,7 @@ function changedExits(entries: readonly Entry[], runs: readonly Run[]): Readonly
   for (const entry of entries) {
     const label = labels.get(Number(entry.fields["job"]));
     const code = entry.fields["exitCode"];
-    if (entry.kind !== "job-result" || label === undefined || typeof code !== "number") continue;
+    if (label === undefined || typeof code !== "number") continue;
     if (last.has(label) && last.get(label) !== code) differs.add(entry.id);
     last.set(label, code);
   }
@@ -106,11 +119,21 @@ export function movementOf(db: DatabaseSync, { card, entries }: Loaded): Movemen
   const repeated = repeatedReports(entries);
   const changed = entries.findLast(changes(repeated))?.createdAt ?? 0;
   const base = Math.max(card.createdAt, changed, progressAt(db, card.id));
-  const runs = runsOf(db, card.id);
-  const differs = changedExits(entries, runs);
-  const exitAt = entries.findLast((entry) => differs.has(entry.id))?.createdAt ?? 0;
+  const unstarted = new Set(entries.filter(noStart).map((entry) => Number(entry.fields["job"])));
+  const runs = runsOf(db, card.id).filter((run) => !unstarted.has(run.id));
+  const modern = modernJobs(db, card.id);
+  const completions = entries.filter((entry) => {
+    const job = Number(entry.fields["job"]);
+    if (!completion(entry) || unstarted.has(job)) return false;
+    return !modern.has(job) || typeof entry.fields["exitCode"] === "number";
+  });
+  const differs = changedExits(completions, runs);
+  const exitAt = completions.findLast((entry) => differs.has(entry.id))?.createdAt ?? 0;
   const again = startedAgain(runs, Math.max(base, exitAt));
-  const finished = entries.findLast(finishes(again, differs))?.createdAt ?? 0;
+  const finished =
+    completions.findLast(
+      (entry) => !again.has(Number(entry.fields["job"])) || differs.has(entry.id),
+    )?.createdAt ?? 0;
   const running = runs.filter((run) => run.running);
   return {
     movedAt: Math.max(base, finished),

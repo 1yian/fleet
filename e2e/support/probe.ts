@@ -31,6 +31,36 @@ function observeMouse(report: (event: Record<string, unknown>) => void): void {
   });
 }
 
+function reportStops(pi: ExtensionAPI, report: (event: Record<string, unknown>) => void): void {
+  if (process.env["PROBE_STOP_RESULT"] === "1")
+    pi.on("tool_result", (event) => {
+      if (event.toolName === "stop_job")
+        report({ type: "stop_result", content: event.content, isError: event.isError });
+    });
+}
+
+function nudgeOnce(pi: ExtensionAPI, report: (event: Record<string, unknown>) => void): void {
+  let nudged = process.env["PROBE_NUDGE"] !== "1";
+  pi.on("agent_before_settle", (event) => {
+    report({ type: "before_settle", pending: event.context.pendingMessages.length });
+    if (nudged) return undefined;
+    nudged = true;
+    const nudge = { entryId: -1 };
+    return {
+      continue: true,
+      entries: [
+        {
+          type: "custom_message",
+          customType: "fleet",
+          content: "nudge",
+          display: true,
+          details: nudge,
+        },
+      ],
+    };
+  });
+}
+
 export default function probe(pi: ExtensionAPI): void {
   registerReload(pi);
   const url = (process.env["FLEET_CONTROL_URL"] ?? "").replace(/^http/, "ws");
@@ -80,6 +110,8 @@ export default function probe(pi: ExtensionAPI): void {
     },
   });
 
+  reportStops(pi, report);
+
   pi.events.on("fleet:delivered", (data) => {
     if (isRecord(data))
       report({ type: "fleet_delivered", entryId: optionalNumber(data, "entryId") });
@@ -105,25 +137,7 @@ export default function probe(pi: ExtensionAPI): void {
     if (entryId !== undefined) report({ type: "message_end", entryId });
   });
 
-  let nudged = process.env["PROBE_NUDGE"] !== "1";
-  pi.on("agent_before_settle", (event) => {
-    report({ type: "before_settle", pending: event.context.pendingMessages.length });
-    if (nudged) return undefined;
-    nudged = true;
-    const nudge = { entryId: -1 };
-    return {
-      continue: true,
-      entries: [
-        {
-          type: "custom_message",
-          customType: "fleet",
-          content: "nudge",
-          display: true,
-          details: nudge,
-        },
-      ],
-    };
-  });
+  nudgeOnce(pi, report);
   pi.on("agent_settled", (event) => {
     report({ type: "settled", aborted: event.aborted });
   });

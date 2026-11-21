@@ -34,8 +34,11 @@ import { eligibleLanes, hostProblems, newSnapshot, type SweepSnapshot } from "./
 import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 
+const CUTOVER_USAGE =
+  "fleet job-cutover status | seal | confirm-stop <job> <evidence that the legacy job's process tree cannot run>";
 const USAGE = [
   "usage: fleet status | up [lane] [--maintenance] | stop <lane> | arrange [--host NAME] | restart [lane] | shared --content BASE64|--absent | scratch [--tidy] [--open CARD] [--move CARD] [--largest PATH ... [--by inodes|space]] [--json] | update [--check] | cardd --root R --db D [--check] [--running SHA] [--restart JSON] | home add <lane> --url U (--token-file FILE|- | --bws JSON) [--hold] [lane options] | home set <lane> [--args JSON] [--worker-args JSON] | home transport <host> <lane|all> --from <reference-lane> | home transport <host> --check | home memory <lane> [--seed DIR] [--thinking LEVEL] | wake <lane> <note> [--script NAME] | secrets [lane] | cost | migrate [--undo]",
+  CUTOVER_USAGE,
   "lane options of home add: --host NAME --hosts JSON --roots JSON --tier MODEL --direnv FOLDER --args JSON --worker-args JSON",
   "  --hosts and --roots take a JSON object, --args and --worker-args a JSON array of strings. home set takes only --args and --worker-args, and changes only those.",
   "  --token-file reads the lane token from a file, or from standard input with -, so it never sits in a command line. --hold makes the home held until it is started.",
@@ -420,6 +423,27 @@ switch (command ?? "") {
     const result =
       values.check === true ? (checkHost(root) ?? { state: "ready", root }) : updateHost(root);
     console.log(JSON.stringify(result));
+    break;
+  }
+  case "job-cutover": {
+    const main = readLaneConfig(root);
+    if (main === undefined) throw new Error("job-cutover needs main's config/lane.json");
+    const [action, id, evidence] = rest;
+    const args =
+      (action === "status" || action === "seal") && rest.length === 1
+        ? { action: action === "seal" ? ("seal" as const) : ("status" as const) }
+        : action === "confirm-stop" &&
+            id !== undefined &&
+            /^\d+$/.test(id) &&
+            evidence !== undefined &&
+            rest.length === 3
+          ? { action: "confirm-stop" as const, job: Number(id), evidence }
+          : undefined;
+    if (args === undefined) throw new Error(CUTOVER_USAGE);
+    const { callCardd } = await import("./cardd-call.ts");
+    const result = await callCardd(main, "job.cutover", args, AbortSignal.timeout(5000), true);
+    console.log(JSON.stringify(result));
+    if (result.state !== "ready") process.exitCode = 1;
     break;
   }
   case "cardd": {

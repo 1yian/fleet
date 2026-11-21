@@ -206,6 +206,8 @@ jobs:
       FLEET_E2E_CONCURRENCY: "1"
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/install
       - name: Install herdr
         env:

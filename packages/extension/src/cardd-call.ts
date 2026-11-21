@@ -1,6 +1,7 @@
 import {
   check,
   HttpOutcomeSchema,
+  PrivateHttpOutcomeSchema,
   OPS,
   type OpArgs,
   type OpName,
@@ -21,6 +22,8 @@ export async function callCardd<N extends OpName>(
   lane: LaneConfig,
   op: N,
   args: OpArgs<N>,
+  signal?: AbortSignal,
+  strict = false,
 ): Promise<OpResult<N>> {
   const checked = check(OPS[op].args, args);
   const { value: token, note } = await laneToken(lane, bwsFor(lane.bws));
@@ -30,8 +33,15 @@ export async function callCardd<N extends OpName>(
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ op, args: checked }),
+    redirect: strict ? "error" : "follow",
+    ...(signal === undefined ? {} : { signal }),
   });
-  const outcome = check(HttpOutcomeSchema, await response.json());
+  const outcome = check(
+    strict ? PrivateHttpOutcomeSchema : HttpOutcomeSchema,
+    await response.json(),
+  );
   if (!outcome.ok) throw new Error(outcome.error);
+  if (strict && response.status !== 200)
+    throw new Error(`Unexpected response to ${op}: ${String(response.status)}`);
   return checkResult(op, outcome.value);
 }
