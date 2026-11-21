@@ -143,15 +143,25 @@ test("a failed refund shows both the idle pane context and the scrubbed refusal 
     "the failed restart tool result",
     WORKER_WAIT_MS,
   );
-  assert.match(result, /Pi is not running in pane/);
+  assert.match(result, /The replacement did not start\. Pi is not running in pane/);
+  assert.doesNotMatch(result, /was started in it|the worker never connected/);
+  assert.match(result, /Last lines of the pane:\nIdle shell context --fleet-token \[hidden\]/);
   assert.match(result, /fixture refused the start --fleet-token \[hidden\]/);
-  assert.doesNotMatch(result, /fixture-secret/);
+  assert.match(result, /fixture transport warning --fleet-token \[hidden\]/);
+  assert.doesNotMatch(result, /fixture-secret|stdout-fixture-metadata/);
   assert.match(
     result,
     /The restart refund was not confirmed; this request may still count toward the hourly cap\./,
   );
   const thread = await cardd.thread(1);
-  assert.ok(thread.entries.every((entry) => !entry.body.includes("fixture refused the start")));
+  assert.ok(
+    thread.entries.every(
+      ({ body }) =>
+        !/fixture refused the start|fixture transport warning|Idle shell context|stdout-fixture-metadata/.test(
+          body,
+        ),
+    ),
+  );
 });
 
 async function verifyCountedRestart(
@@ -205,12 +215,11 @@ function generationOf({ cardd }: DispatchLab): number {
   }
 }
 
-async function stopReplacement(
+async function replacementGroup(
   lab: DispatchLab,
   original: number,
   generation: number,
-): Promise<void> {
-  const attempt = "c-1-a1";
+): Promise<number> {
   const deadline = Date.now() + WORKER_WAIT_MS;
   for (;;) {
     const group = await workerGroupOf(lab.lab, "c-1-a1");
