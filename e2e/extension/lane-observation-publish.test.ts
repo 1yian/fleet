@@ -103,3 +103,10 @@ test("a pane replaced between the two close reads, with the count unchanged, is 
   assert.equal(existsSync(join(ops(), "state", "stopped")), false);
   assert.equal((await workspace("ops"))?.["workspace_id"], before["workspace_id"]);
 });
+
+test("a non-Pi foreground child in the shell's own process group is busy and authorizes no launch or hold", async () => {
+  const root = await idlePane("ops", ops());
+  assert.deepEqual(maintain("shared-group-child", root), action("ops", "running"));
+  assert.equal(existsSync(join(ops(), "state", "starts")), false);
+  assert.equal(existsSync(join(ops(), "state", "stopped")), false);
+});

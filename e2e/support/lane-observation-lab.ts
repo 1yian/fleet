@@ -108,6 +108,11 @@ case "$1 $2:$HERDR_FAULT" in
     if [ "\${4%:*}" = "$FAULT_PANE" ]; then
       "$REAL_HERDR" workspace close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
     fi ;;
+  'pane process-info:shared-group-child')
+    if [ "$4" = "$FAULT_PANE" ]; then
+      printf '%s' '{"result":{"process_info":{"shell_pid":1,"foreground_process_group_id":1,"foreground_processes":[{"pid":2,"name":"sleep","argv":["sleep","60"]}]}}}'
+      exit 0
+    fi ;;
   'pane process-info:pi-then-busy')
     if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.pi" ]; then
       : > "$HERDR_FAULT_LOG.pi"
