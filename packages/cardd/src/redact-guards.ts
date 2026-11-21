@@ -15,10 +15,10 @@ const COOKIE_HEADER = new RegExp(
 );
 const QUOTE_ESCAPE = String.raw`\\+(?:u00(?:22|27)|x(?:22|27)|u\{0*(?:22|27)\}|U000000(?:22|27))`;
 const ESCAPED_KEY = new RegExp(
-  String.raw`(?=(["']|${QUOTE_ESCAPE})((?:(?!${QUOTE_ESCAPE})(?:[^"'\\\n]|\\+[^"'\\\n]))+)(\\*["']|${QUOTE_ESCAPE})\s*:)`,
+  String.raw`(?=(\\*["']|${QUOTE_ESCAPE})((?:(?!${QUOTE_ESCAPE})(?:[^"'\\\n]|\\+[^"'\\\n]))+)(\\*["']|${QUOTE_ESCAPE})\s*:)`,
   "gi",
 );
-const PLAIN_QUOTE = /^\\*["']$/;
+const PLAIN_QUOTE = /^\\?["']$/;
 const KEY_ESCAPE =
   /\\+(?:u\{([\da-fA-F]+)\}|u([\da-fA-F]{4})|x([\da-fA-F]{2})|U([\da-fA-F]{8})|[^\\\n])/g;
 const CREDENTIAL_KEY = new RegExp(String.raw`^${SECRET_NAME}$`, "i");
