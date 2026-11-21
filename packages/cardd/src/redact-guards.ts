@@ -19,9 +19,10 @@ const KEY_ESCAPE =
 const CREDENTIAL_KEY = new RegExp(String.raw`^${SECRET_NAME}$`, "i");
 const RECORD_KEY = new RegExp(String.raw`^${RECORD_NAME}$`, "i");
 const RECORD_MENTION = new RegExp(String.raw`(?<![\w-])${RECORD_NAME}(?![\w-])`, "i");
-const EXPLICIT_KEY = new RegExp(
-  String.raw`(?:^|[{\[,])[ \t]*(?:-[ \t]+)*\?(?=[ \t\n]|(?![\s\S]))([\s\S]*?)(?=\n[ \t]*:(?:[ \t\n]|(?![\s\S]))|[ \t]:(?:[ \t\n,}\]]|(?![\s\S]))|(?![\s\S]))`,
-  "gm",
+const EXPLICIT_KEY = /(?:^|[{[,])[ \t]*(?:-[ \t]+)*\?(?=[ \t\n]|(?![\s\S]))/gm;
+const DECORATED_KEY = new RegExp(
+  String.raw`(?:^|[\s{\[,])(?:(?:!(?:<[^>\s]+>|[^\s,\[\]{}<>]*)|&[^\s,\[\]{}]+)\s+)+["']?${RECORD_NAME}["']?[ \t]*:`,
+  "im",
 );
 const KEY_SPLICE = /\\+\n[ \t]*/g;
 const UNICODE_ESCAPE = /\\+u([\da-f]{4})/gi;
@@ -145,10 +146,11 @@ export function hasEscapedCredentialKey(text: string): boolean {
 }
 
 export function hasExplicitCredentialKey(text: string): boolean {
-  for (const [, key = ""] of text.matchAll(EXPLICIT_KEY)) {
-    if (RECORD_MENTION.test(decodeKeyEscapes(key.replace(KEY_SPLICE, "")))) return true;
+  for (const { index } of text.matchAll(EXPLICIT_KEY)) {
+    const rest = decodeKeyEscapes(text.slice(index).replace(KEY_SPLICE, ""));
+    if (RECORD_MENTION.test(rest)) return true;
   }
-  return false;
+  return DECORATED_KEY.test(text);
 }
 
 const PARAM_NAME = new RegExp(String.raw`(?=[?&#;]([^=&#?;\n\u0001]*)=)`, "g");

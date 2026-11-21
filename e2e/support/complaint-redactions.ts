@@ -476,10 +476,13 @@ const ESCAPED_KEY_COMPLAINTS = [
   "? password\n: paper canoe",
   '? "pass\\x77ord"\n: paper canoe',
   "? \n  token\n: paper canoe",
-  "{? password : paper canoe}",
   '? "pass\\\n  word"\n: paper canoe',
   "?\n # note\n password\n: paper canoe",
   "- ? \n  # note\n  token\n  : paper canoe",
+  "?\n # source : env\n password\n: paper canoe",
+  "!!str password: paper canoe",
+  "&anchor token: paper canoe",
+  "{!!str token: paper canoe, next: yes}",
 ];
 
 const RECORD_WITHHELD = "[credential record withheld: credential boundaries unclear]";
