@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { ghLogin, type GhRun } from "./gh-login.ts";
-import { discoverLanes } from "./homes.ts";
+import { discoverLanes, type Discovery } from "./lane-homes.ts";
 import { isRecord, readLaneConfig } from "./lane-config.ts";
 import { remainingMs } from "./maintenance-budget.ts";
 
@@ -172,19 +172,24 @@ export function profileOf(home: string, settings: Record<string, unknown>): stri
   );
 }
 
-function memoryProblems(root: string, host: string, retained?: string[]): string[] {
+export interface SweepSnapshot {
+  readonly retained: string[];
+  readonly discovered: Discovery;
+}
+
+function memoryProblems(root: string, host: string, snapshot?: SweepSnapshot): string[] {
   let main: ReturnType<typeof readLaneConfig>;
   try {
     main = readLaneConfig(root);
   } catch (error) {
-    if (retained === undefined) throw error;
-    retained.push(
+    if (snapshot === undefined) throw error;
+    snapshot.retained.push(
       `root lane config could not be read: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   const homes = [
     ...(main === undefined ? [] : [{ lane: main.lane, home: root }]),
-    ...discoverLanes(root).homes,
+    ...(snapshot?.discovered ?? discoverLanes(root)).homes,
   ];
   return homes.flatMap(({ lane, home }) => {
     const settings = settingsOf(home);
@@ -205,11 +210,11 @@ export function hostProblems(
   root: string,
   checkLogin = true,
   deadline?: number,
-  retained?: string[],
+  snapshot?: SweepSnapshot,
 ): string[] {
   const host = hostname();
   return [
     ...TOOLS.flatMap((tool) => toolProblem(tool, host, checkLogin, deadline) ?? []),
-    ...memoryProblems(root, host, retained),
+    ...memoryProblems(root, host, snapshot),
   ];
 }

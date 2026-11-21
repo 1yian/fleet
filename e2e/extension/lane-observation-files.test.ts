@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import {
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { promisify } from "node:util";
 import { isRecord, records } from "../support/json.ts";
 import {
   addLane,
+  idlePane,
   here,
   fleet,
   fleetEnv,
@@ -115,7 +126,7 @@ test("homes claiming one lane are a single unread record under that lane, and a 
 
 test("a blank lane name is unread under its directory, never started, and keeps sibling outcomes", () => {
   addLane("zz");
-  copyHome("blank", (config) => {
+  const blank = copyHome("blank", (config) => {
     config["lane"] = " ";
   });
   const reply: unknown = JSON.parse(fleet(typedMaintenance));
@@ -129,7 +140,7 @@ test("a blank lane name is unread under its directory, never started, and keeps 
       ["zz", "started"],
     ],
   );
-  assert.equal(existsSync(join(here.root, ".worktrees", "lane-blank", "state", "starts")), false);
+  assert.equal(existsSync(join(blank, "state", "starts")), false);
 });
 
 test("an unreadable root config is reported by typed maintenance without stopping verified second mates", async () => {
@@ -169,4 +180,53 @@ test("a dangling lane config, stop marker or start history is unread, never abse
   assert.deepEqual(reply["expected"], ["ops"]);
   assert.ok(typeof reply["failed"] === "string" && reply["failed"].includes("ops"));
   assert.equal(existsSync(join(state, "starts")), false);
+});
+
+test("a workspace row without a pane count is unread and is never closed by stop or restart", async () => {
+  const home = lane();
+  const root = await idlePane("ops", home);
+  const stopped = join(home, "state", "stopped");
+  const before = await workspace("ops");
+  assert.ok(typeof before?.["workspace_id"] === "string");
+  assert.throws(() => fleet(["stop", "ops"], "no-count", root), /no pane count/);
+  assert.throws(() => fleet(["restart", "ops"], "no-count", root), /no pane count/);
+  assert.equal(existsSync(stopped), false);
+  assert.equal((await workspace("ops"))?.["workspace_id"], before["workspace_id"]);
+  assert.equal(fleet(["stop", "ops"]).trim(), "ops: stopped");
+  assert.equal(await workspace("ops"), undefined);
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+});
+
+test("a home that becomes readable after the sweep's snapshot waits for the next sweep's preflight", async () => {
+  const fix = addLane("fix");
+  const config = join(fix, "config", "lane.json");
+  const good = readFileSync(config, "utf8");
+  writeFileSync(join(fix, "config", "optchat.json"), JSON.stringify({ profile: "ghost" }));
+  rmSync(config);
+  execFileSync("mkfifo", [config]);
+  const sweep = promisify(execFile)(process.execPath, [here.launch, ...typedMaintenance], {
+    encoding: "utf8",
+    env: fleetEnv(),
+    timeout: 90_000,
+  });
+  await writeFile(config, "{");
+  const repair = writeFile(config, good);
+  const { stdout } = await sweep;
+  const reader = await open(config, constants.O_RDONLY | constants.O_NONBLOCK);
+  await repair;
+  await reader.close();
+  const reply: unknown = JSON.parse(stdout);
+  assert.ok(isRecord(reply));
+  assert.deepEqual(reply["expected"], ["ops", "fix"]);
+  assert.match(String(reply["failed"]), /lane fix could not be read: .*not valid JSON/);
+  assert.deepEqual(records(reply["outcomes"]), [{ lane: "ops", action: "started" }]);
+  assert.equal(await workspace("fix"), undefined);
+  assert.equal(existsSync(join(fix, "state", "starts")), false);
+  rmSync(config);
+  writeFileSync(config, good);
+  const next: unknown = JSON.parse(fleet(typedMaintenance));
+  assert.ok(isRecord(next));
+  assert.match(String(next["failed"]), /optchat of lane fix has no AGENTS.md and config.json/);
+  assert.equal(await workspace("fix"), undefined);
+  assert.equal(existsSync(join(fix, "state", "starts")), false);
 });

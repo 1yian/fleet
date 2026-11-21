@@ -102,7 +102,12 @@ function mergeSharedClaims(scanned: Scanned[]): Scanned[] {
   });
 }
 
-export function discoverLanes(root: string): { homes: LaneHome[]; unread: UnreadLane[] } {
+export interface Discovery {
+  readonly homes: LaneHome[];
+  readonly unread: UnreadLane[];
+}
+
+export function discoverLanes(root: string): Discovery {
   const homes: LaneHome[] = [];
   const unread: UnreadLane[] = [];
   for (const found of scanHomes(root)) {

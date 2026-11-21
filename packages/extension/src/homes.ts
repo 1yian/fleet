@@ -19,8 +19,8 @@ import {
   gitWithin,
   homeOf,
   unreadFailure,
+  type Discovery,
   type LaneHome,
-  type UnreadLane,
 } from "./lane-homes.ts";
 import { idlePaneOf, lanePaneState, workspaceOf } from "./lane-observation.ts";
 import { withLifecycleLock } from "./lifecycle-lock.ts";
@@ -317,11 +317,8 @@ async function arrangeAfterStart(host: string, deadline?: number): Promise<void>
   );
 }
 
-const named = (
-  root: string,
-  lane: string | undefined,
-): { homes: LaneHome[]; unread: UnreadLane[] } => {
-  const all = discoverLanes(root);
+const named = (root: string, lane: string | undefined, discovered?: Discovery): Discovery => {
+  const all = discovered ?? discoverLanes(root);
   if (lane === undefined) return all;
   const found = {
     homes: all.homes.filter((each) => each.lane === lane),
@@ -366,8 +363,9 @@ export async function up(
   only: string | undefined,
   deadline?: number,
   offset = 0,
+  discovered?: Discovery,
 ): Promise<SweepResult> {
-  const { homes: lanes, unread } = named(root, only);
+  const { homes: lanes, unread } = named(root, only, discovered);
   const expected = [...lanes, ...unread].map(({ lane }) => lane);
   const unreadFailed = unreadFailure(unread);
   const first = offset % Math.max(1, lanes.length);

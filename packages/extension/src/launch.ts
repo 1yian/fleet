@@ -5,6 +5,7 @@ import { arrangeHere } from "./arrange.ts";
 import { homeTransport } from "./home-transport.ts";
 import {
   codeRoot,
+  discoverLanes,
   existingHome,
   homeOf,
   laneHomes,
@@ -29,7 +30,7 @@ import {
 import { scratchLines } from "./scratch-command.ts";
 import { migrate, undoMigration } from "./migrate.ts";
 import { convergeSharedPreferences, PRESERVED_PREFIX } from "./standing.ts";
-import { hostProblems } from "./prerequisites.ts";
+import { hostProblems, type SweepSnapshot } from "./prerequisites.ts";
 import { mateTitle } from "./titles.ts";
 import { checkCardd, checkHost, updateCardd, updateHost } from "./update.ts";
 
@@ -246,12 +247,12 @@ function lane(): string {
 const maintenance = command === "up" && values.maintenance === true;
 const maintenanceDeadline = maintenance ? performance.now() + MAINTENANCE_SWEEP_MS : undefined;
 
-function checkLaunchPrerequisites(root: string, retained?: string[]): void {
+function checkLaunchPrerequisites(root: string, snapshot?: SweepSnapshot): void {
   if (values.host !== undefined) {
     console.error(USAGE);
     process.exit(2);
   }
-  const problems = hostProblems(root, values.maintenance !== true, maintenanceDeadline, retained);
+  const problems = hostProblems(root, values.maintenance !== true, maintenanceDeadline, snapshot);
   if (problems.length > 0) {
     if (typedMaintenance) throw new Error(problems.join("\n"));
     console.error(problems.join("\n"));
@@ -274,8 +275,9 @@ async function showTypedMaintenance(): Promise<void> {
   };
   try {
     const root = codeRoot(maintenanceDeadline);
-    checkLaunchPrerequisites(root, retained);
-    const result = await up(root, rest[0], maintenanceDeadline, offset);
+    const snapshot = { retained, discovered: discoverLanes(root) };
+    checkLaunchPrerequisites(root, snapshot);
+    const result = await up(root, rest[0], maintenanceDeadline, offset, snapshot.discovered);
     await writeReply(JSON.stringify({ ...result, ...withRetained(result.failed) }));
   } catch (error) {
     const failed = error instanceof Error ? error.message : String(error);

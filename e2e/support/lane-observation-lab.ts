@@ -13,6 +13,14 @@ const HERDR_SHIM = `#!/bin/sh
 case "$1 $2:$HERDR_FAULT" in
   'workspace list:failed') printf '%s' '{"result":{"workspaces":[]}}'; exit 1 ;;
   'workspace list:blank') exit 0 ;;
+  'workspace list:no-count')
+    reply=$("$REAL_HERDR" "$@") || exit $?
+    printf '%s' "$reply" | node -e '
+      const reply = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      for (const row of reply.result.workspaces) delete row.pane_count;
+      console.log(JSON.stringify(reply));
+    '
+    exit $? ;;
   'workspace list:partial') printf '%s' '{"result":{"workspaces":[{"label":"2ndmate-ops"}]}}'; exit 0 ;;
   'workspace list:timeout') printf '%s' '{"result":{"workspaces":[]}}'; exec sleep 60 ;;
   'workspace list:omit-once')

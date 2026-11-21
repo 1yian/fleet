@@ -246,10 +246,15 @@ export async function workspaceOf(
     const current = listed.filter((row) => row["label"] === title);
     if (current.length > 1)
       throw new HostUnread(`herdr lists ${String(current.length)} workspaces titled ${title}`);
-    return {
-      current,
-      legacy: listed.filter((row) => row["label"] === legacyTitle && !isWorkerWorkspace(row)),
-    };
+    const legacy = listed.filter((row) => row["label"] === legacyTitle && !isWorkerWorkspace(row));
+    for (const row of [...current, ...legacy]) {
+      const count = row["pane_count"];
+      if (typeof count !== "number" || !Number.isInteger(count) || count < 1)
+        throw new HostUnread(
+          `herdr returned no pane count for workspace ${String(row["workspace_id"])}`,
+        );
+    }
+    return { current, legacy };
   };
   const changed = () => new HostUnread(`herdr workspace candidates changed for ${info.lane}`);
   const decide = async (rows: Listed, before?: Listed) => {
