@@ -398,7 +398,9 @@ function withheldKind(source: string, envelope: Envelope | null): Kind {
   const refused =
     hasCookieRecord(source) || [source, logicalView(source)].some(hasEncodedCredentialParam);
   if (envelope === null) return refused ? "withheld" : classify("");
-  return envelope.blocked ? "withheld" : classify(envelope.status);
+  return envelope.blocked || envelope.status.startsWith("2")
+    ? "withheld"
+    : classify(envelope.status);
 }
 
 export function diagnoseFailure(text: string): {
@@ -412,9 +414,10 @@ export function diagnoseFailure(text: string): {
   if (marked) {
     const envelope = LEADING_ENVELOPE.exec(source);
     const kind = withheldKind(source, envelope);
-    const seconds = envelope?.blocked
-      ? undefined
-      : (envelope?.inline ?? headerRetryAfter(envelope?.rest ?? ""));
+    const seconds =
+      kind === "withheld"
+        ? undefined
+        : (envelope?.inline ?? headerRetryAfter(envelope?.rest ?? ""));
     return { error, signals: { kind, retryAfter: milliseconds(seconds) } };
   }
   return { error, signals: { kind: classify(error), retryAfter: retryAfterMs(diagnostic) } };

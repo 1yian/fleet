@@ -108,6 +108,18 @@ export const REDACTED_COMPLAINTS = [
     "[URL withheld: credential boundaries unclear]",
   ],
   [
+    "Callback https://localhost/callback?password=pa\tper failed",
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    "Callback https://localhost/callback?password=pa\nper failed",
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    String.raw`{"url":"https://localhost/callback?password=pa\u0009per"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
     "Callback https://localhost/callback#pass%77ord=paper failed",
     "[URL withheld: credential boundaries unclear]",
   ],
@@ -427,21 +439,37 @@ export const RECOVERY_SCOPE = [
     "a proxy CONNECT success before an origin auth failure",
     "HTTP/1.1 200 Connection established\r\n\r\nHTTP/2 401\r\nSet-Cookie: session=paper\r\n\r\n",
     "blocked",
+    /is blocked/,
   ],
   [
     "a proxy CONNECT success before an origin overload with a proxy retry hint",
     "HTTP/1.1 200 Connection established\r\nRetry-After: 99999\r\n\r\nHTTP/2 503\r\nRetry-After: 120\r\nSet-Cookie: session=paper\r\n\r\n",
     "delayed",
+    /not eligible for recovery/,
   ],
   [
     "a proxy CONNECT success with malformed origin framing",
     "HTTP/1.1 200 Connection established\r\n\r\nSet-Cookie: session=paper\r\n\r\n",
     "blocked",
+    /is blocked/,
+  ],
+  [
+    "a direct success response with a withheld cookie",
+    "HTTP/1.1 200 OK\r\nSet-Cookie: session=paper\r\n\r\n",
+    "blocked",
+    /is blocked/,
+  ],
+  [
+    "a proxy CONNECT success before an origin success with a withheld cookie",
+    "HTTP/1.1 200 Connection established\r\n\r\nHTTP/2 200\r\nSet-Cookie: session=paper\r\n\r\n",
+    "blocked",
+    /is blocked/,
   ],
   [
     "a browser-normalized escaped credential name",
     String.raw`{"url":"https://localhost/cb?pass\u0009word=paper"}`,
     "blocked",
+    /is blocked/,
   ],
   [
     "an unrelated withheld curl command",

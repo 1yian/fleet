@@ -167,13 +167,22 @@ function withoutBrowserWhitespace(found: Decoded): Decoded {
   };
 }
 
+const VALUE_END = /[\s"',;&#<>)\]}]/;
+
+function valueBoundary(view: string, start: number): number {
+  const stop = view.slice(start).search(VALUE_END);
+  return stop < 0 ? view.length : start + stop;
+}
+
 function hasCredentialAssignment(found: Decoded, candidatesOnly: boolean): boolean {
   for (const match of found.view.matchAll(PARAM_NAME)) {
     const name = match[1] ?? "";
     const key = percentDecoded(name);
     if (!CREDENTIAL_KEY.test(key)) continue;
     if (candidatesOnly && !URL_CANDIDATE.test(found.view.slice(0, match.index))) continue;
-    if (key !== name || !literalSpan(found, match.index, name.length + 2)) return true;
+    const valueStart = match.index + name.length + 2;
+    const valueEnd = candidatesOnly ? valueBoundary(found.view, valueStart) : valueStart;
+    if (key !== name || !literalSpan(found, match.index, valueEnd - match.index)) return true;
   }
   return false;
 }

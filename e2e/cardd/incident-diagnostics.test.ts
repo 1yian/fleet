@@ -388,6 +388,14 @@ for (const [name, diagnostic] of [
     "Callback https:/localhost/callback?pass\tword=paper failed",
   ],
   [
+    "a literal tab inside a credential value",
+    "Callback https://localhost/cb?password=pa\tper failed",
+  ],
+  [
+    "an escaped tab inside a credential value",
+    String.raw`{"url":"https://localhost/cb?password=pa\u0009per"}`,
+  ],
+  [
     "an encoded fragment parameter name",
     "Callback https://localhost/callback#pass%77ord=paper failed",
   ],
