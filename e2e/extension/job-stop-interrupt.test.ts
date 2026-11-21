@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type ServerMessage } from "@fleet/protocol";
@@ -127,4 +127,51 @@ test("a legacy stop with no crossing news still interrupts its exact pane", asyn
     },
   ]);
   assert.deepEqual(readFileSync(shim.keys, "utf8").trim().split("\n"), [String(pane["pane_id"])]);
+});
+
+test("a stop that arrives while the launch is still creating its tab signals no same-named decoy", async (t) => {
+  jl.env["PROBE_STOP_RESULT"] = "1";
+  const proxy = await jl.proxy(t);
+  proxy.httpFault(
+    "job.prepare",
+    { status: 400, body: { ok: false, error: "unknown operation job.prepare" } },
+    1,
+  );
+  const shim = jl.installShim();
+  writeFileSync(shim.release, "");
+  writeFileSync(shim.holdTab, "");
+  t.after(() => rmSync(shim.holdTab, { force: true }));
+  await jl.lab.run([
+    "tab",
+    "create",
+    "--workspace",
+    jl.env["HERDR_WORKSPACE_ID"] ?? "",
+    "--label",
+    "job-1-gate",
+    "--no-focus",
+  ]);
+  const started = until(
+    () => (proxy.replied.includes("job.start") ? true : undefined),
+    "the legacy start reply",
+  );
+  proxy.callFault("job.stop", { gate: started });
+  jl.h.onModel(() => ({
+    tool: "run_long",
+    args: { label: "gate", command: "echo gate" },
+    alongside: [{ tool: "stop_job", args: { job: 1 } }],
+  }));
+  jl.h.onModel(() => ({ text: "The launch was still starting" }));
+  jl.worker();
+  const stopped = await jl.h.waitFor(
+    (event) => event["type"] === "stop_result",
+    "the stop that crossed the launch",
+  );
+  assert.equal(stopped["isError"], false);
+  assert.deepEqual(stopped["content"], [
+    {
+      type: "text",
+      text: "job 1 (gate) is still starting in this worker, so nothing was signalled.",
+    },
+  ]);
+  assert.equal(existsSync(shim.keys), false);
 });

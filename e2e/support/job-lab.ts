@@ -169,6 +169,7 @@ export class JobLab {
       creates: join(this.jobDir, "tab-creates"),
       runs: join(this.jobDir, "pane-runs"),
       keys: join(this.jobDir, "pane-keys"),
+      holdTab: join(this.jobDir, "hold-tab-create"),
       release: join(this.jobDir, "release-dispatch"),
     };
     const herdr = execFileSync("sh", ["-c", "command -v herdr"], { encoding: "utf8" }).trim();
@@ -180,6 +181,7 @@ if [ "$1 $2" = 'tab close' ]; then
 fi
 if [ "$1 $2" = 'tab create' ]; then
   echo tab >> ${quote(logs.creates)}
+  while [ -e ${quote(logs.holdTab)} ]; do sleep 0.05; done
 fi
 if [ "$1 $2" = 'pane send-keys' ]; then
   echo "$3" >> ${quote(logs.keys)}
@@ -280,6 +282,12 @@ exec ${quote(herdr)} "$@"
             client.send(JSON.stringify({ t: "result", id: message.id, ok: true, ...fault.local }));
             return;
           }
+          if (fault !== undefined && "gate" in fault) {
+            void fault.gate.then(() => {
+              if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
+            });
+            return;
+          }
         }
         if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
       });
@@ -377,7 +385,13 @@ function deliver(
 }
 
 function rewriteResult(message: ServerMessage, text: string, fault: CallFault | undefined): string {
-  if (message.t !== "result" || fault === undefined || "local" in fault || "hold" in fault)
+  if (
+    message.t !== "result" ||
+    fault === undefined ||
+    "local" in fault ||
+    "gate" in fault ||
+    "hold" in fault
+  )
     return text;
   if ("raw" in fault) return JSON.stringify({ ...message, ...fault.raw });
   if ("error" in fault)
@@ -390,6 +404,7 @@ type CallFault =
   | { error: string }
   | { raw: Record<string, unknown> }
   | { local: Record<string, unknown> }
+  | { gate: Promise<unknown> }
   | { hold: Promise<unknown>; seen?: (message: ServerMessage) => void };
 type HttpFault = { redirect: string } | { value: unknown } | { status: number; body: unknown };
 

@@ -460,23 +460,32 @@ export class Jobs {
       return current ? `${named} is not running: nothing to stop.` : superseded;
     }
     if (stale()) return superseded;
+    const starting = `${named} is still starting in this worker, so nothing was signalled.`;
     let tab = known ?? this.ownedTabs.get(job);
     if (tab === undefined) {
+      if (this.launching.has(job)) return starting;
       if (!legacy && !(await confirmLegacyStop(this.endpoint, job, label)))
         return `${named} has no verified tab ID in this worker session, so nothing was signalled.`;
       const tabs = records(
         (await herdr("local", ["tab", "list", "--workspace", workspace]))["tabs"],
       );
       if (stale()) return superseded;
-      const matches = tabs.filter((each) => each["label"] === tabName(job, label));
-      if (matches.length > 1)
-        return `${named} has multiple matching tabs and no known tab ID, so nothing was signalled.`;
-      tab = field(matches[0], "tab_id");
+      tab = this.ownedTabs.get(job);
+      if (tab === undefined) {
+        if (this.launching.has(job)) return starting;
+        const matches = tabs.filter((each) => each["label"] === tabName(job, label));
+        if (matches.length > 1)
+          return `${named} has multiple matching tabs and no known tab ID, so nothing was signalled.`;
+        tab = field(matches[0], "tab_id");
+      }
     }
     const panes = records(
       (await herdr("local", ["pane", "list", "--workspace", workspace]))["panes"],
     );
     if (stale()) return superseded;
+    const owned = this.ownedTabs.get(job);
+    if (owned !== undefined && owned !== tab) return starting;
+    if (known === undefined && owned === undefined && this.launching.has(job)) return starting;
     const pane = field(
       panes.find((each) => tab !== undefined && each["tab_id"] === tab),
       "pane_id",
