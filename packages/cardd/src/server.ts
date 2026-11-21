@@ -21,7 +21,7 @@ import { sanitize } from "./incident-kinds.ts";
 import { expireJobStarts } from "./jobs.ts";
 import { performOp } from "./ops.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
-import { sessionByToken, setSessionState, transaction, type Session } from "./store.ts";
+import { findSession, setSessionState, transaction, type Session } from "./store.ts";
 import { Access, type AccessConfig } from "./access.ts";
 import { Web } from "./web.ts";
 import { LoopHealth } from "./health.ts";
@@ -190,7 +190,7 @@ class Hub {
     let session: Session | undefined;
     let hello: Extract<ClientMessage, { t: "hello" }> | undefined;
     const live = (): Session => {
-      const current = token === undefined ? undefined : sessionByToken(this.db, token);
+      const current = token === undefined ? undefined : findSession(this.db, "token", token);
       if (!current?.live) throw new NotLive("the session is not live");
       return current;
     };
@@ -276,7 +276,7 @@ class Hub {
         .end(JSON.stringify(outcome));
     };
     const token = /^Bearer (\S+)$/.exec(request.headers.authorization ?? "")?.[1];
-    const session = token === undefined ? undefined : sessionByToken(this.db, token);
+    const session = token === undefined ? undefined : findSession(this.db, "token", token);
     if (!session?.live) {
       reply(401, { ok: false, error: "unknown token, or the attempt ended" });
       return;
@@ -294,7 +294,7 @@ class Hub {
     socket: WebSocket,
     message: Extract<ClientMessage, { t: "hello" }>,
   ): Session | undefined {
-    const session = sessionByToken(this.db, message.token);
+    const session = findSession(this.db, "token", message.token);
     if (!session?.live) {
       if (session !== undefined)
         this.sayOnce(

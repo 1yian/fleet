@@ -15,7 +15,7 @@ import { boardFor, cardView } from "./board.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
 import { comment } from "./comments.ts";
-import { listComplaints, recordComplaint } from "./complaints.ts";
+import { fileComplaint } from "./complaints.ts";
 import {
   acknowledgeMaintenance,
   maintenanceStatus,
@@ -48,6 +48,7 @@ import {
   addCard,
   addEntry,
   cardEntries,
+  findSession,
   getCard,
   loadCard,
   mainLane,
@@ -172,14 +173,13 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   }),
   "maintenance.ack": (db, session, raw) =>
     acknowledgeMaintenance(db, session, check(OPS["maintenance.ack"].args, raw)),
-  complain: (db, session, raw, timing) => ({
-    value: { id: recordComplaint(db, session, check(OPS.complain.args, raw), timing.wall()) },
-    notify: [],
-  }),
-  complaints: (db, session, raw) => ({
-    value: listComplaints(db, session, check(OPS.complaints.args, raw)),
-    notify: [],
-  }),
+  "complaint.publish": (db, session, raw, timing) => {
+    const args = check(OPS["complaint.publish"].args, raw);
+    const current = findSession(db, "id", session.id);
+    if (!current?.live) throw new Error("the session is not live");
+    fileComplaint(db, current, args, timing.wall());
+    return { value: null, notify: [] };
+  },
   "close.begin": (db, session, raw, _timing, _note, closeCheck) =>
     closeBegin(db, session, raw, closeCheck),
   "close.finish": (db, session, raw, _timing, _note, closeCheck) =>

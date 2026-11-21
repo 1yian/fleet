@@ -270,10 +270,10 @@ export function setRepo(db: DatabaseSync, project: string, repo: string): void {
   if (changes === 0) throw new Error(`project ${project} is not in the registry`);
 }
 
-export function sessionByToken(db: DatabaseSync, token: string): Session | undefined {
+export function findSession(db: DatabaseSync, by: "id" | "token", value: string) {
   const sql = `SELECT ${SESSION_JSON} AS j FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt
-    WHERE s.token_hash = ?`;
-  const [row] = json(db, sql, hash(token));
+    WHERE s.${by === "id" ? "id" : "token_hash"} = ?`;
+  const [row] = json(db, sql, by === "id" ? value : hash(value));
   return row === undefined ? undefined : check(SessionSchema, row);
 }
 

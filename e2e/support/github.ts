@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseRecord, publishRecord } from "./json.ts";
@@ -9,6 +9,20 @@ const FAKE_DIRENV = fileURLToPath(new URL("./fake-direnv.ts", import.meta.url));
 
 const shimOf = (script: string): string =>
   `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(script)} "$@"\n`;
+
+export interface FakeIssue {
+  readonly repo: string;
+  readonly title: string;
+  readonly body: string;
+}
+
+function linesOf(path: string): string[] {
+  return existsSync(path)
+    ? readFileSync(path, "utf8")
+        .split("\n")
+        .filter((line) => line !== "")
+    : [];
+}
 
 export class FakeGitHub {
   private readonly dir = tempDir("fleet-gh-");
@@ -40,12 +54,30 @@ export class FakeGitHub {
   }
 
   calls(): string[] {
-    const log = `${this.file}.log`;
-    return existsSync(log)
-      ? readFileSync(log, "utf8")
-          .split("\n")
-          .filter((line) => line !== "")
-      : [];
+    return linesOf(`${this.file}.log`);
+  }
+
+  issues(): FakeIssue[] {
+    return linesOf(`${this.file}.issues`).map((line) => {
+      const issue = parseRecord(line);
+      return {
+        repo: String(issue["repo"]),
+        title: String(issue["title"]),
+        body: String(issue["body"]),
+      };
+    });
+  }
+
+  holdIssues(): () => void {
+    const hold = `${this.file}.hold-issues`;
+    writeFileSync(hold, "");
+    return () => {
+      rmSync(hold, { force: true });
+    };
+  }
+
+  failIssues(message: string): void {
+    writeFileSync(`${this.file}.broken-issues`, message);
   }
 
   state(url: string): unknown {
