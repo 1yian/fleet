@@ -81,6 +81,7 @@ export class Jobs {
   private readonly running = new Set<number>();
   private readonly lastResult = new Map<number, number>();
   private readonly noticed = new Set<number>();
+  private readonly unresolved = new Set<number>();
   private readonly pending = new Map<number, PendingDispatch>();
   private readonly launching = new Map<
     number,
@@ -108,16 +109,22 @@ export class Jobs {
 
   async sync(): Promise<void> {
     this.resumeLaunchCleanup();
+    const retry = Promise.all([...this.unresolved].map((job) => this.reconcile(job)));
     const before = new Map(this.lastResult);
-    const jobs = await this.link.call("jobs", {}, 5000);
-    for (const { id } of jobs) {
-      if (this.lastResult.get(id) !== before.get(id) && !this.noticed.has(id)) continue;
-      this.running.add(id);
-      this.clearPending(id);
+    try {
+      const jobs = await this.link.call("jobs", {}, 5000);
+      for (const { id } of jobs) {
+        if (this.lastResult.get(id) !== before.get(id) && !this.noticed.has(id)) continue;
+        this.running.add(id);
+        this.clearPending(id);
+      }
+    } finally {
+      await retry;
     }
   }
 
   private async reconcile(job: number): Promise<void> {
+    this.unresolved.add(job);
     const seen = this.lastResult.get(job);
     let running: boolean;
     try {
@@ -126,6 +133,7 @@ export class Jobs {
       return;
     }
     if (this.lastResult.get(job) !== seen) return;
+    this.unresolved.delete(job);
     this.clearPending(job);
     if (running) this.running.add(job);
     else this.running.delete(job);
@@ -138,7 +146,10 @@ export class Jobs {
       return;
     this.lastResult.set(job, entry.id);
     if (startupFenced !== true && typeof exitCode !== "number") this.noticed.add(job);
-    else this.noticed.delete(job);
+    else {
+      this.noticed.delete(job);
+      this.unresolved.delete(job);
+    }
     if (startupFenced === true) {
       this.confirmStartupFence(
         job,

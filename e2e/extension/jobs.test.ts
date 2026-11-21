@@ -1603,6 +1603,7 @@ for (const older of ["loss", "revival"] as const)
       t.after(() => release.resolve());
       let faulty = false;
       let listReads = 0;
+      let exactReads = 0;
       const fault = (reply: CallResult): CallResult | undefined => {
         if (exactRead === "complete") return reply;
         if (exactRead === "hanging") return undefined;
@@ -1615,7 +1616,8 @@ for (const older of ["loss", "revival"] as const)
         (reply) => {
           if (!faulty) return reply;
           listReads += 1;
-          return listReads === 1 ? reply : fault(reply);
+          if (listReads > 1) return fault(reply);
+          return older === "loss" && exactRead === "complete" ? { ...reply, value: [] } : reply;
         },
         undefined,
         undefined,
@@ -1623,7 +1625,10 @@ for (const older of ["loss", "revival"] as const)
         (message) => {
           if (message.t === "activity") activities.push(message.state);
         },
-        (reply) => (faulty ? fault(reply) : reply),
+        (reply) => {
+          if (faulty) exactReads += 1;
+          return faulty ? fault(reply) : reply;
+        },
         (fields) => (older === "loss" ? fields["lost"] === true : fields["revived"] === true),
       );
       const slow = commandAwaitingGo(86);
@@ -1724,7 +1729,72 @@ for (const older of ["loss", "revival"] as const)
       }, "the worker to send its settled activity after the follow-up turn");
       assert.equal(settledActivity, older === "loss" ? "waiting" : "idle");
       assert.equal(existsSync(slow.ready), true);
+      assert.ok(exactReads > 0);
     });
+
+test("a failed exact read keeps a known wait through a genuine loss, and the reconnect read clears it", async (t) => {
+  const activities: string[] = [];
+  let failExact = false;
+  let exactReads = 0;
+  const disconnect = await jobProxy(
+    t,
+    callCardd,
+    false,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (message) => {
+      if (message.t === "activity") activities.push(message.state);
+    },
+    (reply) => {
+      exactReads += 1;
+      return failExact
+        ? { t: "result", id: reply.id, ok: false, error: "job read unavailable" }
+        : reply;
+    },
+  );
+  const slow = commandAwaitingGo(87);
+  t.after(() => {
+    if (existsSync(h.dir)) writeFileSync(slow.go, "");
+  });
+  h.onModel(() => ({ tool: "run_long", args: { label: "genuine", command: slow.command } }));
+  h.onModel(() => ({ text: "Waiting for the job" }));
+  for (let i = 0; i < 12; i++) h.onModel(() => ({ text: "Noted" }));
+  const pi = worker();
+  const wrapper = await wrapperOf(1, slow.ready);
+  await settled(1);
+  failExact = true;
+  process.kill(wrapper, "SIGSTOP");
+  const lost = await untilAsync(
+    async () =>
+      (await cardView()).entries.find(
+        (entry) => entry.kind === "job-result" && entry.fields["lost"] === true,
+      ),
+    "the detector to record the loss",
+  );
+  await h.waitFor(
+    (event) => event["type"] === "fleet_delivered" && event["entryId"] === lost.id,
+    "the loss to reach the worker",
+  );
+  await until(() => (exactReads > 0 ? true : undefined), "the failed exact read");
+  const turn = async (text: string): Promise<string | undefined> => {
+    const from = activities.length;
+    const base = h.events.filter((event) => event["type"] === "settled").length;
+    pi.prompt(text);
+    await settled(base + 1);
+    return until(() => {
+      const after = activities.slice(from);
+      return after.includes("running") && after.at(-1) !== "running" ? after.at(-1) : undefined;
+    }, "the worker to send its settled activity");
+  };
+  assert.equal(await turn("Is the job still being waited on?"), "waiting");
+  failExact = false;
+  const readsBefore = exactReads;
+  disconnect();
+  await until(() => (exactReads > readsBefore ? true : undefined), "the reconnect exact read");
+  assert.equal(await turn("And now?"), "idle");
+});
 
 test("run_long reports a dispatch as awaiting startup confirmation while registration is held, then delivers the result", async (t) => {
   const registration = Promise.withResolvers<void>();
