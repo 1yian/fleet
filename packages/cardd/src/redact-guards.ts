@@ -168,12 +168,26 @@ function withoutBrowserWhitespace(found: Decoded): Decoded {
 }
 
 const VALUE_END = new RegExp(String.raw`[\s"'<>\u0060&#\u0001]`);
+const QUOTED_VALUE_END = new RegExp(String.raw`["'<>\u0060&#\u0001]`);
 const VALUE_CORE = /^[\w~%+/=.-]*$/;
 const VALUE_TAIL = /[.,;:!?]+$/;
 
-function valueBoundary(view: string, start: number): number {
-  const stop = view.slice(start).search(VALUE_END);
+function valueBoundary(view: string, start: number, quoted: boolean): number {
+  const stop = view.slice(start).search(quoted ? QUOTED_VALUE_END : VALUE_END);
   return stop < 0 ? view.length : start + stop;
+}
+
+function unprovenValue(
+  found: Decoded,
+  match: RegExpExecArray,
+  name: string,
+  candidate: RegExpExecArray | null,
+): boolean {
+  const valueStart = match.index + name.length + 2;
+  const quoted = /["'\u0060]/.test(found.view[(candidate?.index ?? 0) - 1] ?? "");
+  const valueEnd = candidate === null ? valueStart : valueBoundary(found.view, valueStart, quoted);
+  if (!literalSpan(found, match.index, valueEnd - match.index)) return true;
+  return !VALUE_CORE.test(found.view.slice(valueStart, valueEnd).replace(VALUE_TAIL, ""));
 }
 
 function hasCredentialAssignment(found: Decoded, candidatesOnly: boolean): boolean {
@@ -181,13 +195,9 @@ function hasCredentialAssignment(found: Decoded, candidatesOnly: boolean): boole
     const name = match[1] ?? "";
     const key = percentDecoded(name);
     if (!CREDENTIAL_KEY.test(key)) continue;
-    const candidate = URL_CANDIDATE.test(found.view.slice(0, match.index));
-    if (candidatesOnly && !candidate) continue;
-    const valueStart = match.index + name.length + 2;
-    const valueEnd = candidate ? valueBoundary(found.view, valueStart) : valueStart;
-    if (key !== name || !literalSpan(found, match.index, valueEnd - match.index)) return true;
-    if (!VALUE_CORE.test(found.view.slice(valueStart, valueEnd).replace(VALUE_TAIL, "")))
-      return true;
+    const candidate = URL_CANDIDATE.exec(found.view.slice(0, match.index));
+    if (candidatesOnly && candidate === null) continue;
+    if (key !== name || unprovenValue(found, match, name, candidate)) return true;
   }
   return false;
 }

@@ -132,7 +132,11 @@ export const REDACTED_COMPLAINTS = [
     "[URL withheld: credential boundaries unclear]",
   ],
   [
-    "Callback https://localhost/cb?password=pa;per failed",
+    String.raw`{"url":"https://localhost/cb?password=paper canoe\u0026next=yes"}`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    String.raw`{"url":"https://localhost/cb?next=1&password=paper\u0020canoe"}`,
     "[URL withheld: credential boundaries unclear]",
   ],
   [

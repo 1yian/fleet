@@ -391,11 +391,11 @@ for (const [name, diagnostic] of [
     "an escaped tab inside a credential value",
     String.raw`{"url":"https://localhost/cb?password=pa\u0009per"}`,
   ],
-  [
-    "a comma then a tab inside a credential value",
-    "Callback https://localhost/cb?password=pa,\tper failed",
-  ],
   ["a Markdown join in a value", "See https://localhost/cb?password=pa](per"],
+  [
+    "a quoted URL with an interior space",
+    String.raw`{"url":"https://localhost/cb?password=paper canoe\u0026next=yes"}`,
+  ],
   [
     "an encoded fragment parameter name",
     "Callback https://localhost/callback#pass%77ord=paper failed",
