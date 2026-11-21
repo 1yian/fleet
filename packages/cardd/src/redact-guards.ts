@@ -168,13 +168,23 @@ function withoutBrowserWhitespace(found: Decoded): Decoded {
 }
 
 const VALUE_END = new RegExp(String.raw`[\s"'<>\u0060&#\u0001]`);
-const QUOTED_VALUE_END = new RegExp(String.raw`["'<>\u0060&#\u0001]`);
 const VALUE_CORE = /^[\w~%+/=.-]*$/;
 const VALUE_TAIL = /[.,;:!?]+$/;
 
-function valueBoundary(view: string, start: number, quoted: boolean): number {
-  const stop = view.slice(start).search(quoted ? QUOTED_VALUE_END : VALUE_END);
-  return stop < 0 ? view.length : start + stop;
+function closesQuote(found: Decoded, index: number, quote: string): boolean {
+  if (found.view[index] !== quote || found.literal[index] !== true) return false;
+  return index === 0 || found.starts[index] === (found.starts[index - 1] ?? -2) + 1;
+}
+
+function valueBoundary(found: Decoded, start: number, quote: string | undefined): number {
+  if (quote === undefined) {
+    const stop = found.view.slice(start).search(VALUE_END);
+    return stop < 0 ? found.view.length : start + stop;
+  }
+  for (let index = start; index < found.view.length; index += 1) {
+    if (closesQuote(found, index, quote) || "&#".includes(found.view[index] ?? "")) return index;
+  }
+  return found.view.length;
 }
 
 function unprovenValue(
@@ -184,8 +194,9 @@ function unprovenValue(
   candidate: RegExpExecArray | null,
 ): boolean {
   const valueStart = match.index + name.length + 2;
-  const quoted = /["'\u0060]/.test(found.view[(candidate?.index ?? 0) - 1] ?? "");
-  const valueEnd = candidate === null ? valueStart : valueBoundary(found.view, valueStart, quoted);
+  const opener = found.view[(candidate?.index ?? 0) - 1] ?? "";
+  const quote = /["'\u0060]/.test(opener) ? opener : undefined;
+  const valueEnd = candidate === null ? valueStart : valueBoundary(found, valueStart, quote);
   if (!literalSpan(found, match.index, valueEnd - match.index)) return true;
   return !VALUE_CORE.test(found.view.slice(valueStart, valueEnd).replace(VALUE_TAIL, ""));
 }

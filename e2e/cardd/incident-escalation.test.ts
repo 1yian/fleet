@@ -3,7 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import type { Card, Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
-import { RECOVERY_SCOPE } from "../support/complaint-redactions.ts";
+import { RECOVERY_SCOPE } from "../support/recovery-scope.ts";
 import { is, reportFailure } from "../support/incidents.ts";
 
 const MODEL = "openai-codex/gpt-fixture";

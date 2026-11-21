@@ -372,8 +372,8 @@ for (const [name, diagnostic] of [
     String.raw`{"url":"https://localhost/callback?pass\u0009word=paper"}`,
   ],
   [
-    "an escaped tab after the query opener",
-    String.raw`{"url":"https://localhost/callback?\u0009password=paper"}`,
+    "an escaped angle bracket in a quoted URL",
+    String.raw`{"url":"https://localhost/cb?password=paper\u003c canoe"}`,
   ],
   [
     "a literal tab inside a parameter name",

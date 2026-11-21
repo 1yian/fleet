@@ -45,10 +45,12 @@ const HTTP_ENVELOPE = new RegExp(
   "i",
 );
 
-const CONNECT_PREAMBLE =
-  /^HTTP\/\d(?:\.\d)?[ \t]+2\d\d[ \t]+Connection established[ \t]*\r?\n(?:[!#$%&'*+.^_\u0060|~\w-]+:[^\r\n]*\r?\n)*\r?\n/i;
-
-const CONNECT_LINE = /^HTTP\/\d(?:\.\d)?[ \t]+2\d\d[ \t]+Connection established\b/i;
+const INTERIM_STATUS = String.raw`(?:1(?!01)\d\d|2\d\d[ \t]+Connection established)`;
+const INTERIM_LINE = new RegExp(String.raw`^HTTP\/\d(?:\.\d)?[ \t]+${INTERIM_STATUS}\b`, "i");
+const INTERIM_BLOCK = new RegExp(
+  String.raw`^HTTP\/\d(?:\.\d)?[ \t]+${INTERIM_STATUS}[^\r\n]*\r?\n(?:[!#$%&'*+.^_\u0060|~\w-]+:[^\r\n]*\r?\n)*\r?\n`,
+  "i",
+);
 
 export interface Envelope {
   readonly status: string;
@@ -68,9 +70,13 @@ const BLOCKED: Envelope = { status: "", inline: undefined, rest: "", blocked: tr
 
 export const LEADING_ENVELOPE = {
   exec(source: string): Envelope | null {
-    if (!CONNECT_LINE.test(source)) return direct(source);
-    const preamble = CONNECT_PREAMBLE.exec(source)?.[0];
-    if (preamble === undefined || hasCookieRecord(preamble)) return BLOCKED;
-    return direct(source.slice(preamble.length)) ?? BLOCKED;
+    let rest = source;
+    while (INTERIM_LINE.test(rest)) {
+      const block = INTERIM_BLOCK.exec(rest)?.[0];
+      if (block === undefined || hasCookieRecord(block)) return BLOCKED;
+      rest = rest.slice(block.length);
+    }
+    const final = direct(rest);
+    return rest === source || final !== null ? final : BLOCKED;
   },
 };
