@@ -152,25 +152,26 @@ function readState(file: string, name: string): string | undefined {
   }
 }
 
+const heldReasonOf = (text: string | undefined): string | undefined =>
+  text === undefined ? undefined : text.trim() || "stopped";
+
 function heldReason(home: string): string | undefined {
-  const text = readState(stoppedFile(home), "state/stopped");
-  return text === undefined ? undefined : text.trim() || "stopped";
+  return heldReasonOf(readState(stoppedFile(home), "state/stopped"));
 }
 
-const lifecycleText = (home: string): string =>
-  JSON.stringify([
-    readState(stoppedFile(home), "state/stopped") ?? null,
-    readState(startsFile(home), "state/starts") ?? null,
-  ]);
+const sampleLifecycle = (home: string): [string | undefined, string | undefined] => [
+  readState(stoppedFile(home), "state/stopped"),
+  readState(startsFile(home), "state/starts"),
+];
 
 async function statusOf(info: LaneHome): Promise<Status> {
   const { lane, home } = info;
   try {
-    const before = lifecycleText(home);
-    const reason = heldReason(home);
-    recentStarts(home, Date.now());
+    const before = sampleLifecycle(home);
+    const reason = heldReasonOf(before[0]);
+    recentStartsOf(before[1], Date.now());
     const observed = await workspaceOf(info, "liveness");
-    if (lifecycleText(home) !== before)
+    if (sampleLifecycle(home).some((text, at) => text !== before[at]))
       throw new HostUnread(`${lane} lifecycle state changed while its status was being read`);
     if (observed?.state === "running") return { lane, state: "running" };
     return reason === undefined ? { lane, state: "down" } : { lane, state: "stopped", reason };
@@ -213,7 +214,10 @@ function syncHome(root: string, home: string, deadline?: number): void {
 }
 
 function recentStarts(home: string, now: number): number[] {
-  const text = readState(startsFile(home), "state/starts");
+  return recentStartsOf(readState(startsFile(home), "state/starts"), now);
+}
+
+function recentStartsOf(text: string | undefined, now: number): number[] {
   if (text === undefined) return [];
   const lines = text.split("\n");
   const complete = lines.pop() === "";
