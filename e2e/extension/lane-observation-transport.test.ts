@@ -98,6 +98,7 @@ test("a legacy split listed first cannot mask the current-title lane", async () 
 
 test("an omitted current title cannot authorize a legacy start, hold, or close", async () => {
   assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
   const home = `${here.root}.worktrees/lane-ops`;
   const legacyPane = await idlePane("ops", home, "fleet-ops");
   const starts = join(home, "state", "starts");
