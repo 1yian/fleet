@@ -45,10 +45,10 @@ export async function status(root: string): Promise<Status[]> {
   const { homes, unread } = discoverLanes(root);
   const read: { info: LaneHome; row: Status; sample?: Lifecycle; seen?: Listed | undefined }[] = [];
   for (const info of homes) read.push({ info, ...(await statusOf(info)) });
-  const { changed, added } = laneClaimsRaced(root, homes, unread);
   const rosters = await racedRosters(
     read.flatMap(({ row, seen }): Seen[] => (seen === undefined ? [] : [{ lane: row.lane, seen }])),
   );
+  const { changed, added } = laneClaimsRaced(root, homes, unread);
   const out = read.map(({ info, row, sample }): Status => {
     if (sample === undefined) return row;
     const reason = changed.get(row.lane) ?? lifecycleMoved(info, sample) ?? rosters.get(row.lane);
@@ -80,8 +80,9 @@ export async function placementStatus(
       ...(info.config.host === undefined ? {} : { host: info.config.host }),
     });
   }
+  const rosters = await racedRosters(seen);
   const { changed, added } = laneClaimsRaced(root, homes);
-  const [first] = [...changed.values(), ...(await racedRosters(seen)).values()];
+  const [first] = [...changed.values(), ...rosters.values()];
   if (first !== undefined) throw new HostUnread(first);
   if (added.length > 0)
     throw new HostUnread("the lane roster changed while placement was being read");

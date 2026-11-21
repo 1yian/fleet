@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { records } from "../support/json.ts";
+import { isRecord, records } from "../support/json.ts";
 import {
   addLane,
   action,
@@ -35,7 +35,7 @@ test("status reports an earlier lane unknown when its workspace is split while a
   assert.ok(existsSync(`${faultLog()}.ran`));
   const earlier = rows.find((row) => row["lane"] === "ops");
   assert.equal(earlier?.["state"], "unknown");
-  assert.match(String(earlier?.["reason"]), /ops workspace changed while it was being read/);
+  assert.match(String(earlier["reason"]), /ops workspace changed while it was being read/);
   assert.equal(rows.find((row) => row["lane"] === "zz")?.["state"], "down");
 });
 
@@ -47,4 +47,29 @@ test("placement refuses an earlier lane whose workspace is split while a later l
     /ops workspace changed while it was being read/,
   );
   assert.ok(existsSync(`${faultLog()}.ran`));
+});
+
+const replaceClaim = (): string => {
+  const config = join(ops(), "config", "lane.json");
+  const raw: unknown = JSON.parse(readFileSync(config, "utf8"));
+  assert.ok(isRecord(raw));
+  writeFileSync(`${config}.next`, JSON.stringify({ ...raw, args: ["--changed-in-final-listing"] }));
+  return config;
+};
+
+test("status never publishes a lane whose claim is replaced during the final workspace listing", () => {
+  const config = replaceClaim();
+  const rows = records(JSON.parse(fleet(["status", "--json"], "swap-final", config)));
+  assert.ok(existsSync(`${config}.swapped`));
+  assert.equal(rows[0]?.["state"], "unknown");
+  assert.match(String(rows[0]["reason"]), /ops claim changed or became ambiguous/);
+});
+
+test("placement refuses a lane whose claim is replaced during the final workspace listing", () => {
+  const config = replaceClaim();
+  assert.throws(
+    () => fleet(["status", "--placement", "--json"], "swap-final", config),
+    /ops claim changed or became ambiguous/,
+  );
+  assert.ok(existsSync(`${config}.swapped`));
 });
