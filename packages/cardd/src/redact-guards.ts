@@ -14,8 +14,10 @@ const COOKIE_HEADER = new RegExp(
   "i",
 );
 const QUOTE_ESCAPE = String.raw`\\+(?:u00(?:22|27)|x(?:22|27)|u\{0*(?:22|27)\}|U000000(?:22|27))`;
+const ESCAPED_CHAR = String.raw`\\+(?:u[\da-f]{4}|u\{[\da-f]+\}|x[\da-f]{2}|U[\da-f]{8}|[rnt])`;
+const COLON_ESCAPE = String.raw`\\+(?:u003a|x3a|u\{0*3a\}|U0000003a)`;
 const ESCAPED_KEY = new RegExp(
-  String.raw`(?=(\\*["']|${QUOTE_ESCAPE})((?:(?!${QUOTE_ESCAPE})(?:[^"'\\\n]|\\+[^"'\\\n]))+)(\\*["']|${QUOTE_ESCAPE})\s*:)`,
+  String.raw`(?=(\\*["']|${QUOTE_ESCAPE})((?:(?!${QUOTE_ESCAPE})(?:[^"'\\\n]|\\+[^"'\\\n]))+)(\\*["']|${QUOTE_ESCAPE})((?:\s|${ESCAPED_CHAR})*(?::|${COLON_ESCAPE}))((?:\s|${ESCAPED_CHAR})*(?:\\{2,}(?=["']))?))`,
   "gi",
 );
 const PLAIN_QUOTE = /^\\?["']$/;
@@ -143,10 +145,13 @@ function decodeKeyEscapes(key: string): string {
 }
 
 export function hasEscapedCredentialKey(text: string): boolean {
-  for (const [, open = "", key = "", close = ""] of text.matchAll(ESCAPED_KEY)) {
+  for (const [, open = "", key = "", close = "", separator = "", value = ""] of text.matchAll(
+    ESCAPED_KEY,
+  )) {
     const decoded = decodeKeyEscapes(key);
-    const escapedDelimiter = !PLAIN_QUOTE.test(open) || !PLAIN_QUOTE.test(close);
-    if ((decoded !== key || escapedDelimiter) && RECORD_KEY.test(decoded)) return true;
+    const escaped =
+      !PLAIN_QUOTE.test(open) || !PLAIN_QUOTE.test(close) || (separator + value).includes("\\");
+    if ((decoded !== key || escaped) && RECORD_KEY.test(decoded)) return true;
   }
   return false;
 }
