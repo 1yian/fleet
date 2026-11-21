@@ -23,3 +23,9 @@ description = "A made-up helper failure value that the reload failure e2e test c
 condition = "AND"
 paths = ['''^e2e/(support/reload-fault\.ts|extension/reload-failure\.test\.ts)$''']
 regexes = ['''sk-labSecretMustNotReachDiagnosticLogs123456''']
+
+[[allowlists]]
+description = "A made-up curl basic-auth login used as redaction fixture input, in the commit history"
+condition = "AND"
+paths = ['''^e2e/(support/(recovery-scope|complaint-redactions)\.ts|cardd/(incident-diagnostics|complaints|incident-escalation)\.test\.ts)$''']
+regexes = ['''^'demo:paper canoe'$''']
