@@ -1,6 +1,6 @@
 import { CURL_DATA_SECRET, CURL_SHELL_EXPANSION } from "./curl-shell.ts";
 import { VERSIONED_ENVELOPE } from "./http-envelope.ts";
-import { hasCookieRecord, logicalView, SECRET_NAME } from "./redact-guards.ts";
+import { hasCookieRecord, logicalView, normalizeInput, SECRET_NAME } from "./redact-guards.ts";
 import type { Timings } from "./timing.ts";
 
 const MAX_RETRIES = 2;
@@ -228,13 +228,10 @@ function scanUrlUserinfo(text: string): { text: string; ambiguous: boolean; coun
 function redactUrlUserinfo(text: string): string {
   const found = scanUrlUserinfo(text);
   const joined = text.replace(/\\\n/g, "").replace(/['"`]/g, "");
+  const browser = text.replace(/[\t\n\r]/g, "").replace(/\\/g, "/");
   const spliced = logicalView(found.text) !== scanUrlUserinfo(logicalView(text)).text;
-  const unproven = found.ambiguous || spliced || scanUrlUserinfo(joined).count > found.count;
-  return unproven ? URL_WITHHELD : found.text;
-}
-
-function normalizeInput(text: string): string {
-  return text.replace(/\r\n?/g, "\n").replace(/^\uFEFF/gm, "");
+  const hidden = [joined, browser].some((view) => scanUrlUserinfo(view).count > found.count);
+  return found.ambiguous || spliced || hidden ? URL_WITHHELD : found.text;
 }
 
 function hasEscapedCredentialKey(text: string): boolean {

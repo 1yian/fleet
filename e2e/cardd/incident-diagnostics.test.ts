@@ -290,3 +290,25 @@ test("a host and port timeout keeps its text and its transient classification", 
   assert.ok(heard.body.includes("Classified transient."), heard.body);
   assert.ok(heard.body.includes("mode=retry"), heard.body);
 });
+
+for (const [name, diagnostic] of [
+  ["backslash separators", String.raw`Browser URL https:\\demo:paper@localhost\api failed`],
+  ["a tab inside userinfo", "Browser URL https://demo:pa\tper@localhost/api failed"],
+] as const) {
+  test(`a browser-equivalent URL with ${name} is withheld`, async () => {
+    const card = await newCard(cleo, "Report a failing diagnostic");
+    await reportFailure(fleet, cleo, card, diagnostic);
+    const heard = await cleo.waitForEntry(is("runtime-failure"), "the runtime failure");
+    assert.match(heard.body, /\[URL withheld: credential boundaries unclear\]/);
+    assert.doesNotMatch(heard.body, /paper/);
+  });
+}
+
+test("a bare port diagnostic keeps its text and its transient recovery", async () => {
+  const card = await newCard(cleo, "Report a port timeout");
+  await reportFailure(fleet, cleo, card, "8080: i/o timeout");
+  const heard = await cleo.waitForEntry(is("runtime-failure"), "the runtime failure");
+  assert.ok(heard.body.includes("8080: i/o timeout"), heard.body);
+  assert.ok(heard.body.includes("Classified transient."), heard.body);
+  assert.ok(heard.body.includes("mode=retry"), heard.body);
+});

@@ -30,6 +30,7 @@ export const REDACTED_COMPLAINTS = [
     'Reply {"message":"Unauthorized","field":"token"} omits the header.',
     'Reply {"message":"Unauthorized","field":"token"} omits the header.',
   ],
+  ["8080: connection refused", "8080: connection refused"],
   [
     "Dial tcp 127.0.0.1:8080: i/o timeout while 10.0.0.1:9000: connection refused.",
     "Dial tcp 127.0.0.1:8080: i/o timeout while 10.0.0.1:9000: connection refused.",
@@ -154,6 +155,14 @@ export const REDACTED_COMPLAINTS = [
   [
     String.raw`{"url":"https:\u002F/build:paper@localhost/path"}`,
     String.raw`{"url":"https:\u002F/[hidden]@localhost/path"}`,
+  ],
+  [
+    String.raw`Browser URL https:\\demo:paper@localhost\api failed`,
+    "[URL withheld: credential boundaries unclear]",
+  ],
+  [
+    "Browser URL https://demo:pa\tper@localhost/api failed",
+    "[URL withheld: credential boundaries unclear]",
   ],
   [
     String.raw`{"url":"https://build:paper\u002Bcanoe@localhost/path"}`,
