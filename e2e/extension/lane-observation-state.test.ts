@@ -114,6 +114,37 @@ test("an earlier lane's claim that changes while a later lane is read is unknown
   assert.ok(existsSync(`${config}.swapped`));
 });
 
+test("a stop that lands while a later lane is read makes only the stopped lane unknown", async () => {
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  addLane("zz");
+  const stop = `${process.execPath} ${here.launch} stop ops`;
+  const rows = records(JSON.parse(fleet(["status", "--json"], "run-later", stop)));
+  assert.ok(existsSync(`${faultLog()}.ran`));
+  assert.equal(rows.find((row) => row["lane"] === "ops")?.["state"], "unknown");
+  assert.match(String(rows.find((row) => row["lane"] === "ops")?.["reason"]), /lifecycle state/);
+  assert.equal(rows.find((row) => row["lane"] === "zz")?.["state"], "down");
+});
+
+test("lanes that appear while status reads are reported once as unknown beside definite siblings", () => {
+  const zz = addLane("zz");
+  const worktrees = `${here.root}.worktrees`;
+  const make = [
+    `mkdir -p ${worktrees}/lane-yy/config ${worktrees}/lane-xx/config`,
+    `printf '{' > ${worktrees}/lane-yy/config/lane.json`,
+    `sed 's/"zz"/"xx"/' ${zz}/config/lane.json > ${worktrees}/lane-xx/config/lane.json`,
+  ].join(" && ");
+  const rows = records(JSON.parse(fleet(["status", "--json"], "run-later", make)));
+  assert.ok(existsSync(`${faultLog()}.ran`));
+  assert.equal(rows.find((row) => row["lane"] === "ops")?.["state"], "down");
+  assert.equal(rows.find((row) => row["lane"] === "zz")?.["state"], "down");
+  for (const lane of ["yy", "xx"]) {
+    assert.equal(rows.filter((row) => row["lane"] === lane).length, 1, lane);
+    assert.equal(rows.find((row) => row["lane"] === lane)?.["state"], "unknown", lane);
+  }
+  assert.throws(() => fleet(["status", "--placement", "--json"]), /lane yy could not be read/);
+});
+
 test("an unreadable lane config is reported safely while healthy lanes still converge and start", async () => {
   addLane("zz");
   const ops = `${here.root}.worktrees/lane-ops`;

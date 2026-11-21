@@ -46,6 +46,12 @@ case "$1 $2:$HERDR_FAULT" in
       : > "$FAULT_PANE.swapped"
       cp "$FAULT_PANE.next" "$FAULT_PANE.swap" && mv "$FAULT_PANE.swap" "$FAULT_PANE"
     fi ;;
+  'workspace list:run-later')
+    printf 'x\\n' >> "$HERDR_FAULT_LOG.lists"
+    if [ "$(wc -l < "$HERDR_FAULT_LOG.lists")" -eq 6 ]; then
+      : > "$HERDR_FAULT_LOG.ran"
+      sh -c "$FAULT_PANE" >/dev/null || exit $?
+    fi ;;
   'workspace list:fifo-input')
     if [ ! -e "$FAULT_PANE.swapped" ]; then
       : > "$FAULT_PANE.swapped"

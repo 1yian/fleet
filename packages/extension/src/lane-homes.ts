@@ -137,7 +137,8 @@ export function laneHomes(root: string): LaneHome[] {
 export function laneClaimsRaced(
   root: string,
   captured: readonly LaneHome[],
-): { changed: Map<string, string>; roster: boolean } {
+  alsoKnown: readonly UnreadLane[] = [],
+): { changed: Map<string, string>; added: UnreadLane[] } {
   const changed = new Map<string, string>();
   let now: Discovery;
   try {
@@ -145,12 +146,20 @@ export function laneClaimsRaced(
   } catch {
     for (const { lane } of captured)
       changed.set(lane, `${lane} claim could not be read again after it was checked`);
-    return { changed, roster: true };
+    return { changed, added: [] };
   }
   for (const info of captured) {
     const same = now.homes.find((each) => each.lane === info.lane);
     if (same?.home !== info.home || JSON.stringify(same.config) !== JSON.stringify(info.config))
       changed.set(info.lane, `${info.lane} claim changed or became ambiguous after it was checked`);
   }
-  return { changed, roster: now.homes.length + now.unread.length !== captured.length };
+  const known = new Set([...captured, ...alsoKnown].map(({ lane }) => lane));
+  const added = [
+    ...now.homes.map(({ lane }) => ({
+      lane,
+      message: `lane ${lane} appeared while it was being read`,
+    })),
+    ...now.unread,
+  ].filter(({ lane }) => !known.has(lane));
+  return { changed, added };
 }
