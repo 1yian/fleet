@@ -9,6 +9,7 @@ import {
   noMistakesRefusal,
   PI_TIERS_SOURCE,
 } from "./dependencies.ts";
+import { installBrowser } from "./install-browser.ts";
 import { readLaneConfig } from "./lane-config.ts";
 import { hostProblems } from "./prerequisites.ts";
 import { NO_MISTAKES_TEMPLATE, TIERS_TEMPLATE, tiersConfigPath } from "./tiers-config.ts";
@@ -222,11 +223,12 @@ function piTiersUpdate(): string {
   return lastLine(run("pi", ["update", source], { timeout: CLONE_TIMEOUT_MS }));
 }
 
-export function updateDependencies(): string[] {
+export function updateDependencies(root: string): string[] {
   const steps: [string, () => string][] = [
     ["Pi", () => lastLine(run("pi", ["update"], { timeout: CLONE_TIMEOUT_MS }))],
     ["pi-tiers", piTiersUpdate],
     ["no-mistakes", () => installNoMistakes(true).replace(/^no-mistakes: /, "")],
+    ["fleet-browser", () => installBrowser(root)],
   ];
   return steps.map(([name, step]) => {
     try {
@@ -249,6 +251,13 @@ export async function install(root: string): Promise<InstallLine[]> {
   await attempt("no-mistakes", () => installNoMistakes(false));
   const noMistakesFailed = lines.some(({ failed }) => failed);
   await attempt("pi-tiers", installPiTiers);
+  await attempt("fleet-browser", () => {
+    run("bun", ["run", "--cwd", "packages/fleet-browser", "build"], {
+      cwd: root,
+      timeout: BUILD_TIMEOUT_MS,
+    });
+    return `fleet-browser: ${installBrowser(root)}`;
+  });
   await attempt("tiers", () => writeIfAbsent("tiers", tiersConfigPath(), TIERS_TEMPLATE));
   await attempt("no-mistakes config", () =>
     writeIfAbsent("no-mistakes config", noMistakesConfigPath(), NO_MISTAKES_TEMPLATE),

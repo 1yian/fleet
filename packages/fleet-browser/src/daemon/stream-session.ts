@@ -84,7 +84,7 @@ export function parseCommand(raw: unknown): StreamCommand | null {
   }
 }
 
-export function normalizeUrl(input: string): string {
+function normalizeUrl(input: string): string {
   const trimmed = input.trim();
   if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return trimmed;
   return `https://${trimmed}`;

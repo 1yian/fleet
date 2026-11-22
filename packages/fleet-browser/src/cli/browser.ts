@@ -53,7 +53,7 @@ const NAMESPACE = "fleet-browser";
 const SOCKET_PATH_LIMIT = 103;
 const ATTEMPT_NAME = /^c-(\d{1,9})-a(\d{1,4})$/;
 
-export function browserEnv(): NodeJS.ProcessEnv {
+function browserEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const key of ["PATH", "HOME", "TMPDIR", "LANG", "TERM"]) {
     const value = process.env[key];
@@ -73,7 +73,7 @@ function sessionNameBudget(): number {
   return SOCKET_PATH_LIMIT - Buffer.byteLength(dir) - ".sock".length;
 }
 
-export function sessionName(lane: string): string {
+function sessionName(lane: string): string {
   const attempt = attemptName();
   if (!attempt) return `fb-${lane}`;
   const parts = ATTEMPT_NAME.exec(attempt);

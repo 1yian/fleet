@@ -265,8 +265,25 @@ function lint() {
   return failures.length ? 1 : result.status;
 }
 
+function lintBrowser() {
+  if (
+    process.argv.length > 2 &&
+    !requestedPaths(process.argv.slice(2)).some((path) =>
+      path.startsWith("packages/fleet-browser/"),
+    )
+  )
+    return 0;
+  const result = spawnSync("bun", ["run", "--cwd", "packages/fleet-browser", "lint"], {
+    stdio: "inherit",
+  });
+  if (result.error) throw result.error;
+  if (result.signal || result.status === null)
+    throw new Error("Browser lint did not exit normally.");
+  return result.status;
+}
+
 try {
-  process.exitCode = lint();
+  process.exitCode = lint() || lintBrowser();
 } catch (error) {
   console.error(error);
   process.exitCode = 1;

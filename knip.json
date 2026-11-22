@@ -44,6 +44,11 @@
       ],
       "ignore": ["vendor/**"]
     },
+    "packages/fleet-browser": {
+      "entry": ["src/cli/main.ts", "src/daemon/main.ts", "src/broker/{import,main}.ts"],
+      "ignoreDependencies": ["@types/mailparser"],
+      "ignoreBinaries": ["xauth", "Xvfb", "taskset"]
+    },
     "packages/board": {
       "ignore": ["src/vendor/**"]
     }

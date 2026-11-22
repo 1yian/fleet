@@ -1,7 +1,7 @@
 import { createConnection } from "node:net";
 import type { BrokerErrorCode, BrokerRequest, BrokerResponse } from "../shared/broker-protocol.js";
 
-export class BrokerFailure extends Error {
+class BrokerFailure extends Error {
   readonly code: BrokerErrorCode | "BROKER_DOWN";
   constructor(code: BrokerErrorCode | "BROKER_DOWN", message: string) {
     super(message);

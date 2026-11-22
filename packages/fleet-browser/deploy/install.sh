@@ -7,7 +7,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 NAME=fleet-browser
-APP_DIR=${APP_DIR:-/opt/$NAME}
+APP_DIR=${APP_DIR:-$(dirname "$(dirname "$(readlink -f "$0")")")}
 CONF_DIR=/etc/$NAME
 NODE_BIN=${NODE_BIN:-$(command -v node || true)}
 [ -x "$NODE_BIN" ] || { echo "set NODE_BIN to an absolute node 24 binary" >&2; exit 1; }

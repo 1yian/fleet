@@ -4,7 +4,7 @@ export type LaneStatusName = "stopped" | "starting" | "ready" | "failed";
 
 export type Control = { kind: "agent" } | { kind: "human"; viewerId: string; since: number };
 
-export type HandoffStatus = "open" | "done" | "cancelled" | "expired";
+type HandoffStatus = "open" | "done" | "cancelled" | "expired";
 
 export interface Handoff {
   id: string;

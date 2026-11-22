@@ -1,7 +1,7 @@
 import type { DirectLogin } from "../shared/direct-login.js";
 import type { DirectPlan, PageSession } from "./page-session.js";
 
-export type FieldKind = "username" | "password" | "newpassword" | "otp";
+type FieldKind = "username" | "password" | "newpassword" | "otp";
 
 export interface FieldInfo {
   i: number;

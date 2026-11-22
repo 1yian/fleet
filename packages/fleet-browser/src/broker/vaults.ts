@@ -2,8 +2,8 @@ import { type BrokerConfig, laneVaultName } from "./config.js";
 import { BrokerError } from "./errors.js";
 import type { OpCli } from "./opcli.js";
 
-export const SYNCED_TAG = "fleet-browser-synced";
-export const LANE_OWNED_TAG = "fleet-browser-lane-owned";
+const SYNCED_TAG = "fleet-browser-synced";
+const LANE_OWNED_TAG = "fleet-browser-lane-owned";
 
 interface VaultInfo {
   id: string;
@@ -41,7 +41,7 @@ export interface LaneSync {
 
 export type Log = (line: string) => void;
 
-export async function ensureLaneVault(cli: OpCli, lane: string): Promise<string> {
+async function ensureLaneVault(cli: OpCli, lane: string): Promise<string> {
   const name = laneVaultName(lane);
   try {
     const vault = JSON.parse(
@@ -150,7 +150,7 @@ export async function syncLane(
   return { copied, failed, removed };
 }
 
-export interface LoginImport {
+interface LoginImport {
   title: string;
   username: string;
   url: string;

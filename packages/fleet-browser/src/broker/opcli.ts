@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { BrokerError } from "./errors.js";
 
-export function mapOpError(stderr: string): BrokerError {
+function mapOpError(stderr: string): BrokerError {
   const line = (stderr.split("\n").find((l) => l.includes("[ERROR]")) ?? stderr)
     .replace(/^\[ERROR\]\s+\S+\s+\S+\s+/, "")
     .trim();

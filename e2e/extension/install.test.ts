@@ -146,6 +146,7 @@ test("a fresh install without Go names the missing no-mistakes and the fix, and 
   ]);
   assert.deepEqual(done.out, [
     `pi-tiers: installed in Pi from ${PI_TIERS}`,
+    "fleet-browser: CLI and skill linked",
     `tiers: wrote ${agentDir()}/tiers.json from ${template("tiers.json")}`,
     `no-mistakes config: wrote ${nmHome()}/config.yaml from ${template("no-mistakes.yaml")}`,
     `update reminder: created schedule #1, daily at 05:00 ${ZONE}, to main`,
@@ -205,12 +206,26 @@ test("install builds the fork with Go, installs pi-tiers and the configs, create
   assert.deepEqual(first.out, [
     `no-mistakes: built fork-${commit} into ${target()}`,
     `pi-tiers: installed in Pi from ${PI_TIERS}`,
+    "fleet-browser: CLI and skill linked",
     `tiers: wrote ${agentDir()}/tiers.json from ${template("tiers.json")}`,
     `no-mistakes config: wrote ${nmHome()}/config.yaml from ${template("no-mistakes.yaml")}`,
     `update reminder: created schedule #1, daily at 05:00 ${ZONE}, to main`,
     `install: ${HOST} is ready`,
   ]);
   assert.equal(execFileSync(target(), ["--version"], { encoding: "utf8" }), version(commit, FIRST));
+  const browser = join(home, ".local", "bin", "fleet-browser");
+  assert.match(execFileSync(browser, ["--help"], { encoding: "utf8" }), /login --stdin/);
+  assert.equal(
+    realpathSync(join(agentDir(), "skills", "fleet-browser", "SKILL.md")),
+    join(
+      realpathSync(scratch.root),
+      "packages",
+      "fleet-browser",
+      "skills",
+      "fleet-browser",
+      "SKILL.md",
+    ),
+  );
   const [schedule, ...more] = (await cardd.board()).schedules;
   assert.deepEqual(more, []);
   assert.deepEqual(
@@ -230,6 +245,7 @@ test("install builds the fork with Go, installs pi-tiers and the configs, create
   assert.deepEqual(again.out, [
     `no-mistakes: fork-${commit} is installed`,
     "pi-tiers: installed in Pi",
+    "fleet-browser: CLI and skill linked",
     `tiers: ${agentDir()}/tiers.json exists and is kept`,
     `no-mistakes config: ${nmHome()}/config.yaml exists and is kept`,
     `update reminder: already set (schedule #1, daily at 05:00 ${ZONE})`,

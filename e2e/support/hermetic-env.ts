@@ -41,6 +41,7 @@ writeFileSync(
 );
 process.env["SHELL"] = PANE_SHELL;
 
+process.env["HOME"] = tempDir("home-");
 process.env["FLEET_TAILSCALE"] = "false";
 process.env["ELEMENT_HOME"] = tempDir("element-");
 process.env["PI_CODING_AGENT_DIR"] = tempDir("agent-");

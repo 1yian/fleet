@@ -38,17 +38,27 @@ fleet-browser lanes [--watch]          every lane (the herdr plugin pane runs --
 
 Browser verbs are passed to agent-browser 0.43.0 (pinned in `package.json`); see `skills/fleet-browser/SKILL.md`. Credential commands are described in [docs/credentials.md](docs/credentials.md), captcha solving in [docs/captcha.md](docs/captcha.md), dev mode in [docs/dev-mode.md](docs/dev-mode.md).
 
-## Install on a host
+## Install the CLI and skill
 
-Requirements: Node 24, `google-chrome-stable`, `xvfb`, `xauth`, `nftables`, `taskset`, `unzip`, `curl`, Tailscale.
+Run `bun install --frozen-lockfile` and `bin/fleet install` from the host's Fleet checkout. This builds the browser package and links `~/.local/bin/fleet-browser` and installs the skill in Pi's agent directory (`~/.pi/agent/skills` by default). Remove any old `fleet-browser` skill registration in `~/.agents/skills` or in the host's configuration manager. Fleet's `update_fleet` rebuilds the package and refreshes the same links. No standalone checkout or browser release is needed.
+
+## Install the daemon on a browser host
+
+Requirements: Node 24, Bun, `google-chrome-stable`, `xvfb`, `xauth`, `nftables`, `taskset`, `unzip`, `curl`, Tailscale.
 
 ```sh
-git clone https://github.com/1yian/fleet-browser /opt/fleet-browser && cd /opt/fleet-browser
-npm ci && npm run build
-sudo NODE_BIN=$(command -v node) FLEET_BROWSER_LINK_TEMPLATE='http://<board host>:7878/#/browser/{lane}' deploy/install.sh
-sudo deploy/token.sh add board --copy-to ~/.config/fleet-browser/board.token --owner $USER
-ln -s /opt/fleet-browser/bin/fleet-browser.js ~/.local/bin/fleet-browser
-herdr plugin link /opt/fleet-browser/herdr-plugin
+git clone https://github.com/1yian/fleet /opt/fleet
+cd /opt/fleet
+bun install --frozen-lockfile
+bun run --cwd packages/fleet-browser build
+cd packages/fleet-browser
+sudo NODE_BIN="$(command -v node)" FLEET_BROWSER_LINK_TEMPLATE='http://<board host>:7878/#/browser/{lane}' deploy/install.sh
+sudo deploy/token.sh add board --copy-to ~/.config/fleet-browser/board.token --owner "$USER"
+herdr plugin link "$PWD/herdr-plugin"
 ```
+
+Use an existing Fleet checkout if both service users can read it. The broker's systemd unit cannot read `/home` or `/root`, so use a checkout outside home directories for the daemon.
+
+For an existing browser host, rerun `deploy/install.sh` from the new package during a browser maintenance window. It updates both systemd units and the solver path, restarts the services, and retains the existing Chrome profiles, configuration, and tokens. Do not run the token-add command again. Relink the Herdr plugin if it pointed at the old checkout. For later updates, pull and build that Fleet checkout, then use the same installer to load the updated code. Fleet does not restart active browser sessions automatically.
 
 `deploy/uninstall.sh` removes the service; profiles stay unless `PURGE_DATA=1`.

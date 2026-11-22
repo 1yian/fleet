@@ -11,9 +11,9 @@ export interface BrokerConfig {
   lanes: Record<string, string[]>;
 }
 
-export const DEFAULT_BROKER_CONFIG_PATH = "/etc/fleet-browser-broker/config.json";
+const DEFAULT_BROKER_CONFIG_PATH = "/etc/fleet-browser-broker/config.json";
 export const LANE_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
-export const VAULT_PREFIX = "fleet-browser-";
+const VAULT_PREFIX = "fleet-browser-";
 
 export function laneVaultName(lane: string): string {
   return `${VAULT_PREFIX}${lane}`;

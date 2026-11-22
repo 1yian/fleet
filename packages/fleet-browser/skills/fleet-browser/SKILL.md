@@ -16,6 +16,7 @@ Your lane has one persistent Chrome. Cookies and logins survive between tasks. R
 7. When a step needs the captain (captcha you cannot pass, phone approval, payment, terms), run `fleet-browser handoff "<what the captain should do>"`. It locks the lane, notifies the captain, and waits. When it prints `handoff: done`, run `fleet-browser snapshot -i` and continue. On `expired`, report that the step is blocked.
 
 Rules:
+
 - Other cards may be working in the same lane at the same time. When `FLEET_ATTEMPT` is set (every fleet worker has it), the lane's Chrome gives you a tab of your own: your first command opens it (a `snapshot` or `eval` before any `open` shows a blank page), and `open`, `tab new` and `tab <id>` only move your tab, never another card's. Sign-ins and cookies are shared by the whole lane, so a login done by one card holds for the others.
 - `fleet-browser tab list` and `fleet-browser` list every tab of the lane's Chrome; the one marked active (or `owner: this card`) is yours. You cannot select or close another card's tab: it is refused, so leave those tabs alone. Vault-backed `login <item>`, `otp`, `mail`, `captcha` and `handoff` always act on your tab; `login --stdin` works in its own private tab and leaves your tab untouched, so reopen the site afterwards.
 - While the captain drives, a handoff is open, or any card's `login`, `otp`, `mail` or `captcha` runs, page commands from every card of the lane are refused with a message saying so; retry when it ends. `snapshot` and `screenshot` still work during a captain takeover or handoff.

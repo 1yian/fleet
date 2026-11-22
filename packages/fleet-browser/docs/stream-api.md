@@ -25,7 +25,14 @@ Lane snapshot:
   "display": ":121",
   "tabs": [{ "id": "<targetId>", "title": "Sign in", "url": "https://..." }],
   "control": { "kind": "agent" },
-  "handoff": { "id": "a1b2c3", "lane": "main", "reason": "solve the captcha", "createdAt": 0, "expiresAt": 0, "status": "open" },
+  "handoff": {
+    "id": "a1b2c3",
+    "lane": "main",
+    "reason": "solve the captcha",
+    "createdAt": 0,
+    "expiresAt": 0,
+    "status": "open"
+  },
   "credentialStep": false,
   "captchaStep": false,
   "viewLink": "http://maverick.tail7d4c65.ts.net:7878/#/browser/main"

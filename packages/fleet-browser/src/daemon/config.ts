@@ -19,7 +19,7 @@ export interface Config {
   handoff: { defaultWaitSeconds: number; linkTemplate: string | null };
 }
 
-export const DEFAULT_CONFIG_PATH = "/etc/fleet-browser/config.json";
+const DEFAULT_CONFIG_PATH = "/etc/fleet-browser/config.json";
 
 function record(value: unknown, where: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -42,7 +42,7 @@ function num(obj: Record<string, unknown>, key: string, where: string, fallback?
   return value;
 }
 
-export function parseConfig(raw: unknown): Config {
+function parseConfig(raw: unknown): Config {
   const root = record(raw, "root");
   const chrome = record(root.chrome, "chrome");
   const agent = record(root.agent ?? {}, "agent");

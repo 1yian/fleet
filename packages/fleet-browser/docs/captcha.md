@@ -26,10 +26,10 @@ The agent output is the outcome (`solved`, `none`, `failed`, `error`), the kind,
 
 Model `gpt-6.1-terra`, Chrome 158 on the p620 host, a fresh profile for every attempt, vendor demo pages. A pass is the page holding a response token.
 
-| Target | Mode | Attempts | Solved | Median time to solve |
-|---|---|---|---|---|
-| hCaptcha (accounts.hcaptcha.com/demo) | headless | 30 | 30 | 27 s |
-| reCAPTCHA v2 (google.com/recaptcha/api2/demo), image challenge shown every time | headful on Xvfb | 29 | 17 (59%) | 64 s |
+| Target                                                                          | Mode            | Attempts | Solved   | Median time to solve |
+| ------------------------------------------------------------------------------- | --------------- | -------- | -------- | -------------------- |
+| hCaptcha (accounts.hcaptcha.com/demo)                                           | headless        | 30       | 30       | 27 s                 |
+| reCAPTCHA v2 (google.com/recaptcha/api2/demo), image challenge shown every time | headful on Xvfb | 29       | 17 (59%) | 64 s                 |
 
 - reCAPTCHA in a fresh profile always showed images (a lane's warm profile mostly passes the checkbox without images). Most failures were four consecutive grids rejected, mostly 4x4 "select all squares" grids; the picks on the grids reviewed by eye were right, so what Google wants from a low-trust browser is part of the gap.
 - Before the click-placement fix hCaptcha solved 0 of 7. Before the tile-loading fix reCAPTCHA solved 8 of 30 in headless Chrome, which Google distrusts more (3 of 30 after the fix, with long waits eating the time budget).
