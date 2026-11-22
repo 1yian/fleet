@@ -228,3 +228,22 @@ test("the board refuses a grant that does not name a one-line password, an entry
     0,
   );
 });
+
+test("announcing a grant leaves the captain's hold with the captain and owes no reply", async () => {
+  const entry = await captainSays(MARKER);
+  await fleet.main.call("hold", { card: card.id, question: "Ship it?", options: ["yes", "no"] });
+  const before = (await fleet.cardd.board()).cards.find((each) => each.id === card.id)?.status;
+  assert.equal(before, "needs-you");
+
+  await grant(entry);
+
+  const announcement = (await fleet.cardd.thread(card.id)).entries.at(-1);
+  assert.match(announcement?.body ?? "", /^Sign-in grant sg-/);
+  assert.equal(announcement?.fields["owes"], undefined);
+  const after = (await fleet.cardd.board()).cards.find((each) => each.id === card.id)?.status;
+  assert.equal(after, "needs-you");
+
+  await captainSays("one more thing");
+  const taken = (await fleet.cardd.board()).cards.find((each) => each.id === card.id)?.status;
+  assert.notEqual(taken, "needs-you");
+});
