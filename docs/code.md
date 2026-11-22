@@ -462,6 +462,7 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 - `route.ts`: each card has its own address, `#/c-21`. Opening a card adds a history entry, so Back returns to the board where it was scrolled.
 - `format.ts` is pure. A card with a question for the captain needs him, whatever its status. The second mates' lane cards are the Mates group, not work.
 - `icons.tsx`: each icon is decorative. The text next to it carries the meaning.
+- `#/analytics` reads usage from the OptChat profile ledgers that cardd can open from registered lane homes. It does not read worker sessions or fetch files from other hosts. The window is the last 24 elapsed hours, grouped by UTC clock hour; the first and current bars can be partial. Cache writes are input and cache reads are counted separately. A bucket with no valid records has no measurement, even when a neighboring bucket records zero. The completions chart counts cardd cleanup entries with a `done` outcome over seven UTC calendar dates, including today.
 
 ## End-to-end tests
 

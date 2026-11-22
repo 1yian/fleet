@@ -81,16 +81,21 @@ const sideways = (): Promise<string[]> =>
       .map((element) => element.className || element.tagName),
   );
 
-test("the board starts at the top without navigation on desktop and phone", async () => {
+test("the board starts directly below its view links on desktop and phone", async () => {
   for (const viewport of [DESKTOP, PHONE]) {
     await page.setViewportSize(viewport);
     await open();
-    await shoot(`topbar-removed-${String(viewport.width)}`);
+    await shoot(`board-navigation-${String(viewport.width)}`);
     assert.equal(await page.getByRole("navigation", { name: "Lanes" }).count(), 0);
-    assert.equal(await page.getByRole("heading", { name: "Fleet", exact: true }).count(), 0);
+    const nav = page.getByRole("navigation", { name: "Fleet views" });
+    assert.equal(
+      await nav.getByRole("link", { name: "Board" }).getAttribute("aria-current"),
+      "page",
+    );
     const first = viewport.width === DESKTOP.width ? page.locator(".col-heads") : lane("fleet");
-    const box = await first.boundingBox();
-    assert.ok(box !== null && box.y <= 8, "board content fills the removed header space");
+    const [box, links] = await Promise.all([first.boundingBox(), nav.boundingBox()]);
+    assert.ok(box !== null && links !== null && box.y - links.height <= 8);
+
     assert.deepEqual(await sideways(), []);
     await card("Pick the API version").waitFor();
     await card("Leo: rotate the Twilio webhook secret").waitFor();
