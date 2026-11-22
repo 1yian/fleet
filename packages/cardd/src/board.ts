@@ -281,7 +281,7 @@ function answerOnBoard(
   return [...answerHold(db, null, card, open, args).notify];
 }
 
-function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
+function commentOnBoard(db: DatabaseSync, card: Card, text: string, grant = false): string[] {
   const taken = holdOf(db, card)?.holder === "captain";
   const main = laneOf(db, card, "main") ?? card.lane;
   const to = [main];
@@ -290,7 +290,11 @@ function commentOnBoard(db: DatabaseSync, card: Card, text: string): string[] {
     author: "captain",
     kind: "comment",
     body: text,
-    fields: { owes: main, for: "mate", ...(card.lane === main ? {} : { lane: card.lane }) },
+    fields: {
+      ...(grant ? { signinGrant: true } : { owes: main }),
+      for: "mate",
+      ...(card.lane === main ? {} : { lane: card.lane }),
+    },
   };
   if (taken) requireOpen(db, card);
   addEntry(db, draft, to);
@@ -336,7 +340,7 @@ export function boardAction(
   if (action.kind === "comment") return { notify: commentOnBoard(db, card, action.text) };
   if (action.kind === "signin-grant") {
     const { grant, text } = createGrant(db, card, action, now);
-    return { notify: commentOnBoard(db, card, text), grant };
+    return { notify: commentOnBoard(db, card, text, true), grant };
   }
   const { notify, until, zone } = deferOnBoard(
     db,
