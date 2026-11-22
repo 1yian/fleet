@@ -69,6 +69,24 @@ async function* streamChunks(reader: ReadableStreamDefaultReader<Uint8Array>) {
   }
 }
 
+function failOpen(response: ServerResponse): void {
+  if (!response.headersSent && !response.destroyed) reply(response, 502);
+}
+
+async function stream(response: ServerResponse, upstream: Response): Promise<void> {
+  if (!upstream.headers.get("content-type")?.startsWith("text/event-stream") || !upstream.body) {
+    reply(response, 502);
+    return;
+  }
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-store",
+    "x-accel-buffering": "no",
+  });
+  response.flushHeaders();
+  await pipeline(streamChunks(upstream.body.getReader()), response);
+}
+
 async function relay(
   response: ServerResponse,
   url: URL,
@@ -77,7 +95,9 @@ async function relay(
 ): Promise<void> {
   if (response.destroyed) return;
   const abort = new AbortController();
-  const close = (): void => abort.abort();
+  const close = (): void => {
+    abort.abort();
+  };
   const timer = setTimeout(close, 10_000);
   response.once("close", close);
   try {
@@ -94,23 +114,30 @@ async function relay(
       return;
     }
     clearTimeout(timer);
-    if (!upstream.headers.get("content-type")?.startsWith("text/event-stream")) {
-      reply(response, 502);
-      return;
-    }
-    response.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-store",
-      "x-accel-buffering": "no",
-    });
-    response.flushHeaders();
-    await pipeline(streamChunks(upstream.body.getReader()), response);
+    await stream(response, upstream);
   } catch {
-    if (!response.headersSent && !response.destroyed) reply(response, 502);
+    failOpen(response);
   } finally {
     clearTimeout(timer);
     response.off("close", close);
     abort.abort();
+  }
+}
+
+async function postBody(
+  request: IncomingMessage,
+  url: URL,
+): Promise<{ readonly body: string } | { readonly status: number }> {
+  if (!permitsPost(request)) return { status: 403 };
+  try {
+    const body = await bodyOf(request);
+    if (!url.pathname.endsWith("/command")) return { body };
+    const command = check(BrowserCommandSchema, JSON.parse(body));
+    return {
+      body: JSON.stringify(command.t === "control" ? { t: "control", on: command.on } : command),
+    };
+  } catch {
+    return { status: 400 };
   }
 }
 
@@ -121,24 +148,23 @@ export async function answerBrowser(
   config: BrowserUpstream | undefined,
 ): Promise<void> {
   const path = upstreamPath(url, request.method);
-  if (config === undefined || path === undefined) return reply(response, 404);
+  if (config === undefined || path === undefined) {
+    reply(response, 404);
+    return;
+  }
   let body: string | undefined;
   if (request.method === "POST") {
-    if (!permitsPost(request)) return reply(response, 403);
-    try {
-      body = await bodyOf(request);
-      if (url.pathname.endsWith("/command")) {
-        const command = check(BrowserCommandSchema, JSON.parse(body));
-        body = JSON.stringify(command.t === "control" ? { t: "control", on: command.on } : command);
-      }
-    } catch {
-      return reply(response, 400);
+    const posted = await postBody(request, url);
+    if ("status" in posted) {
+      reply(response, posted.status);
+      return;
     }
+    body = posted.body;
   }
   try {
     const token = (await readFile(config.tokenFile, "utf8")).trim();
     await relay(response, new URL(path, config.origin), token, body);
   } catch {
-    if (!response.headersSent && !response.destroyed) reply(response, 502);
+    failOpen(response);
   }
 }
