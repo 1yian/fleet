@@ -7,7 +7,7 @@ import {
   type BrowserFrame,
   type BrowserState,
 } from "@fleet/protocol";
-import { jsonEvent, openStream } from "./browser-api.ts";
+import { jsonEvent, openStream, type Stream } from "./browser-api.ts";
 
 export type BrowserInput =
   | {
@@ -55,7 +55,7 @@ function commandError(pending: Pending): string {
 
 class Viewer {
   private readonly suffix: string;
-  private readonly stop: () => void;
+  private readonly stream: Stream;
   private current: Status = {};
   private closed = false;
   private ticket = 0;
@@ -78,18 +78,19 @@ class Viewer {
       byte.toString(16).padStart(2, "0"),
     ).join("");
     this.suffix = `?viewer=${viewer}`;
-    this.stop = openStream(this.url("stream"), {
+    this.stream = openStream(this.url("stream"), {
       failed: () => {
         this.invalidateCommand();
         this.discard();
-        this.set({ offline: true });
+        this.set({ offline: true, notice: this.current.notice });
       },
-      wire: (source) => {
+      wire: (source, ready) => {
         jsonEvent(
           source,
           "state",
           (raw) => check(BrowserStateSchema, raw),
           (state) => {
+            ready();
             this.confirm(state);
           },
         );
@@ -187,7 +188,9 @@ class Viewer {
     const unconfirmed = (): void => {
       if (this.ticket !== ticket) return;
       this.invalidateCommand();
-      this.set({ state: this.current.state, notice: commandError(pending) });
+      this.discard();
+      this.set({ offline: true, notice: commandError(pending) });
+      this.stream.restart();
     };
     await this.settle();
     if (this.ticket !== ticket) return;
@@ -270,7 +273,7 @@ class Viewer {
     await this.settle();
     await this.mutation;
     if (controlling || this.issuedTake) await this.post("command", { t: "control", on: false });
-    this.stop();
+    this.stream.close();
   }
 }
 
