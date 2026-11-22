@@ -119,7 +119,7 @@ async function exerciseAmbiguousTab(
   await page.waitForFunction(
     (next) =>
       document.querySelector(".browser-surface img")?.getAttribute("src") ===
-      `data:image/jpeg;base64,${next}`,
+      `data:image/jpeg;base64,${next ?? ""}`,
     jpeg[0],
   );
   await screenClick(page);
@@ -232,7 +232,7 @@ test("the board watches lanes and only drives after stream confirmation, until c
   await page.waitForFunction(
     (next) =>
       document.querySelector(".browser-surface img")?.getAttribute("src") ===
-      `data:image/jpeg;base64,${next}`,
+      `data:image/jpeg;base64,${next ?? ""}`,
     jpeg[1],
   );
   assert.equal(
