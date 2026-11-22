@@ -114,8 +114,8 @@ function run(pi: ExtensionAPI, home: string, ctx: ExtensionContext, config: Brid
     stopped = true;
     typing.stop();
     for (const timer of timers.splice(0)) clearInterval(timer);
-    await presence.stop();
     health.stop();
+    await presence.stop();
   });
 
   const begin = async (): Promise<void> => {

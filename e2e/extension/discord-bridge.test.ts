@@ -97,13 +97,19 @@ test("the bridge status says when each layer last worked, and holds nothing priv
   h.onModel(() => ({ text: "The deploy is done." }));
   const pi = startMain(bridge({ BRIDGE_GUILD_ID: discord.guild }));
   await online();
+  const started = await waitForStatus(home(), "the online notice in the status", (status) =>
+    isStamp(status("post.okAt")),
+  );
+  const noticeAt = stampAt(started("post.okAt"));
 
   discord.say({ author: CAPTAIN, content: "Is the deploy done?" });
   await discord.waitForPost((post) => post.content === "The deploy is done.", "main's answer");
-  const read = await waitForStatus(home(), "every layer to report a success", (status) =>
-    ["poll.okAt", "injection.okAt", "post.okAt", "presence.ackAt"].every((path) =>
-      isStamp(status(path)),
-    ),
+  const read = await waitForStatus(
+    home(),
+    "every layer to report a success",
+    (status) =>
+      ["poll.okAt", "injection.okAt", "presence.ackAt"].every((path) => isStamp(status(path))) &&
+      stampAt(status("post.okAt")) > noticeAt,
   );
 
   assert.equal(read("state"), "running");
