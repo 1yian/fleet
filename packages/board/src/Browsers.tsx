@@ -89,10 +89,15 @@ function BrowserDirectory({ lanes, feed }: Feed) {
   );
 }
 
-function viewerMode(state: BrowserState | undefined, offline: boolean | undefined): string {
+function viewerMode(
+  state: BrowserState | undefined,
+  offline: boolean | undefined,
+  driving: boolean,
+): string {
   if (offline) return "Browser connection interrupted";
   if (state === undefined) return "Connecting…";
-  if (state.viewer.controlling) return "You’re in control";
+  if (state.viewer.controlling)
+    return driving ? "You’re in control" : "Control held · Input paused";
   if (state.snapshot.control.kind === "human") return "Watching · Someone else is in control";
   return "Watching · Read only";
 }
@@ -132,6 +137,12 @@ function BrowserTabs({
   );
 }
 
+function viewerHint(owns: boolean, driving: boolean): string {
+  if (!owns) return "Mouse and keyboard input stay on this device until you take control.";
+  if (!driving) return "Input is paused. Press Done to return control to the agent.";
+  return "Click the browser to send input. Press Shift + Esc to leave the screen, or Done to return control.";
+}
+
 function LaneBrowser({ lane }: { readonly lane: string }) {
   const { frame, status, command, input } = useBrowserViewer(lane);
   const { state, pending, notice, offline, fenced } = status;
@@ -154,7 +165,7 @@ function LaneBrowser({ lane }: { readonly lane: string }) {
         <div>
           <h1>{lane} browser</h1>
           <p className="muted" role="status">
-            {viewerMode(state, offline)}
+            {viewerMode(state, offline, driving)}
           </p>
         </div>
         <button
@@ -210,11 +221,7 @@ function LaneBrowser({ lane }: { readonly lane: string }) {
           </p>
         )}
       </section>
-      <p className="browser-hint muted">
-        {owns
-          ? "Click the browser to send input. Press Shift + Esc to leave the screen, or Done to return control."
-          : "Mouse and keyboard input stay on this device until you take control."}
-      </p>
+      <p className="browser-hint muted">{viewerHint(owns, driving)}</p>
     </main>
   );
 }
