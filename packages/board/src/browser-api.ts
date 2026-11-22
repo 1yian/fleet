@@ -19,42 +19,80 @@ export function jsonEvent<T>(
   });
 }
 
+const RETRY_MS = [1000, 2000, 4000, 8000, 15000];
+
+export function openStream(
+  url: string,
+  hooks: {
+    readonly wire: (source: EventSource) => void;
+    readonly failed: () => void;
+    readonly opened?: () => void;
+  },
+): () => void {
+  let source: EventSource | undefined;
+  let attempt = 0;
+  let timer = 0;
+  let stopped = false;
+  const open = (): void => {
+    const next = new EventSource(url);
+    source = next;
+    next.addEventListener("open", () => {
+      attempt = 0;
+      hooks.opened?.();
+    });
+    next.addEventListener("error", () => {
+      hooks.failed();
+      if (stopped || next.readyState !== EventSource.CLOSED) return;
+      const delay = RETRY_MS[Math.min(attempt, RETRY_MS.length - 1)] ?? 15_000;
+      attempt += 1;
+      timer = window.setTimeout(open, delay);
+    });
+    hooks.wire(next);
+  };
+  open();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    source?.close();
+  };
+}
+
 export function useBrowserLanes(enabled: boolean) {
   const [lanes, setLanes] = useState<ReadonlyMap<string, BrowserLane>>(new Map());
   const [feed, setFeed] = useState<"connecting" | "open" | "offline">("connecting");
   useEffect(() => {
     if (!enabled) return;
-    const source = new EventSource("/api/browser/events");
-    source.onopen = () => {
-      setLanes(new Map());
-      setFeed("open");
-    };
-    source.onerror = () => {
-      setFeed("offline");
-    };
-    jsonEvent(
-      source,
-      "lane",
-      (data) => check(BrowserLaneSchema, data),
-      (lane) => {
-        setLanes((current) => new Map(current).set(lane.lane, lane));
+    return openStream("/api/browser/events", {
+      opened: () => {
+        setLanes(new Map());
+        setFeed("open");
       },
-    );
-    jsonEvent(
-      source,
-      "gone",
-      (data) => check(BrowserLaneKey, data),
-      ({ lane }) => {
-        setLanes((current) => {
-          const next = new Map(current);
-          next.delete(lane);
-          return next;
-        });
+      failed: () => {
+        setFeed("offline");
       },
-    );
-    return () => {
-      source.close();
-    };
+      wire: (source) => {
+        jsonEvent(
+          source,
+          "lane",
+          (data) => check(BrowserLaneSchema, data),
+          (lane) => {
+            setLanes((current) => new Map(current).set(lane.lane, lane));
+          },
+        );
+        jsonEvent(
+          source,
+          "gone",
+          (data) => check(BrowserLaneKey, data),
+          ({ lane }) => {
+            setLanes((current) => {
+              const next = new Map(current);
+              next.delete(lane);
+              return next;
+            });
+          },
+        );
+      },
+    });
   }, [enabled]);
   return { lanes, feed };
 }

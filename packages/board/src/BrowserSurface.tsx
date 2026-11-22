@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, type KeyboardEvent, type PointerEvent } from "react";
 import type { BrowserFrame } from "@fleet/protocol";
 import type { BrowserInput } from "./browser-session.ts";
 
@@ -36,18 +36,24 @@ interface Props {
   readonly input: (target: string, event: BrowserInput) => void;
 }
 
+type MouseInput = Extract<BrowserInput, { t: "mouse" }>;
+
+const MULTI_CLICK_MS = 500;
+const MULTI_CLICK_PX = 5;
+
 function mouseInput(
   event: PointerEvent<HTMLDivElement>,
   frame: BrowserFrame,
   type: "mouseMoved" | "mousePressed" | "mouseReleased",
-): BrowserInput {
+  count: number,
+): MouseInput {
   return {
     t: "mouse",
     type,
     ...position(frame, event, event.currentTarget),
     button: ["left", "middle", "right"][event.button] ?? "none",
     buttons: event.buttons,
-    clickCount: type === "mouseMoved" ? 0 : Math.max(1, event.detail),
+    clickCount: type === "mouseMoved" ? 0 : count,
     modifiers: modifiers(event),
   };
 }
@@ -66,9 +72,81 @@ function keyInput(event: KeyboardEvent<HTMLDivElement>, down: boolean): BrowserI
   };
 }
 
+class Gestures {
+  private last = { count: 0, at: 0, x: 0, y: 0, button: -1 };
+  private readonly pressed = new Map<number, MouseInput>();
+  private readonly held = new Map<string, BrowserInput>();
+
+  reset(): void {
+    this.pressed.clear();
+    this.held.clear();
+  }
+
+  press(event: PointerEvent<HTMLDivElement>, frame: BrowserFrame): MouseInput {
+    const { last } = this;
+    const repeated =
+      event.button === last.button &&
+      event.timeStamp - last.at < MULTI_CLICK_MS &&
+      Math.hypot(event.clientX - last.x, event.clientY - last.y) <= MULTI_CLICK_PX;
+    const count = repeated ? last.count + 1 : 1;
+    this.last = {
+      count,
+      at: event.timeStamp,
+      x: event.clientX,
+      y: event.clientY,
+      button: event.button,
+    };
+    const press = mouseInput(event, frame, "mousePressed", count);
+    this.pressed.set(event.button, press);
+    return press;
+  }
+
+  release(event: PointerEvent<HTMLDivElement>, frame: BrowserFrame): MouseInput | undefined {
+    const press = this.pressed.get(event.button);
+    if (press === undefined) return undefined;
+    this.pressed.delete(event.button);
+    return mouseInput(event, frame, "mouseReleased", press.clickCount);
+  }
+
+  releasePointer(): MouseInput[] {
+    const releases = [...this.pressed.values()].map((press): MouseInput => ({
+      ...press,
+      type: "mouseReleased",
+      buttons: 0,
+    }));
+    this.pressed.clear();
+    return releases;
+  }
+
+  key(event: KeyboardEvent<HTMLDivElement>, down: boolean): BrowserInput {
+    if (down) this.held.set(event.code, keyInput(event, false));
+    else this.held.delete(event.code);
+    return keyInput(event, down);
+  }
+
+  releaseKeys(): BrowserInput[] {
+    const releases = [...this.held.values()].map((release): BrowserInput => ({
+      ...release,
+      modifiers: 0,
+    }));
+    this.held.clear();
+    return releases;
+  }
+}
+
 export function BrowserSurface({ frame, driving, input }: Props) {
   const surface = useRef<HTMLDivElement>(null);
   const target = frame.meta.targetId;
+  const gestures = useMemo(() => new Gestures(), []);
+  useEffect(
+    () => () => {
+      gestures.reset();
+    },
+    [gestures, driving, target],
+  );
+  const releasePointer = (): void => {
+    for (const release of gestures.releasePointer()) input(target, release);
+  };
   useEffect(() => {
     const element = surface.current;
     if (!driving || element === null) return;
@@ -97,13 +175,9 @@ export function BrowserSurface({ frame, driving, input }: Props) {
         event.currentTarget.blur();
         return;
       }
-      if (
-        event.nativeEvent.isComposing ||
-        ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "v")
-      )
-        return;
+      if (event.nativeEvent.isComposing) return;
       event.preventDefault();
-      input(target, keyInput(event, down));
+      input(target, gestures.key(event, down));
     };
   return (
     <div
@@ -116,23 +190,27 @@ export function BrowserSurface({ frame, driving, input }: Props) {
         if (!driving) return;
         event.currentTarget.focus();
         event.currentTarget.setPointerCapture(event.pointerId);
-        input(target, mouseInput(event, frame, "mousePressed"));
+        input(target, gestures.press(event, frame));
       }}
       onPointerMove={(event) => {
-        if (driving) input(target, mouseInput(event, frame, "mouseMoved"));
+        if (driving) input(target, mouseInput(event, frame, "mouseMoved", 0));
       }}
       onPointerUp={(event) => {
-        if (driving && event.currentTarget.hasPointerCapture(event.pointerId))
-          input(target, mouseInput(event, frame, "mouseReleased"));
+        const release = driving ? gestures.release(event, frame) : undefined;
+        if (release !== undefined) input(target, release);
+      }}
+      onPointerCancel={() => {
+        releasePointer();
+      }}
+      onLostPointerCapture={() => {
+        releasePointer();
+      }}
+      onBlur={() => {
+        if (!driving) return;
+        for (const release of gestures.releaseKeys()) input(target, release);
       }}
       onContextMenu={(event) => {
         if (driving) event.preventDefault();
-      }}
-      onPaste={(event) => {
-        if (!driving) return;
-        event.preventDefault();
-        const text = event.clipboardData.getData("text/plain");
-        if (text) input(target, { t: "text", text: text.slice(0, 8192) });
       }}
       onKeyDown={keyboard(true)}
       onKeyUp={keyboard(false)}
