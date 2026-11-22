@@ -18,7 +18,7 @@ import {
   maintain,
   workspace,
   untilRunning,
-  useSteadyPi,
+  useRealPi,
   action,
   idlePane,
 } from "../support/lane-observation-lab.ts";
@@ -78,7 +78,6 @@ test("legacy split workspaces close by the original pane's home, not by Pi in a 
 });
 
 test("a legacy split listed first cannot mask the current-title lane", async () => {
-  useSteadyPi();
   const home = `${here.root}.worktrees/lane-ops`;
   const legacyPane = await idlePane("ops", home, "fleet-ops");
   await lab.run(["pane", "split", legacyPane, "--direction", "right", "--no-focus"]);
@@ -99,7 +98,6 @@ test("a legacy split listed first cannot mask the current-title lane", async () 
 });
 
 test("an omitted current title cannot authorize a legacy start, hold, or close", async () => {
-  useSteadyPi();
   assert.deepEqual(maintain(), action("ops", "started"));
   await untilRunning("ops");
   const home = `${here.root}.worktrees/lane-ops`;
@@ -163,7 +161,6 @@ test("a pane disappearing between list and process info leaves the lane unread",
 });
 
 test("maintenance returns a completed start even when the next lane cannot be read", async () => {
-  useSteadyPi();
   addLane("zz");
   assert.deepEqual(JSON.parse(fleet(["up", "zz", "--json"])), action("zz", "started"));
   const ws = await workspace("zz");
@@ -188,7 +185,6 @@ test("maintenance returns a completed start even when the next lane cannot be re
 });
 
 test("an old supervisor's command still gets array success and nonzero operation failure", async () => {
-  useSteadyPi();
   assert.equal(fleet(["--maintenance-outcomes-v1"]).trim(), "fleet: maintenance outcomes v1");
   assert.equal(await workspace("ops"), undefined);
   assert.deepEqual(JSON.parse(fleet(legacyMaintenance)), action("ops", "started"));
@@ -291,6 +287,7 @@ test("automatic sweeps rotate past repeated hangs and reap their probes", async 
   await idlePane("ops", `${here.root}.worktrees/lane-ops`);
   writeFileSync(`${faultLog()}.targets`, `${panes.join(",")}\n`);
   h.onModel(() => ({ text: "noted" }), "mate");
+  useRealPi();
   await startMain(lab, here, h);
   const deadline = Date.now() + 140_000;
   for (;;) {
@@ -325,7 +322,6 @@ test("an explicit stop accepts a complete workspace close reply without a type f
 });
 
 test("structured pane run and silent workspace close both succeed", async () => {
-  useSteadyPi();
   assert.deepEqual(maintain("structured-run"), action("ops", "started"));
   assert.deepEqual(maintain(), action("ops", "running"));
   assert.equal(fleet(["stop", "ops"], "silent-close").trim(), "ops: stopped");

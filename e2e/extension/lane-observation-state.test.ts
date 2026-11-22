@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, test } from "node:test";
+import { test } from "node:test";
 import { isRecord, records } from "../support/json.ts";
 import {
   lab,
@@ -27,10 +27,7 @@ import {
   action,
   idlePane,
   untilRunning,
-  useSteadyPi,
 } from "../support/lane-observation-lab.ts";
-
-beforeEach(useSteadyPi);
 
 test("a stop marker that lands while a running mate is being sampled is neither cleared nor reported as a definite outcome", async () => {
   const home = `${here.root}.worktrees/lane-ops`;
