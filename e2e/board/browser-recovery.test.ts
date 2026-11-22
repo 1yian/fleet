@@ -149,3 +149,23 @@ test("an input refusal during a pending tab change stops the change and the drai
   assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
   await page.keyboard.up("Shift");
 });
+
+test("a command whose confirmed tab changed while its drain waited is not sent", async (t) => {
+  const { endpoint, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  endpoint.hold();
+  await page.keyboard.down("Shift");
+  await until(() => endpoint.order.includes("key:rawKeyDown:Shift"));
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Returning control…" }).waitFor();
+  endpoint.switchTab();
+  await page
+    .locator('nav[aria-label="Remote tabs"] button[aria-current="true"]', { hasText: "Workshop" })
+    .waitFor();
+  endpoint.release();
+  await page.getByText(/changed before your request went through/).waitFor();
+  assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
+  assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
+  await page.keyboard.up("Shift");
+});
