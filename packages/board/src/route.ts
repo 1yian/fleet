@@ -10,12 +10,27 @@ const subscribe = (notify: () => void): (() => void) => {
 };
 const hash = (): string => location.hash;
 
-function entry(): { readonly opened: boolean; readonly scroll: number } {
+const positions = new Map<string, number>();
+let current = "";
+
+const fresh = (): string => `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
+
+function entry(): { readonly key: string | undefined; readonly opened: boolean } {
   const state: unknown = history.state;
-  const opened =
-    typeof state === "object" && state !== null && Reflect.get(state, "opened") === true;
-  const scroll = typeof state === "object" && state !== null ? Reflect.get(state, "scroll") : 0;
-  return { opened, scroll: typeof scroll === "number" ? scroll : 0 };
+  if (typeof state !== "object" || state === null) return { key: undefined, opened: false };
+  const key = Reflect.get(state, "key");
+  return {
+    key: typeof key === "string" ? key : undefined,
+    opened: Reflect.get(state, "opened") === true,
+  };
+}
+
+function adopt(): string {
+  const { key, opened } = entry();
+  if (key !== undefined) return key;
+  const next = fresh();
+  history.replaceState({ key: next, opened }, "");
+  return next;
 }
 
 export function useCardRoute(): {
@@ -28,8 +43,11 @@ export function useCardRoute(): {
   const workers = address === "#/workers";
   const card = ADDRESS.exec(address)?.[1];
   const id = card === undefined ? undefined : Number(card);
+
   const open = useCallback((next: number) => {
-    history.pushState({ opened: true }, "", `#/c-${String(next)}`);
+    positions.set(current, window.scrollY);
+    current = fresh();
+    history.pushState({ key: current, opened: true }, "", `#/c-${String(next)}`);
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   }, []);
   const close = useCallback(() => {
@@ -38,30 +56,27 @@ export function useCardRoute(): {
       history.back();
       return;
     }
-    history.replaceState(null, "", location.pathname + location.search);
+    current = fresh();
+    history.replaceState({ key: current, opened: false }, "", location.pathname + location.search);
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   }, []);
 
   useEffect(() => {
+    current = adopt();
     history.scrollRestoration = "manual";
-    let frame = 0;
-    const save = (): void => {
-      if (frame !== 0) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        history.replaceState({ opened: entry().opened, scroll: window.scrollY }, "");
-      });
+    const depart = (): void => {
+      positions.set(current, window.scrollY);
+      current = adopt();
     };
-    window.addEventListener("scroll", save, { passive: true });
+    window.addEventListener("popstate", depart);
     return () => {
-      window.removeEventListener("scroll", save);
-      cancelAnimationFrame(frame);
+      window.removeEventListener("popstate", depart);
       history.scrollRestoration = "auto";
     };
   }, []);
 
   useEffect(() => {
-    window.scrollTo(0, entry().scroll);
+    window.scrollTo(0, positions.get(current) ?? 0);
   }, [address]);
 
   return { card: id, workers, open, close };
