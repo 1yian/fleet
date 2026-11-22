@@ -151,8 +151,10 @@ test("analytics reconciles readable ledger usage and successful closes in the re
     await inspector.innerText(),
     /42,800 tokens · Input: 3,000 · Cached input: 37,000 · Output: 2,800/,
   );
+  await hourly.getByRole("button", { name: /^May 3, 13:00.*: 0 tokens/ }).focus();
+  assert.match(await inspector.innerText(), /0 tokens · Input: 0 · Cached input: 0 · Output: 0/);
   await page.mouse.move(2, 2);
-  assert.match(await inspector.innerText(), /No usage records/);
+  assert.match(await inspector.innerText(), /0 tokens · Input: 0 · Cached input: 0 · Output: 0/);
 
   const lanes = page.getByRole("region", { name: "Tokens by lane" });
   assert.deepEqual(await lanes.getByRole("listitem").allTextContents(), [

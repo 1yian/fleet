@@ -68,10 +68,17 @@ function hourLabels(hours: Data["hours"]) {
   });
 }
 
+type Interaction = { readonly kind: "hover" | "focus" | "tap"; readonly at: number };
+
 function Hourly({ data }: { readonly data: Data }) {
-  const [hovered, setHovered] = useState<number>();
-  const [focused, setFocused] = useState<number>();
-  const active = hovered ?? focused;
+  const [interactions, setInteractions] = useState<readonly Interaction[]>([]);
+  const begin = (kind: Interaction["kind"], at: number): void => {
+    setInteractions((all) => [...all.filter((one) => one.kind !== kind), { kind, at }]);
+  };
+  const end = (kind: Interaction["kind"]): void => {
+    setInteractions((all) => all.filter((one) => one.kind !== kind));
+  };
+  const active = interactions.at(-1)?.at;
   const selected = data.hours.find(({ at }) => at === active);
   const max = scale(Math.max(...data.hours.map(({ tokens }) => total(tokens))));
   const sum = data.hours.reduce((count, { tokens }) => count + total(tokens), 0);
@@ -136,20 +143,20 @@ function Hourly({ data }: { readonly data: Data }) {
                   ? "No usage records"
                   : `${number.format(total(tokens))} tokens · ${tokenLabel(tokens)}`
               }`}
-              onPointerEnter={() => {
-                setHovered(at);
+              onPointerEnter={(event) => {
+                if (event.pointerType !== "touch") begin("hover", at);
               }}
               onPointerLeave={() => {
-                setHovered(undefined);
+                end("hover");
+              }}
+              onPointerUp={(event) => {
+                if (event.pointerType === "touch") begin("tap", at);
               }}
               onFocus={() => {
-                setFocused(at);
+                begin("focus", at);
               }}
               onBlur={() => {
-                setFocused(undefined);
-              }}
-              onClick={() => {
-                setFocused(at);
+                end("focus");
               }}
             >
               {tokens === null || total(tokens) === 0 ? (
