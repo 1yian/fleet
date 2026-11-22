@@ -38,11 +38,12 @@ type Status = {
   readonly notice?: string | undefined;
   readonly offline?: boolean | undefined;
   readonly fenced?: boolean | undefined;
+  readonly halted?: boolean | undefined;
 };
 
 const LOST = "Control ended. You’re watching again.";
 const AMBIGUOUS =
-  "The last change may not have finished. You can keep watching, but reload this page before taking control again.";
+  "The last change may not have finished, so input and control changes are off. You can keep watching. Leave this page to hand control back to the agent.";
 
 function commandFor(pending: Pending): BrowserCommand {
   if (pending === "take") return { t: "control", on: true };
@@ -68,6 +69,9 @@ class Viewer {
   private mutation: Promise<number> = Promise.resolve(0);
   private mutating = false;
   private quarantined = false;
+  private recovering = false;
+  private latest: BrowserFrame | undefined;
+  private heldTarget: string | undefined;
   private epoch = 0;
   private issuedTake = false;
   private scheduled = 0;
@@ -93,8 +97,10 @@ class Viewer {
     this.stream = openStream(this.url("stream"), {
       failed: () => {
         this.epoch += 1;
+        this.latest = undefined;
         this.frame(undefined);
-        this.discard();
+        this.events = [];
+        this.recovering = this.recovering || this.held.size > 0;
         if (!this.mutating) this.invalidateCommand();
         this.set({
           offline: true,
@@ -112,7 +118,14 @@ class Viewer {
             this.confirm(state);
           },
         );
-        jsonEvent(source, "frame", (raw) => check(BrowserFrameSchema, raw), this.frame);
+        jsonEvent(
+          source,
+          "frame",
+          (raw) => check(BrowserFrameSchema, raw),
+          (frame) => {
+            this.accept(frame);
+          },
+        );
       },
     });
   }
@@ -124,11 +137,38 @@ class Viewer {
   private set(status: Status): void {
     if (this.closed) return;
     this.current = status;
-    this.show({ ...status, fenced: this.mutating || this.quarantined });
+    this.show({ ...status, fenced: this.blocked(), halted: this.quarantined });
+  }
+
+  private matched(): boolean {
+    const state = this.current.state;
+    return state !== undefined && this.latest?.meta.targetId === state.activeTab;
+  }
+
+  private blocked(): boolean {
+    return this.mutating || this.quarantined || this.recovering || !this.matched();
+  }
+
+  private accept(frame: BrowserFrame): void {
+    const was = this.matched();
+    this.latest = frame;
+    this.frame(frame);
+    if (was || !this.matched()) return;
+    this.set(this.current);
+    this.resume();
+  }
+
+  private resume(): void {
+    if (!this.recovering || !this.matched()) return;
+    void this.settle().then(() => {
+      this.recovering = false;
+      this.set(this.current);
+    });
   }
 
   private reopen(notice: string | undefined): void {
     this.epoch += 1;
+    this.latest = undefined;
     this.frame(undefined);
     this.discard();
     this.set({ offline: true, notice });
@@ -138,6 +178,7 @@ class Viewer {
   private discard(): void {
     this.events = [];
     this.held.clear();
+    this.heldTarget = undefined;
   }
 
   private track(event: BrowserInput): void {
@@ -176,12 +217,14 @@ class Viewer {
       (typeof pending === "object" && pending.tab === state.activeTab);
     if (completed) this.invalidateCommand();
     if (!owns && pending !== "take") this.issuedTake = false;
-    if (lost || previous?.activeTab !== state.activeTab) this.discard();
+    if (lost || previous?.activeTab !== state.activeTab) this.events = [];
+    if (!owns || state.activeTab !== this.heldTarget) this.held.clear();
     this.set({
       state,
       pending: completed ? undefined : pending,
       notice: lost ? (pending === "done" ? "Control returned to the agent." : LOST) : notice,
     });
+    this.resume();
   }
 
   private async post(
@@ -203,10 +246,9 @@ class Viewer {
 
   private canCommand(pending: Pending, state: BrowserState): boolean {
     return (
-      !this.mutating &&
+      !this.blocked() &&
       this.current.pending === undefined &&
-      state.viewer.controlling === (pending !== "take") &&
-      (!this.quarantined || pending === "done")
+      state.viewer.controlling === (pending !== "take")
     );
   }
 
@@ -217,7 +259,7 @@ class Viewer {
     const ticket = ++this.ticket;
     await this.settle();
     if (this.ticket !== ticket) return;
-    if (this.quarantined && pending !== "done") {
+    if (this.quarantined) {
       this.invalidateCommand();
       this.reopen(AMBIGUOUS);
       return;
@@ -269,8 +311,7 @@ class Viewer {
   private canDrive(): boolean {
     return (
       !this.closed &&
-      !this.mutating &&
-      !this.quarantined &&
+      !this.blocked() &&
       this.current.pending === undefined &&
       this.current.state?.viewer.controlling === true
     );
@@ -287,6 +328,7 @@ class Viewer {
     )
       this.events.pop();
     this.events.push(event);
+    this.heldTarget = target;
     this.track(event);
     this.schedule();
   }
@@ -322,7 +364,7 @@ class Viewer {
   private async settle(): Promise<void> {
     this.events.push(...this.held.values());
     this.held.clear();
-    while (this.events.length > 0 || this.sending) {
+    while (!this.quarantined && (this.events.length > 0 || this.sending)) {
       if (!this.sending) this.send();
       await this.inflight;
     }
@@ -338,7 +380,8 @@ class Viewer {
   private async teardown(controlling: boolean): Promise<void> {
     await this.settle();
     await this.mutation;
-    if (controlling || this.issuedTake) await this.post("command", { t: "control", on: false });
+    if (!this.quarantined && (controlling || this.issuedTake))
+      await this.post("command", { t: "control", on: false });
     this.stream.close();
   }
 }
