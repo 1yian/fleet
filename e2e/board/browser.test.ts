@@ -230,6 +230,15 @@ async function exerciseReconnectDuringTab(
   assert.deepEqual(endpoint.order.slice(0, endpoint.order.indexOf("tab")), []);
 }
 
+async function takeControl(page: Page, endpoint: BrowserEndpoint, base: string): Promise<void> {
+  await page.goto(`${base}#/browser/garden`);
+  await page.getByText("Watching · Read only").waitFor();
+  await page.getByRole("button", { name: "Take control" }).click();
+  await until(() => endpoint.commands.length === 1);
+  endpoint.confirm();
+  await page.getByText("You’re in control").waitFor();
+}
+
 async function launch(t: TestContext) {
   const browser = await chromium.launch();
   t.after(() => browser.close());
@@ -350,12 +359,7 @@ test("leaving the board right after Take control does not leave the viewer holdi
 
 test("an unconfirmed change leaves the viewer watching until the page is reloaded", async (t) => {
   const { endpoint, jpeg, page, base } = await launch(t);
-  await page.goto(`${base}#/browser/garden`);
-  await page.getByText("Watching · Read only").waitFor();
-  await page.getByRole("button", { name: "Take control" }).click();
-  await until(() => endpoint.commands.length === 1);
-  endpoint.confirm();
-  await page.getByText("You’re in control").waitFor();
+  await takeControl(page, endpoint, base);
   endpoint.failNextCommand();
   await page.getByRole("button", { name: "Workshop" }).click();
   await page.getByText(/may not have finished/).waitFor();
@@ -378,12 +382,7 @@ test("an unconfirmed change leaves the viewer watching until the page is reloade
 
 test("a typing request that cannot be confirmed blocks a queued tab change", async (t) => {
   const { endpoint, page, base } = await launch(t);
-  await page.goto(`${base}#/browser/garden`);
-  await page.getByText("Watching · Read only").waitFor();
-  await page.getByRole("button", { name: "Take control" }).click();
-  await until(() => endpoint.commands.length === 1);
-  endpoint.confirm();
-  await page.getByText("You’re in control").waitFor();
+  await takeControl(page, endpoint, base);
   endpoint.hold();
   endpoint.failNextInput();
   await screenClick(page);
@@ -400,14 +399,8 @@ test("a typing request that cannot be confirmed blocks a queued tab change", asy
 
 test("leaving after an input timeout sends nothing while the browser may still be applying it", async (t) => {
   const { endpoint, page, base } = await launch(t);
-  await page.goto(`${base}#/browser/garden`);
-  await page.getByText("Watching · Read only").waitFor();
-  await page.getByRole("button", { name: "Take control" }).click();
-  await until(() => endpoint.commands.length === 1);
-  endpoint.confirm();
-  await page.getByText("You’re in control").waitFor();
+  await takeControl(page, endpoint, base);
   endpoint.hold();
-  endpoint.timeOutNextInput();
   await screenClick(page);
   await page.getByText(/may not have finished/).waitFor();
   assert.ok(endpoint.activeInputs > 0);
@@ -422,12 +415,7 @@ test("leaving after an input timeout sends nothing while the browser may still b
 
 test("a key held when only the stream drops is released once the same tab is confirmed again", async (t) => {
   const { endpoint, page, base } = await launch(t);
-  await page.goto(`${base}#/browser/garden`);
-  await page.getByText("Watching · Read only").waitFor();
-  await page.getByRole("button", { name: "Take control" }).click();
-  await until(() => endpoint.commands.length === 1);
-  endpoint.confirm();
-  await page.getByText("You’re in control").waitFor();
+  await takeControl(page, endpoint, base);
   await screenClick(page);
   await page.keyboard.down("Shift");
   await until(() => endpoint.order.includes("key:rawKeyDown:Shift"));
@@ -443,5 +431,51 @@ test("a key held when only the stream drops is released once the same tab is con
   await page.getByText("You’re in control").waitFor();
   const pressed = endpoint.order.indexOf("key:rawKeyDown:Shift");
   assert.deepEqual(endpoint.order.slice(pressed), ["key:rawKeyDown:Shift", "key:keyUp:Shift"]);
+  await page.keyboard.up("Shift");
+});
+
+test("leaving before a reconnected stream is confirmed sends no release for a held key", async (t) => {
+  const { endpoint, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await screenClick(page);
+  await page.keyboard.down("Shift");
+  await until(() => endpoint.order.includes("key:rawKeyDown:Shift"));
+  const opens = endpoint.streamOpens;
+  endpoint.startOutage();
+  await page.getByText("Browser connection interrupted").waitFor();
+  endpoint.withholdState();
+  endpoint.endOutage();
+  await until(() => endpoint.streamOpens > opens);
+  await page.keyboard.up("Shift");
+  await page.getByRole("link", { name: "‹ Browsers" }).click();
+  await until(() => endpoint.streams === 0);
+  assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
+  assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
+});
+
+test("a release still queued when the stream drops is sent once from the acknowledged press", async (t) => {
+  const { endpoint, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await screenClick(page);
+  await page.keyboard.down("Shift");
+  await until(() => endpoint.order.includes("key:rawKeyDown:Shift") && endpoint.activeInputs === 0);
+  await nextFrames(page);
+  endpoint.hold();
+  await page.keyboard.press("a");
+  await until(() => endpoint.activeInputs > 0);
+  await page.keyboard.up("Shift");
+  const opens = endpoint.streamOpens;
+  endpoint.startOutage();
+  await page.getByText("Browser connection interrupted").waitFor();
+  endpoint.release();
+  await until(() => endpoint.activeInputs === 0);
+  endpoint.withholdState();
+  endpoint.endOutage();
+  await until(() => endpoint.streamOpens > opens);
+  assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
+  endpoint.releaseState();
+  await until(() => endpoint.order.includes("key:keyUp:Shift"));
+  await page.getByText("You’re in control").waitFor();
+  assert.equal(endpoint.order.filter((entry) => entry === "key:keyUp:Shift").length, 1);
   await page.keyboard.up("Shift");
 });
