@@ -26,10 +26,6 @@ function entry(): { readonly opened: boolean; readonly scroll: number } {
   return { opened, scroll: typeof scroll === "number" ? scroll : 0 };
 }
 
-export function rememberScroll(): void {
-  history.replaceState({ opened: entry().opened, scroll: window.scrollY }, "");
-}
-
 export function useCardRoute(): {
   readonly card: number | undefined;
   readonly workers: boolean;
@@ -41,7 +37,6 @@ export function useCardRoute(): {
   const card = ADDRESS.exec(address)?.[1];
   const id = card === undefined ? undefined : Number(card);
   const open = useCallback((next: number) => {
-    rememberScroll();
     history.pushState({ opened: true }, "", `#/c-${String(next)}`);
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   }, []);
@@ -53,6 +48,24 @@ export function useCardRoute(): {
     }
     history.replaceState(null, "", location.pathname + location.search);
     window.dispatchEvent(new HashChangeEvent("hashchange"));
+  }, []);
+
+  useEffect(() => {
+    history.scrollRestoration = "manual";
+    let frame = 0;
+    const save = (): void => {
+      if (frame !== 0) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        history.replaceState({ opened: entry().opened, scroll: window.scrollY }, "");
+      });
+    };
+    window.addEventListener("scroll", save, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", save);
+      cancelAnimationFrame(frame);
+      history.scrollRestoration = "auto";
+    };
   }, []);
 
   useEffect(() => {
