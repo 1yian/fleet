@@ -33,12 +33,25 @@ function sqlText(value: unknown): string {
 function changedMigrations(base: string): string[] {
   const out = execFileSync(
     "git",
-    ["diff", "--name-status", "--diff-filter=MDRT", base, "HEAD", "--", MIGRATIONS_DIR],
+    [
+      "-c",
+      "diff.renames=true",
+      "diff",
+      "--name-status",
+      "--find-renames=100%",
+      "--diff-filter=MDRT",
+      base,
+      "HEAD",
+      "--",
+      MIGRATIONS_DIR,
+    ],
     { encoding: "utf8" },
   );
-  const baseFiles = execFileSync("git", ["ls-tree", "--name-only", base, "--", `${MIGRATIONS_DIR}/`], {
-    encoding: "utf8",
-  }).split("\n");
+  const baseFiles = execFileSync(
+    "git",
+    ["ls-tree", "--name-only", base, "--", `${MIGRATIONS_DIR}/`],
+    { encoding: "utf8" },
+  ).split("\n");
   const baseHasDuplicate041 =
     baseFiles.includes(PLACED_HOST_041) && baseFiles.includes(SIGNIN_GRANTS_041);
   return out
