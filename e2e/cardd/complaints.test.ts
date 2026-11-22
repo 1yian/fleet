@@ -162,6 +162,13 @@ test("complaint markup, links and shorthand are confined to one literal block", 
     "- Project: `web`",
   ]);
 });
+test("every line of a multiline complaint stays inside the literal block", async () => {
+  const text = "Setup printed:\n![trace](https://example.test/trace.png)\n\n# heading";
+  await worker.call("complaint.publish", { text });
+  const [issue] = await filed(1);
+  const [block] = issue?.body.split("\n\n- Time: ") ?? [];
+  assert.equal(block, text.replace(/\n/g, "\n    ").replace(/^/, "    "));
+});
 test("long, blank, or NUL-containing text is refused and files nothing", async () => {
   await assert.rejects(
     worker.call("complaint.publish", { text: "x".repeat(501) }),

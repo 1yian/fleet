@@ -58,7 +58,7 @@ function issueFor(session: Session, text: string, about: About, now: number): Is
       characters.length > TITLE_LIMIT
         ? `${characters.slice(0, TITLE_LIMIT - 3).join("")}...`
         : text,
-    body: `    ${text}\n\n${details.map((line) => `- ${line}`).join("\n")}\n`,
+    body: `    ${text.replace(/\r\n?|\n/g, "\n    ")}\n\n${details.map((line) => `- ${line}`).join("\n")}\n`,
   };
 }
 
