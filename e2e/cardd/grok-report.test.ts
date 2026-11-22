@@ -161,6 +161,45 @@ test("the Grok connector discovers just one tool and records a correlated result
   );
 });
 
+test("a second mate's Grok result stays out of the board, summaries and other lanes", async () => {
+  const started = await startFleet({ CARDD_GROK_REPORT_TOKEN: TOKEN });
+  fleet = started;
+  const cleo = await started.cardd.connect(started.cardd.addLane("cleo", "main"));
+  const card = await newCard(cleo, "Check the internal source");
+  const assignment = check(
+    OPS["grok.assign"].result,
+    await cleo.call("grok.assign", { card: card.id }),
+  );
+  const secret = "Internal excerpt: the vendor price is 41 percent below list.";
+  const permalink = "https://chat.example.test/archives/C1/p1700000000";
+  const accepted = await tool(started, { ...assignment, text: secret, sources: [permalink] });
+  const pushed = await cleo.waitForEntry(
+    (entry) => entry.author === "grok-bot" && entry.card === card.id,
+    "the Grok Bot result in the owning mate's inbox",
+  );
+  assert.deepEqual(accepted, receipt("recorded", pushed.id));
+  assert.equal(pushed.body, secret);
+  const ownView = check(OPS.card.result, await cleo.call("card", { card: card.id }));
+  assert.deepEqual(
+    ownView.entries.filter((entry) => entry.author === "grok-bot"),
+    [pushed],
+  );
+  const mainView = await view(started, card);
+  assert.deepEqual(
+    mainView.entries.filter((entry) => entry.author === "grok-bot"),
+    [],
+  );
+  const everywhere = JSON.stringify([
+    mainView,
+    await started.cardd.board(),
+    await started.cardd.thread(card.id),
+    check(OPS.board.result, await started.main.call("board", {})),
+  ]);
+  assert.ok(!everywhere.includes(secret));
+  assert.ok(!everywhere.includes(permalink));
+  assert.ok(!JSON.stringify(check(OPS.board.result, await cleo.call("board", {}))).includes(secret));
+});
+
 test("the connector rejects a superseded attempt and a closed card", async () => {
   const started = await startFleet({ CARDD_GROK_REPORT_TOKEN: TOKEN });
   fleet = started;

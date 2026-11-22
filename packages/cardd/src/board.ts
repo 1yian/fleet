@@ -83,8 +83,13 @@ function requireCaptainsHold(db: DatabaseSync, card: Card, seen: number): Hold {
 const MATES_ONLY: ReadonlySet<string> = new Set(["job-result", "finding", "review-feedback"]);
 const takeoverNote = (entry: Entry): boolean =>
   entry.author === "fleet" && entry.kind === "note" && entry.fields["fleetReview"] === true;
+const grokResult = (entry: Entry): boolean =>
+  entry.author === "grok-bot" && entry.fields["grok"] === "result";
 const inThread = (entry: Entry): boolean =>
-  !MATES_ONLY.has(entry.kind) && entry.fields["maintenance"] !== "batch" && !takeoverNote(entry);
+  !MATES_ONLY.has(entry.kind) &&
+  entry.fields["maintenance"] !== "batch" &&
+  !takeoverNote(entry) &&
+  !grokResult(entry);
 
 const forCaptain = (entry: Entry, laneCard: boolean): boolean =>
   inThread(entry) &&
@@ -251,6 +256,7 @@ export function cardView(db: DatabaseSync, id: number, lane: string, timing: Tim
           },
     attempts: attemptsOf(db, id),
     entries: each.entries
+      .filter((entry) => !grokResult(entry) || lane === each.card.lane)
       .flatMap((entry) => entryFor(db, lane, entry) ?? [])
       .map((entry) => ({ ...entry, body: withoutPaths(entry.body, evidencePaths(each.entries)) })),
   };
