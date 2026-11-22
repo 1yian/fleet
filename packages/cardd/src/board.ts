@@ -197,7 +197,7 @@ function buildBoard(
     }
     return card;
   });
-  return { cards, holds, schedules: allSchedules(db) };
+  return { cards, holds, schedules: allSchedules(db), workerStaleBefore: now - timing.stall };
 }
 
 export function boardFor(db: DatabaseSync, lane: string, timing: Timings): BoardCard[] {
