@@ -137,15 +137,16 @@ function BrowserTabs({
   );
 }
 
-function viewerHint(owns: boolean, driving: boolean): string {
+function viewerHint(owns: boolean, driving: boolean, halted: boolean): string {
   if (!owns) return "Mouse and keyboard input stay on this device until you take control.";
-  if (!driving) return "Input is paused. Press Done to return control to the agent.";
+  if (halted) return "Input is off. Leave this page to hand control back to the agent.";
+  if (!driving) return "Input is paused until the browser screen is confirmed.";
   return "Click the browser to send input. Press Shift + Esc to leave the screen, or Done to return control.";
 }
 
 function LaneBrowser({ lane }: { readonly lane: string }) {
   const { frame, status, command, input } = useBrowserViewer(lane);
-  const { state, pending, notice, offline, fenced } = status;
+  const { state, pending, notice, offline, fenced, halted } = status;
   const owns = state?.viewer.controlling === true;
   const driving = owns && pending === undefined && fenced !== true;
   const canTake =
@@ -171,7 +172,7 @@ function LaneBrowser({ lane }: { readonly lane: string }) {
         <button
           className="browser-action"
           type="button"
-          disabled={pending !== undefined || (!owns && (!canTake || fenced === true))}
+          disabled={pending !== undefined || fenced === true || (!owns && !canTake)}
           onClick={() => {
             command(owns ? "done" : "take");
           }}
@@ -221,7 +222,7 @@ function LaneBrowser({ lane }: { readonly lane: string }) {
           </p>
         )}
       </section>
-      <p className="browser-hint muted">{viewerHint(owns, driving)}</p>
+      <p className="browser-hint muted">{viewerHint(owns, driving, halted === true)}</p>
     </main>
   );
 }
