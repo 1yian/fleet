@@ -142,17 +142,28 @@ test("an input refusal during a pending tab change stops the change and the drai
   await takeControl(page, endpoint, base);
   await clickAndSettle(page, endpoint);
   endpoint.order.length = 0;
+  const opens = endpoint.streamOpens;
   endpoint.hold();
   endpoint.refuseNextInput();
   await page.keyboard.down("Shift");
   await until(() => endpoint.activeInputs > 0);
   await page.getByRole("button", { name: "Workshop" }).click();
   await page.locator('nav[aria-label="Remote tabs"] button:disabled').first().waitFor();
+  endpoint.withholdState();
   endpoint.release();
   await page.getByText("Control ended. You’re watching again.").waitFor();
+  await until(() => endpoint.streamOpens > opens);
+  const sent = endpoint.events.length;
+  await page.mouse.click(300, 250);
+  await page.keyboard.press("x");
+  await nextFrames(page);
+  assert.equal(endpoint.events.length, sent);
+  assert.equal(await page.locator(".browser-surface.driving").count(), 0);
   assert.equal(endpoint.order.includes("tab"), false);
   assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
   assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
+  endpoint.releaseState();
+  await page.locator(".browser-surface.driving").waitFor();
   await page.keyboard.up("Shift");
 });
 
@@ -244,7 +255,8 @@ test("a late frame for the old tab does not satisfy the tab confirmation that re
   await page
     .locator('nav[aria-label="Remote tabs"] button[aria-current="true"]', { hasText: "Garden" })
     .waitFor();
-  assert.equal(await page.locator(".browser-surface").count(), 0);
+  await nextFrames(page);
+  assert.equal(await page.locator(".browser-surface.driving").count(), 0);
   assert.equal(await page.getByText("You’re in control").count(), 0);
   endpoint.releaseFrame();
   await page
@@ -265,12 +277,21 @@ test("Done stays available when the stream confirms ownership with no open tab",
   assert.equal(endpoint.controlled, false);
 });
 
-test("a frame for the requested tab that arrives before its state is kept", async (t) => {
+test("a frame that arrives before its state is only a preview", async (t) => {
   const { endpoint, jpeg, page, base } = await launch(t);
   await takeControl(page, endpoint, base);
   await clickAndSettle(page, endpoint);
   endpoint.sendFrameBeforeState();
   await page.getByRole("button", { name: "Workshop" }).click();
+  await page
+    .locator(`.browser-surface:not(.driving) img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
+    .waitFor();
+  await page
+    .locator('nav[aria-label="Remote tabs"] button[aria-current="true"]', { hasText: "Workshop" })
+    .waitFor();
+  await nextFrames(page);
+  assert.equal(await page.locator(".browser-surface.driving").count(), 0);
+  endpoint.showFrame(1);
   await page
     .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
     .waitFor();
@@ -303,7 +324,7 @@ test("a queued tab request does not make an old frame for that tab trusted", asy
   await page.keyboard.up("Shift");
 });
 
-test("a frame before the activation is confirmed stays a preview and grants no input", async (t) => {
+test("an acknowledged activation does not promote an earlier frame to input authority", async (t) => {
   const { endpoint, jpeg, page, base } = await launch(t);
   await takeControl(page, endpoint, base);
   await clickAndSettle(page, endpoint);
@@ -311,14 +332,19 @@ test("a frame before the activation is confirmed stays a preview and grants no i
   endpoint.hold();
   await page.getByRole("button", { name: "Workshop" }).click();
   await until(() => endpoint.arrivals === 2);
+  endpoint.switchTab(0);
   endpoint.showFrame(1);
   endpoint.switchTab(1);
   await page
     .locator('nav[aria-label="Remote tabs"] button[aria-current="true"]', { hasText: "Workshop" })
     .waitFor();
-  await page.locator(".browser-surface").waitFor();
-  assert.equal(await page.locator(".browser-surface.driving").count(), 0);
   endpoint.release();
+  await page
+    .locator(`.browser-surface:not(.driving) img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
+    .waitFor();
+  await nextFrames(page);
+  assert.equal(await page.locator(".browser-surface.driving").count(), 0);
+  endpoint.releaseFrame();
   await page
     .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
     .waitFor();
