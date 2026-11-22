@@ -45,7 +45,8 @@ function literalCode(text: string): string {
 }
 
 function issueFor(session: Session, text: string, about: About, now: number): Issue {
-  const characters = Array.from(text);
+  const title = text.replace(/\s+/g, " ").trim();
+  const characters = Array.from(title);
   const details = [
     `Time: ${new Date(now).toISOString()}`,
     `Role: ${session.role}`,
@@ -57,7 +58,7 @@ function issueFor(session: Session, text: string, about: About, now: number): Is
     title:
       characters.length > TITLE_LIMIT
         ? `${characters.slice(0, TITLE_LIMIT - 3).join("")}...`
-        : text,
+        : title,
     body: `    ${text.replace(/\r\n?|\n/g, "\n    ")}\n\n${details.map((line) => `- ${line}`).join("\n")}\n`,
   };
 }

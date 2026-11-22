@@ -166,11 +166,18 @@ test("every line of a multiline complaint stays inside the literal block", async
   const text = "Setup printed:\n![trace](https://example.test/trace.png)\n\n# heading";
   await worker.call("complaint.publish", { text });
   const [issue] = await filed(1);
+  assert.equal(issue?.title, "Setup printed: ![trace](https://example.test/trace.png) # heading");
   const expectedBlock =
     "    Setup printed:\n    ![trace](https://example.test/trace.png)\n    \n    # heading\n\n";
   const attribution = /^- Time: \d{4}-\d\d-\d\dT[\d:.]+Z\n- Role: worker\n- Lane: `main`\n- Card: c-\d+\n- Project: `web`\n$/;
   assert.ok(issue?.body.startsWith(expectedBlock), issue?.body);
   assert.match(issue.body.slice(expectedBlock.length), attribution);
+});
+test("leading whitespace does not consume the title budget", async () => {
+  const text = `${" ".repeat(90)}The setup is slow.`;
+  await worker.call("complaint.publish", { text });
+  const [issue] = await filed(1);
+  assert.equal(issue?.title, "The setup is slow.");
 });
 test("long, blank, or NUL-containing text is refused and files nothing", async () => {
   await assert.rejects(
