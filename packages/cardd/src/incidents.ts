@@ -24,11 +24,12 @@ import {
   roleOf,
   type Incident,
 } from "./incident-store.ts";
+import { cardOfActor } from "./incident-card.ts";
 import { describe, labelOf, nextStep, stamp, tell } from "./incident-text.ts";
 import { QUEUED_DELIVERY, TAKEN_DELIVERY } from "./delivery-states.ts";
 import { transitionStop } from "./lane-stop.ts";
 import { retireSupersededNotices } from "./restart-requests.ts";
-import { addCard, addEntry, laneCardOf, parentOf, type Session } from "./store.ts";
+import { addEntry, parentOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
 interface Recovery {
@@ -47,19 +48,6 @@ interface Recovery {
 interface Done {
   readonly value: unknown;
   readonly notify: readonly string[];
-}
-
-function cardOfActor(db: DatabaseSync, session: Session, error: string): number {
-  if (session.card !== null) return session.card;
-  const lane = laneCardOf(db, session.lane);
-  if (lane !== undefined) return lane;
-  return addCard(db, {
-    lane: session.lane,
-    title: `${session.lane} runtime failure`,
-    name: `${session.lane}-runtime-failure`,
-    kind: "captain",
-    intent: `${session.lane} hit a runtime failure: ${error}`,
-  }).id;
 }
 
 export function openIncident(
