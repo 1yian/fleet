@@ -275,3 +275,30 @@ test("a frame for the requested tab that arrives before its state is kept", asyn
     .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
     .waitFor();
 });
+
+test("a queued tab request does not make an old frame for that tab trusted", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  endpoint.holdFrame();
+  endpoint.hold();
+  await page.keyboard.down("Shift");
+  await until(() => endpoint.order.includes("key:rawKeyDown:Shift"));
+  await page.getByRole("button", { name: "Workshop" }).click();
+  await page.locator('nav[aria-label="Remote tabs"] button:disabled').first().waitFor();
+  endpoint.showFrame(1);
+  endpoint.switchTab(1);
+  await page
+    .locator('nav[aria-label="Remote tabs"] button[aria-current="true"]', { hasText: "Workshop" })
+    .waitFor();
+  assert.equal(await page.locator(".browser-surface.driving").count(), 0);
+  endpoint.release();
+  await nextFrames(page);
+  assert.equal(await page.locator(".browser-surface.driving").count(), 0);
+  assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
+  endpoint.releaseFrame();
+  await page
+    .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
+    .waitFor();
+  await page.keyboard.up("Shift");
+});
