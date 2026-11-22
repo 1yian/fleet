@@ -41,7 +41,7 @@ interface Stored {
 
 const FIRST_ID = 1_100_000_000_000_000_000n;
 const HEARTBEAT_MS = 300;
-const HELD_HEARTBEAT_MS = 1_500;
+const HELD_HEARTBEAT_MS = 600_000;
 
 function readBytes(request: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -297,13 +297,12 @@ export class FakeDiscord {
       release: () => {
         if (!session.held) return;
         session.held = false;
-        if (owed && !session.muted) tell({ op: 11 });
+        if (session.open && !session.muted) tell({ op: 1, d: null });
       },
       status: undefined,
       heartbeats: 0,
       closeCode: undefined,
     };
-    let owed = false;
     this.gateways.push(session);
     this.connections.add(socket);
     const tell = (frame: Record<string, unknown>): void => {
@@ -313,8 +312,7 @@ export class FakeDiscord {
       const frame = parseRecord(rawText(raw));
       if (frame["op"] === 1) {
         session.heartbeats++;
-        if (session.held) owed = true;
-        else if (!session.muted) tell({ op: 11 });
+        if (!session.held && !session.muted) tell({ op: 11 });
       } else if (frame["op"] === 2) this.identify(socket, session, frame["d"], tell);
     });
     socket.on("close", (code: number) => {
