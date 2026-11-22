@@ -176,6 +176,7 @@ class Hub {
     const checked = performance.now();
     for (const recipient of notify) this.flush(recipient, false);
     if (notify.size > 0) this.web.changed();
+    else this.web.refreshReviews();
     const ended = performance.now();
     const parts: [string, number][] = [
       ["fillRepos", filled - started],

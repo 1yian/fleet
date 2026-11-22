@@ -196,11 +196,9 @@ function announceHold(
   dated: Dating,
   target: Holder,
   asker: readonly string[],
-  reviewWorker: string | undefined,
 ): string[] {
   const quiet = dated.wait !== null && "id" in dated.wait;
   const heard = hearers(db, card, session.lane, quiet ? [] : [target]);
-  if (reviewWorker !== undefined) heard.push(reviewWorker);
   if (!quiet) {
     const to = withEcho(db, session, card, [...heard, ...asker]);
     addEntry(db, draft, to);
@@ -275,8 +273,7 @@ export function hold(db: DatabaseSync, session: Session, raw: unknown): Done {
     fields,
   };
   requireOpen(db, card);
-  const reviewWorker = binding.notifyWorker ? workerOf(db, card.id) : undefined;
-  const to = announceHold(db, session, card, draft, dated, target, asker, reviewWorker);
+  const to = announceHold(db, session, card, draft, dated, target, asker);
   return { value: getCard(db, card.id), notify: to };
 }
 

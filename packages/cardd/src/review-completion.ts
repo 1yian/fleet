@@ -131,18 +131,13 @@ export function boundReview(
   review: string | false | undefined,
 ) {
   const carried = { review: open?.review, reviewRequests: open?.reviewRequests };
-  if (review === undefined) return { fields: carried, compare: carried, notifyWorker: false };
+  if (review === undefined) return { fields: carried, compare: carried };
   const second = parentOf(db, session.lane) !== null;
   if (target !== (second ? "main" : "captain") || (review !== false && protectedWork))
     throw new Error("only a hold on its way to the captain can be bound for review alone");
   const requests = reviewRequests(entries, open, review);
   const compare = { review: review === false ? undefined : review, reviewRequests: requests };
-  const fleetReview = review === false ? {} : { fleetReview: true };
-  return {
-    fields: { review, reviewRequests: requests, ...fleetReview },
-    compare,
-    notifyWorker: review !== false,
-  };
+  return { fields: { review, reviewRequests: requests }, compare };
 }
 
 function matchesRequests(hold: Hold, requests: readonly number[]): boolean {

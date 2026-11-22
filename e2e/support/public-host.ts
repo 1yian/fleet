@@ -193,6 +193,7 @@ function wireHeaders(headers: IncomingHttpHeaders): string[] {
 export class Edge {
   token: string | undefined;
   rewriteHost: string | undefined;
+  forwardOrigin = false;
   port = 0;
   private readonly server: Server;
 
@@ -253,6 +254,10 @@ export class Edge {
       "x-forwarded-for": "203.0.113.7",
     };
     delete headers["cf-access-jwt-assertion"];
+    if (this.forwardOrigin) {
+      headers["x-forwarded-host"] = incoming.host;
+      headers["x-forwarded-proto"] = "https";
+    }
     if (this.rewriteHost !== undefined) headers.host = this.rewriteHost;
     if (this.token !== undefined) headers["cf-access-jwt-assertion"] = this.token;
     return headers;

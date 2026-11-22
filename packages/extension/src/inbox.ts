@@ -113,15 +113,28 @@ export function format(entry: Entry, name: string, again = false): string {
 }
 
 function formatReview(entry: Entry, card: string): string | undefined {
-  if (entry.kind === "hold" && entry.fields["fleetReview"] === true)
-    return `[fleet] ${card} now has a Fleet-owned review. If you are the worker, stop any poll of the source session and wait for the Fleet inbox answer instead.\n${entry.body}`;
-  if (entry.kind !== "review-feedback" || field(entry, "source") !== "lavish") return undefined;
+  if (entry.kind === "note" && entry.fields["fleetReview"] === true)
+    return `[fleet] ${card} now has a Fleet-owned review inbox. If you are the worker, stop any poll of the source session and wait for feedback in the Fleet inbox instead.\n${entry.body}`;
+  if (entry.kind !== "review-feedback") return undefined;
+  const source = field(entry, "source");
+  if (source === "lavish-source") return formatSourceReview(entry, card);
+  if (source !== "lavish") return undefined;
   const notes = entry.fields["annotations"];
   const context =
     Array.isArray(notes) && notes.length > 0
       ? `\nInline annotations (with targets): ${JSON.stringify(notes)}`
       : "";
   return `[fleet] captain completed the Fleet review on ${card}: ${entry.body || "No notes."}${context}`;
+}
+
+function formatSourceReview(entry: Entry, card: string): string {
+  const reviewKeys: unknown = entry.fields["reviewKeys"];
+  const keys = Array.isArray(reviewKeys)
+    ? reviewKeys.filter((key) => typeof key === "string").join(", ")
+    : "";
+  const state =
+    entry.fields["sessionEnded"] === true ? "Lavish session ended" : "Lavish session still open";
+  return `[fleet] Lavish feedback on ${card} [${keys}] (${state}; this does not approve or resolve the Fleet hold):\n${entry.body}`;
 }
 
 function formatOnce(entry: Entry, name: string): string {
