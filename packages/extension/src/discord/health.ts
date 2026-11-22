@@ -57,6 +57,14 @@ export function readStatus(file: string): BridgeStatus | undefined {
   }
 }
 
+function forget(file: string): void {
+  try {
+    rmSync(file, { force: true });
+  } catch {
+    return;
+  }
+}
+
 export class Health {
   private readonly file: string;
   private readonly log: Log;
@@ -119,7 +127,6 @@ export class Health {
       ...this.status.presence,
       connected: true,
       readyAt: now(),
-      ackAt: NEVER,
     };
     this.write();
   }
@@ -152,8 +159,7 @@ export class Health {
       renameSync(temporary, this.file);
     } catch (error) {
       this.log(`the status file was not written: ${describeError(error)}`);
-    } finally {
-      rmSync(temporary, { force: true });
+      forget(temporary);
     }
   }
 }

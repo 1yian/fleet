@@ -1,6 +1,5 @@
 import type { BridgeConfig } from "./config.ts";
 import type { Discord } from "./discord.ts";
-import type { Health } from "./health.ts";
 import { parseMessage, render, type Inbound, type Media } from "./inbound.ts";
 import { describeError, type Log } from "./log.ts";
 import type { BridgeState } from "./state.ts";
@@ -19,7 +18,6 @@ export class Inbox {
   private readonly media: Media;
   private readonly inject: (text: string) => void;
   private readonly log: Log;
-  private readonly health: Health;
   private polling = false;
 
   constructor(
@@ -29,7 +27,6 @@ export class Inbox {
     media: Media,
     inject: (text: string) => void,
     log: Log,
-    health: Health,
   ) {
     this.allowed = config.allowed;
     this.discord = discord;
@@ -37,7 +34,6 @@ export class Inbox {
     this.media = media;
     this.inject = inject;
     this.log = log;
-    this.health = health;
   }
 
   async poll(): Promise<void> {
@@ -45,9 +41,7 @@ export class Inbox {
     this.polling = true;
     try {
       await this.fetchNew();
-      this.health.succeeded("poll");
     } catch (error) {
-      this.health.failed("poll");
       this.log(`reading messages failed: ${describeError(error)}`);
     } finally {
       this.polling = false;

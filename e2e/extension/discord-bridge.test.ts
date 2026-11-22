@@ -128,10 +128,7 @@ test("the bridge status says when each layer last worked, and holds nothing priv
 
   const report = await askBridge(pi);
   assert.match(report, /^discord bridge: running since /);
-  assert.match(
-    report,
-    /polling Discord: ok\n {2}last success: \S+ \(\d+s ago\)\n {2}last error: never/,
-  );
+  assert.match(report, /polling Discord: ok\n {2}last success: \d{4}-\S+Z\n {2}last error: never/);
   assert.match(report, /injection into this session: last attempt succeeded/);
   assert.match(report, /posting to Discord: last attempt succeeded/);
   assert.match(report, /presence .*: ok\n {2}connected: yes/);

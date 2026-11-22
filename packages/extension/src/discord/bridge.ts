@@ -95,15 +95,7 @@ function run(pi: ExtensionAPI, home: string, ctx: ExtensionContext, config: Brid
     directory: join(directory, "media"),
     transcribe: transcriber(config.speech, log, health),
   };
-  const inbox = new Inbox(
-    config,
-    discord,
-    state,
-    media,
-    injector(pi, ctx, log, health),
-    log,
-    health,
-  );
+  const inbox = new Inbox(config, discord, state, media, injector(pi, ctx, log, health), log);
   const timers: ReturnType<typeof setInterval>[] = [];
   let live = config.guild === undefined;
   let stopped = false;
