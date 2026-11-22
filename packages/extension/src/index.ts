@@ -22,6 +22,7 @@ import { watchMainCardd } from "./cardd-watch.ts";
 import { Failures } from "./failure.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
 import { closeMerged, isMergedReport } from "./auto-close.ts";
+import { registerBrowserSignin } from "./browser-signin.ts";
 import { registerIntake } from "./intake.ts";
 import { registerDropJob } from "./job-tools.ts";
 import { Jobs } from "./jobs.ts";
@@ -284,6 +285,7 @@ function workerTools(
   });
   jobs.register(pi);
   registerBranch(pi, link);
+  registerBrowserSignin(pi, link);
   return jobs;
 }
 

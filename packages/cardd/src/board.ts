@@ -37,6 +37,7 @@ import type { Timings } from "./timing.ts";
 import { entryFor } from "./bundle.ts";
 import { canSee, datedWait, sightOf } from "./waits.ts";
 import { laterAt } from "./later.ts";
+import { createGrant } from "./signin.ts";
 import { reviewDecision, reviewPreview } from "./review-completion.ts";
 
 export class StaleCard extends Error {}
@@ -325,7 +326,7 @@ export function boardAction(
   db: DatabaseSync,
   raw: unknown,
   now: number,
-): { readonly notify: string[]; readonly later?: LaterResult } {
+): { readonly notify: string[]; readonly later?: LaterResult; readonly grant?: string } {
   const { card: id, action } = check(BoardActionSchema, raw);
   const card = getCard(db, id);
   if (action.kind === "answer") {
@@ -333,6 +334,10 @@ export function boardAction(
     return { notify: answerOnBoard(db, card, action.hold, action.choice, written) };
   }
   if (action.kind === "comment") return { notify: commentOnBoard(db, card, action.text) };
+  if (action.kind === "signin-grant") {
+    const { grant, text } = createGrant(db, card, action, now);
+    return { notify: commentOnBoard(db, card, text), grant };
+  }
   const { notify, until, zone } = deferOnBoard(
     db,
     card,

@@ -282,7 +282,7 @@ export class Web {
     if (request.headers["content-type"]?.split(";")[0]?.trim() !== "application/json")
       throw new Error("board actions must be sent as application/json");
     const body: unknown = JSON.parse(await readBody(request));
-    const { notify, later } = transaction(this.db, () =>
+    const { notify, later, grant } = transaction(this.db, () =>
       boardAction(this.db, body, this.timing.wall()),
     );
     for (const session of notify) this.flush(session);
@@ -293,6 +293,7 @@ export class Web {
       ok: true,
       card: typeof id === "number" ? getCard(this.db, id) : null,
       ...(later === undefined ? {} : { later }),
+      ...(grant === undefined ? {} : { grant }),
     };
   }
 
