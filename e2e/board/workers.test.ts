@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
+import { createServer } from "node:http";
+import type { Socket } from "node:net";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -213,54 +215,56 @@ test("a slow board read still publishes while live changes keep arriving", async
     .waitFor({ timeout: 10_000 });
 });
 
-test("a board read that never answers is abandoned and the next change is shown", async (context) => {
-  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
-  context.after(() => cardd.stop());
-  const page = await openBoardPage(context, browser);
-  let reads = 0;
-  await page.route("**/api/board", async (route) => {
-    reads += 1;
-    if (reads === 1) return;
-    await route.continue();
+async function stallingServer(sendBody: boolean): Promise<{ url: string; close: () => void }> {
+  const sockets = new Set<Socket>();
+  const server = createServer((_request, response) => {
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+    });
+    if (sendBody) response.write('{"cards":[');
+    else response.flushHeaders();
   });
-  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
-
-  const task = await newCard(main, "Archive the old campaign assets");
-  await cardd.connect(await begin(main, task), [], true, true);
-  await row(page, "Working", task)
-    .getByText("Running", { exact: true })
-    .waitFor({ timeout: 20_000 });
-});
-
-test("a board response that stalls after its headers and a partial body is abandoned", async (context) => {
-  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
-  context.after(() => cardd.stop());
-  const page = await openBoardPage(context, browser);
-  await page.addInitScript(() => {
-    const original = window.fetch.bind(window);
-    let stalled = false;
-    window.fetch = (input, init) => {
-      const url = input instanceof Request ? input.url : String(input);
-      if (stalled || !url.endsWith("/api/board")) return original(input, init);
-      stalled = true;
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode('{"cards":['));
-          init?.signal?.addEventListener("abort", () => {
-            controller.error(init.signal?.reason);
-          });
-        },
-      });
-      return Promise.resolve(
-        new Response(stream, { status: 200, headers: { "content-type": "application/json" } }),
-      );
-    };
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
   });
-  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("no loopback port");
+  return {
+    url: `http://127.0.0.1:${String(address.port)}/api/board`,
+    close: () => {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    },
+  };
+}
 
-  const task = await newCard(main, "Refresh the partner logos");
-  await cardd.connect(await begin(main, task), [], true, true);
-  await row(page, "Working", task)
-    .getByText("Running", { exact: true })
-    .waitFor({ timeout: 20_000 });
-});
+for (const [phase, sendBody] of [
+  ["headers", false],
+  ["a partial body", true],
+] as const) {
+  test(`a board response that stalls after ${phase} is abandoned and the next change is shown`, async (context) => {
+    const { cardd, main } = await startFleet({}, ["--board", BOARD]);
+    context.after(() => cardd.stop());
+    const stalled = await stallingServer(sendBody);
+    context.after(() => {
+      stalled.close();
+    });
+    const page = await openBoardPage(context, browser);
+    let reads = 0;
+    await page.route("**/api/board", async (route) => {
+      reads += 1;
+      if (reads === 1) await route.continue({ url: stalled.url });
+      else await route.continue();
+    });
+    await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
+
+    const task = await newCard(main, "Refresh the partner logos");
+    await cardd.connect(await begin(main, task), [], true, true);
+    await row(page, "Working", task)
+      .getByText("Running", { exact: true })
+      .waitFor({ timeout: 20_000 });
+  });
+}
