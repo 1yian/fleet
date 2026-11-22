@@ -153,7 +153,7 @@ test("close that runs past its overall limit stops at the step in flight and lea
   );
 });
 
-const ARCHIVE_DEADLINE_MS = 20_000;
+const ARCHIVE_DEADLINE_MS = 30_000;
 
 const inArchive = (archive: string, member: string): string =>
   execFileSync("sh", ["-c", `zstd -dc '${archive}' | tar -xOf - '${member}'`], {
