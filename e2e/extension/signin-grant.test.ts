@@ -9,7 +9,9 @@ import { FakeBrowser } from "../support/fake-browser.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 
-const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
+const EXTENSION = fileURLToPath(
+  new URL("../../packages/extension/src/index.ts", import.meta.url),
+);
 const MARKER = "Zq7-marker-PASSWORD-91x";
 const SIGN_IN = "https://login.example.test/session/new";
 const USER = "cleo@example.test";
@@ -27,7 +29,8 @@ afterEach(async () => {
   await fleet.cardd.stop();
 });
 
-const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
+const sha = (text: string): string =>
+  createHash("sha256").update(text).digest("hex");
 const toolResults = (turns: Turn[]): string[] =>
   turns.filter((turn) => turn.role === "toolResult").map((turn) => turn.text);
 
@@ -43,7 +46,11 @@ async function captainSays(text: string): Promise<number> {
 
 async function grant(
   entry: number,
-  extra: { lane?: string; url?: string; span?: { start: number; end: number } } = {},
+  extra: {
+    lane?: string;
+    url?: string;
+    span?: { start: number; end: number };
+  } = {},
 ): Promise<string> {
   const { status, body } = await fleet.cardd.refusal(card.id, {
     kind: "signin-grant",
@@ -55,7 +62,9 @@ async function grant(
   });
   assert.equal(status, 200);
   const ref: unknown =
-    typeof body === "object" && body !== null ? Reflect.get(body, "grant") : undefined;
+    typeof body === "object" && body !== null
+      ? Reflect.get(body, "grant")
+      : undefined;
   assert.equal(typeof ref, "string");
   return String(ref);
 }
@@ -85,7 +94,10 @@ async function redeem(
   calls: readonly Record<string, string | number>[],
 ): Promise<string[]> {
   for (const args of calls) h.onModel(() => ({ tool: "browser_signin", args }));
-  h.onModel(() => ({ tool: "report", args: { status: "done", text: "finished" } }));
+  h.onModel(() => ({
+    tool: "report",
+    args: { status: "done", text: "finished" },
+  }));
   const token = await begin(fleet.main, card, "sign in");
   const env = {
     ...browser.env,
@@ -94,7 +106,10 @@ async function redeem(
     FLEET_ROLE: "worker",
   };
   h.startPi(`c-${String(card.id)}-a1`, env, [EXTENSION]);
-  await fleet.main.waitForEntry((entry) => entry.kind === "report", "the worker's report");
+  await fleet.main.waitForEntry(
+    (entry) => entry.kind === "report",
+    "the worker's report",
+  );
   const results = toolResults(await h.waitForCall(calls.length));
   assertMarkerOnlyInTheEntry(browser);
   return results;
@@ -106,7 +121,15 @@ function assertSentToBrowser(browser: FakeBrowser): void {
   assert.equal(more.length, 0);
   assert.deepEqual(call["argv"], ["login", "--lane", "main", "--stdin"]);
   assert.equal(call["stdinIsTty"], false);
-  assert.deepEqual(call["keys"], ["lane", "origin", "password", "url", "username"]);
+  assert.equal(call["secretInEnv"], false);
+  assert.equal(call["secretInArgv"], false);
+  assert.deepEqual(call["keys"], [
+    "lane",
+    "origin",
+    "password",
+    "url",
+    "username",
+  ]);
   assert.equal(call["origin"], "https://login.example.test");
   assert.equal(call["url"], SIGN_IN);
   assert.equal(call["username"], USER);
@@ -121,22 +144,28 @@ test("the captain's grant signs the lane's browser in without the worker seeing 
     announcement?.body ?? "",
     new RegExp(`^Sign-in grant ${ref}: one use, for lane main`),
   );
-  const browser = new FakeBrowser();
+  const browser = new FakeBrowser(MARKER);
 
   const results = await redeem(browser, [{ grant: ref, entry, url: SIGN_IN }]);
 
   assert.equal(results.length, 1);
   assert.match(results[0] ?? "", /^browser_signin done\. /);
   assertSentToBrowser(browser);
-  const others = (await fleet.cardd.thread(card.id)).entries.filter((each) => each.id !== entry);
+  const others = (await fleet.cardd.thread(card.id)).entries.filter(
+    (each) => each.id !== entry,
+  );
   assert.ok(!JSON.stringify(others).includes(MARKER));
 });
 
 test("a captain-selected span, not the whole entry, is the password", async () => {
-  const entry = await captainSays(`The vendor login is ${MARKER} - do not share`);
+  const entry = await captainSays(
+    `The vendor login is ${MARKER} - do not share`,
+  );
   const start = `The vendor login is `.length;
-  const ref = await grant(entry, { span: { start, end: start + MARKER.length } });
-  const browser = new FakeBrowser();
+  const ref = await grant(entry, {
+    span: { start, end: start + MARKER.length },
+  });
+  const browser = new FakeBrowser(MARKER);
 
   const results = await redeem(browser, [{ grant: ref, entry, url: SIGN_IN }]);
 
@@ -150,13 +179,17 @@ test("a grant is refused for another lane, entry, or site, and a refusal does no
   const other = await captainSays("a different entry");
   const forCleo = await grant(entry, { lane: "cleo" });
   const forMain = await grant(entry);
-  const browser = new FakeBrowser();
+  const browser = new FakeBrowser(MARKER);
 
   const results = await redeem(browser, [
     { grant: forCleo, entry, url: SIGN_IN },
     { grant: forMain, entry: other, url: SIGN_IN },
     { grant: forMain, entry, url: "https://evil.example.test/session/new" },
-    { grant: forMain, entry, url: "https://login.example.test:8443/session/new" },
+    {
+      grant: forMain,
+      entry,
+      url: "https://login.example.test:8443/session/new",
+    },
     { grant: forMain, entry, url: "https://login.example.test/other" },
     { grant: forMain, entry, url: SIGN_IN },
   ]);
@@ -172,7 +205,7 @@ test("a grant is refused for another lane, entry, or site, and a refusal does no
 test("a grant works once: a replay is refused and no second sign-in is sent", async () => {
   const entry = await captainSays(MARKER);
   const ref = await grant(entry);
-  const browser = new FakeBrowser();
+  const browser = new FakeBrowser(MARKER);
 
   const results = await redeem(browser, [
     { grant: ref, entry, url: SIGN_IN },
@@ -187,7 +220,7 @@ test("a grant works once: a replay is refused and no second sign-in is sent", as
 test("a sign-in the site does not confirm spends the grant, and the worker sees only a fixed outcome", async () => {
   const entry = await captainSays(MARKER);
   const ref = await grant(entry);
-  const browser = new FakeBrowser("stuck");
+  const browser = new FakeBrowser(MARKER, "stuck");
 
   const results = await redeem(browser, [
     { grant: ref, entry, url: SIGN_IN },
@@ -215,15 +248,26 @@ test("the board refuses a grant that does not name a one-line password, an entry
     assert.ok(!JSON.stringify(body).includes(MARKER));
     return error;
   };
-  const base = { kind: "signin-grant", entry, lane: "main", url: SIGN_IN } as const;
+  const base = {
+    kind: "signin-grant",
+    entry,
+    lane: "main",
+    url: SIGN_IN,
+  } as const;
 
-  assert.match((await refuse(card, { ...base, entry: prose })) ?? "", /one-line password/);
+  assert.match(
+    (await refuse(card, { ...base, entry: prose })) ?? "",
+    /one-line password/,
+  );
   assert.match(
     (await refuse(card, { ...base, span: { start: 0, end: 999 } })) ?? "",
     /one-line password/,
   );
   assert.match((await refuse(elsewhere, base)) ?? "", /there is no entry/);
-  assert.match((await refuse(card, { ...base, url: "http://login.example.test/" })) ?? "", /https/);
+  assert.match(
+    (await refuse(card, { ...base, url: "http://login.example.test/" })) ?? "",
+    /https/,
+  );
   assert.match(
     (await refuse(card, { ...base, lane: "nowhere" })) ?? "",
     /there is no lane nowhere/,
@@ -238,8 +282,14 @@ test("the board refuses a grant that does not name a one-line password, an entry
 
 test("announcing a grant leaves the captain's hold with the captain and owes no reply", async () => {
   const entry = await captainSays(MARKER);
-  await fleet.main.call("hold", { card: card.id, question: "Ship it?", options: ["yes", "no"] });
-  const before = (await fleet.cardd.board()).cards.find((each) => each.id === card.id)?.status;
+  await fleet.main.call("hold", {
+    card: card.id,
+    question: "Ship it?",
+    options: ["yes", "no"],
+  });
+  const before = (await fleet.cardd.board()).cards.find(
+    (each) => each.id === card.id,
+  )?.status;
   assert.equal(before, "needs-you");
 
   await grant(entry);
@@ -247,10 +297,14 @@ test("announcing a grant leaves the captain's hold with the captain and owes no 
   const announcement = (await fleet.cardd.thread(card.id)).entries.at(-1);
   assert.match(announcement?.body ?? "", /^Sign-in grant sg-/);
   assert.equal(announcement?.fields["owes"], undefined);
-  const after = (await fleet.cardd.board()).cards.find((each) => each.id === card.id)?.status;
+  const after = (await fleet.cardd.board()).cards.find(
+    (each) => each.id === card.id,
+  )?.status;
   assert.equal(after, "needs-you");
 
   await captainSays("one more thing");
-  const taken = (await fleet.cardd.board()).cards.find((each) => each.id === card.id)?.status;
+  const taken = (await fleet.cardd.board()).cards.find(
+    (each) => each.id === card.id,
+  )?.status;
   assert.notEqual(taken, "needs-you");
 });
