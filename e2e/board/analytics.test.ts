@@ -231,7 +231,7 @@ test("analytics reconciles readable ledger usage and successful closes in the re
     location.hash = "/analytics";
   });
   await page.reload();
-  await hourly.getByRole("button").first().waitFor();
+  await hourly.getByText("1,343,100", { exact: true }).waitFor();
   const buttons = hourly.getByRole("button");
   assert.equal(await buttons.count(), 24);
   assert.match(
@@ -240,6 +240,14 @@ test("analytics reconciles readable ledger usage and successful closes in the re
   );
   assert.equal(
     await buttons.last().getAttribute("aria-label"),
-    "May 4, 12:00 to 13:00 UTC: No usage records",
+    "May 4, 12:00 to 13:00 UTC: 1,023,300 tokens · Input: 1,004,500 · Cached input: 18,000 · Output: 800",
+  );
+  const laneTotals = await page
+    .getByRole("region", { name: "Tokens by lane" })
+    .getByRole("listitem")
+    .allTextContents();
+  assert.deepEqual(
+    laneTotals.map((text) => text.slice(0, text.indexOf("Input"))),
+    ["main1,251,300", "cleo91,800"],
   );
 });

@@ -20,6 +20,14 @@ const seconds = new Intl.DateTimeFormat("en", {
   second: "2-digit",
   hourCycle: "h23",
 });
+const fractional = new Intl.DateTimeFormat("en", {
+  timeZone: "UTC",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  fractionalSecondDigits: 3,
+  hourCycle: "h23",
+});
 const HOUR = 3_600_000;
 const HIGHLIGHTS = [
   ["input", "Input"],
@@ -61,7 +69,8 @@ function spanLabel(at: number, from: number, to: number): string {
   const start = Math.max(at, from);
   const end = Math.min(at + HOUR, to);
   const partial = end < at + HOUR || start > at;
-  const format = time.format(start) === time.format(end) ? seconds : time;
+  const format =
+    [time, seconds].find((each) => each.format(start) !== each.format(end)) ?? fractional;
   return `${date.format(at)}, ${format.format(start)} to ${format.format(end)} UTC${partial ? " (partial)" : ""}`;
 }
 
