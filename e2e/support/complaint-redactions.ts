@@ -6,6 +6,10 @@ const REDACTED_COMPLAINTS = [
     String.raw`{"email":"\u006f\u0070\u0073\u0040lab\u002eexample"}`,
     "[email withheld: serialized address]",
   ],
+  [String.raw`email: "ops\u{40}lab.example"`, "[email withheld: serialized address]"],
+  [String.raw`email: "ops\u{0040}lab.example"`, "[email withheld: serialized address]"],
+  [String.raw`{"email":"ops\u0040[192.0.2.1]"}`, "[email withheld: serialized address]"],
+  [String.raw`{"email":"ops\u{40}[IPv6:2001:db8::1]"}`, "[email withheld: serialized address]"],
   [
     JSON.stringify({ log: String.raw`{"address":"ops@b\u00fccher.example"}` }),
     "[email withheld: serialized address]",
