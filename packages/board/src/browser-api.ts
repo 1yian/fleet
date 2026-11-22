@@ -21,14 +21,19 @@ export function jsonEvent<T>(
 
 const RETRY_MS = [1000, 2000, 4000, 8000, 15000];
 
+export interface Stream {
+  readonly close: () => void;
+  readonly restart: () => void;
+}
+
 export function openStream(
   url: string,
   hooks: {
-    readonly wire: (source: EventSource) => void;
+    readonly wire: (source: EventSource, ready: () => void) => void;
     readonly failed: () => void;
     readonly opened?: () => void;
   },
-): () => void {
+): Stream {
   let source: EventSource | undefined;
   let attempt = 0;
   let timer = 0;
@@ -37,23 +42,33 @@ export function openStream(
     const next = new EventSource(url);
     source = next;
     next.addEventListener("open", () => {
-      attempt = 0;
       hooks.opened?.();
     });
     next.addEventListener("error", () => {
+      if (stopped || source !== next) return;
+      next.close();
       hooks.failed();
-      if (stopped || next.readyState !== EventSource.CLOSED) return;
       const delay = RETRY_MS[Math.min(attempt, RETRY_MS.length - 1)] ?? 15_000;
       attempt += 1;
       timer = window.setTimeout(open, delay);
     });
-    hooks.wire(next);
+    hooks.wire(next, () => {
+      if (source === next) attempt = 0;
+    });
   };
   open();
-  return () => {
-    stopped = true;
-    clearTimeout(timer);
-    source?.close();
+  return {
+    close: () => {
+      stopped = true;
+      clearTimeout(timer);
+      source?.close();
+    },
+    restart: () => {
+      if (stopped) return;
+      clearTimeout(timer);
+      source?.close();
+      open();
+    },
   };
 }
 
@@ -62,7 +77,7 @@ export function useBrowserLanes(enabled: boolean) {
   const [feed, setFeed] = useState<"connecting" | "open" | "offline">("connecting");
   useEffect(() => {
     if (!enabled) return;
-    return openStream("/api/browser/events", {
+    const stream = openStream("/api/browser/events", {
       opened: () => {
         setLanes(new Map());
         setFeed("open");
@@ -70,12 +85,13 @@ export function useBrowserLanes(enabled: boolean) {
       failed: () => {
         setFeed("offline");
       },
-      wire: (source) => {
+      wire: (source, ready) => {
         jsonEvent(
           source,
           "lane",
           (data) => check(BrowserLaneSchema, data),
           (lane) => {
+            ready();
             setLanes((current) => new Map(current).set(lane.lane, lane));
           },
         );
@@ -84,6 +100,7 @@ export function useBrowserLanes(enabled: boolean) {
           "gone",
           (data) => check(BrowserLaneKey, data),
           ({ lane }) => {
+            ready();
             setLanes((current) => {
               const next = new Map(current);
               next.delete(lane);
@@ -93,6 +110,7 @@ export function useBrowserLanes(enabled: boolean) {
         );
       },
     });
+    return stream.close;
   }, [enabled]);
   return { lanes, feed };
 }
