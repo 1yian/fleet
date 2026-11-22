@@ -156,15 +156,16 @@ function decodeHexEscapes(text: string): string {
 
 const keySeparators = (text: string): number => Array.from(text.matchAll(KEY_SEPARATOR)).length;
 
+function isEscapedKeyMatch(match: RegExpMatchArray): boolean {
+  const [, open = "", key = "", close = "", separator = "", value = ""] = match;
+  const decoded = decodeKeyEscapes(key);
+  const escaped =
+    !PLAIN_QUOTE.test(open) || !PLAIN_QUOTE.test(close) || (separator + value).includes("\\");
+  return (decoded !== key || escaped) && RECORD_KEY.test(decoded);
+}
+
 export function hasEscapedCredentialKey(text: string): boolean {
-  for (const [, open = "", key = "", close = "", separator = "", value = ""] of text.matchAll(
-    ESCAPED_KEY,
-  )) {
-    const decoded = decodeKeyEscapes(key);
-    const escaped =
-      !PLAIN_QUOTE.test(open) || !PLAIN_QUOTE.test(close) || (separator + value).includes("\\");
-    if ((decoded !== key || escaped) && RECORD_KEY.test(decoded)) return true;
-  }
+  if (Array.from(text.matchAll(ESCAPED_KEY)).some(isEscapedKeyMatch)) return true;
   const unescaped = decodeHexEscapes(text);
   return unescaped !== text && keySeparators(unescaped) > keySeparators(text);
 }

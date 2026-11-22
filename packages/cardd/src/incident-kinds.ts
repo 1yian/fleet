@@ -465,9 +465,8 @@ export function eligibleAt(
 
 function modesFor(phase: Phase, kind: Kind): Mode[] {
   if (phase === "startup" || phase === "lost") return ["replace"];
-  if (kind === "stale-module") return ["replace"];
   if (kind === "router-cooldown" || kind === "transient") return ["retry"];
-  if (kind === "vendor-quota") return ["replace"];
+  if (kind === "stale-module" || kind === "vendor-quota") return ["replace"];
   if (kind === "auth" || kind === "withheld") return [];
   return ["retry", "replace"];
 }
