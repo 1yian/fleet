@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { laneHomes } from "./homes.ts";
+import { updateDependencies } from "./install.ts";
 import { bunProblems, hostProblems } from "./prerequisites.ts";
 
 const BRANCH = "main";
@@ -34,6 +35,7 @@ export type HostUpdate =
       readonly boardChanged: boolean;
       readonly carddChanged: boolean;
       readonly lanes: readonly string[];
+      readonly dependencies: readonly string[];
     };
 
 interface Pulled {
@@ -193,6 +195,7 @@ export function updateHost(root: string): HostUpdate {
       };
     lanes.push(lane);
   }
+  const dependencies = updateDependencies();
   return {
     state: "updated",
     root,
@@ -201,6 +204,7 @@ export function updateHost(root: string): HostUpdate {
     boardChanged: touches(changed, ["packages/board/", "packages/protocol/", "bun.lock"]),
     carddChanged: touches(changed, CARDD_CODE),
     lanes,
+    dependencies,
   };
 }
 

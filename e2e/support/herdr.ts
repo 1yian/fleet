@@ -2,7 +2,7 @@ import { execFile, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { guardCleanup, spawnGuarded } from "./guarded.ts";
 import { guardScope } from "./reaper-client.ts";
@@ -10,7 +10,7 @@ import { isRecord, parseRecord, records, type JsonRecord } from "./json.ts";
 import { LAB_GROUPS_ENV, openGroupScope, signalOwnedGroup, sweepGroups } from "./marked.ts";
 import { retainRunRoot, tempDir } from "./run-root.ts";
 import "./hermetic-env.ts";
-import "./tool-stubs.ts";
+import { STUB_PATH } from "./tool-stubs.ts";
 
 const WAIT_MS = 30_000;
 const OWNED_LAUNCH = fileURLToPath(new URL("./owned-launch.ts", import.meta.url));
@@ -39,7 +39,11 @@ export class HerdrLab {
       FLEET_E2E_DETACH: OWNED_LAUNCH,
       HERDR_CONFIG_PATH: lab.config,
     };
-    lab.env = { ...env, ...lab.owned };
+    lab.env = {
+      ...env,
+      PATH: [STUB_PATH, env["PATH"] ?? process.env["PATH"] ?? ""].join(delimiter),
+      ...lab.owned,
+    };
     guardScope(lab.groups);
     lab.disarm = guardCleanup(lab.name, ["sh", "-c", stop]);
     lab.server = spawnGuarded(

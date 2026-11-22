@@ -91,7 +91,6 @@
       "chain": ["openai-codex/gpt-6.2-sol:medium", "claude/claude-opus-5-5:low"]
     }
   },
-  "override": "^Model override:\\s*(\\S+)(?:\\s+(\\S+))?",
   "warnProviders": [],
   "payg": []
 }

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
+import { FakeBws } from "../support/bws.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
@@ -30,6 +31,7 @@ let h: Harness;
 let lab: HerdrLab;
 let scratch: Scratch;
 let mainToken: string;
+let bws: FakeBws;
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
@@ -40,9 +42,12 @@ beforeEach(async () => {
     token: cardd.addLane("cleo", "main"),
     args: mateArgs(h),
   });
+  bws = new FakeBws([{ name: "main", secrets: {} }]);
+  bws.failWith("simulated outage");
   lab = await HerdrLab.start({
     ...h.piEnv("mate"),
-    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
+    ...bws.env,
+    PATH: `${BIN}:${bws.env["PATH"] ?? ""}`,
   });
 });
 afterEach(async (t) => {
@@ -88,4 +93,19 @@ test("main started directly with pi names every missing tier, does not join the 
   copyFileSync(template(), file);
   await lab.submit(pane, "/probe-reload");
   await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+});
+
+test("main names every missing tier even when its lane token cannot be read", async () => {
+  configureMain(scratch, cardd.url, undefined, {
+    bws: { tokenFile: bws.tokenFile, project: bws.projectId("main"), env: {} },
+  });
+  writeFileSync(join(h.dir, "agent", "tiers.json"), JSON.stringify({ tiers: {} }));
+  const pane = await startMain(lab, scratch, h);
+  const deadline = Date.now() + WAIT_MS;
+  for (;;) {
+    const history = (await lab.history(pane)).replace(/\s+/g, "");
+    if (history.includes("Missingtiers(12):default,nm-default,nm-fixer,")) break;
+    assert.ok(Date.now() < deadline, "timed out waiting for the pane to name the missing tiers");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 });

@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
 import { parseRecord } from "../support/json.ts";
-import { git } from "../support/remote.ts";
+import { commitFork, initFork, routeFork } from "../support/fork-fixture.ts";
 import { tempDir } from "../support/run-root.ts";
 import { configureMain, Scratch } from "../support/scratch.ts";
 import { pathWithout } from "../support/tool-stubs.ts";
@@ -15,7 +23,6 @@ import { pathWithout } from "../support/tool-stubs.ts";
 const HOST = hostname();
 const ZONE = "America/Chicago";
 const FIRST = "2026-11-19T08:47:26-06:00";
-const SECOND = "2026-11-20T09:00:00-06:00";
 const GO_FIX =
   "Fix: install Go 1.25 or later (brew install go, or apt install golang-go), then run fleet install again";
 const PI_TIERS = "git:github.com/1yian/pi-tiers";
@@ -36,16 +43,7 @@ function wrapper(dir: string, name: string, script: string): string {
   return dir;
 }
 
-function commitAt(when: string): string {
-  writeFileSync(join(repo, "cmd", "no-mistakes", `${when}.go`), "package main\n");
-  git(repo, "add", "-A");
-  execFileSync(
-    "git",
-    ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", when],
-    { env: { ...process.env, GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when } },
-  );
-  return git(repo, "rev-parse", "--short=8", "HEAD");
-}
+const commitAt = (when: string): string => commitFork(repo, when);
 
 beforeEach(async () => {
   cardd = await Cardd.start();
@@ -56,9 +54,8 @@ beforeEach(async () => {
   piDir = wrapper(tempDir("fake-pi-"), "pi", "fake-pi.ts");
   goDir = wrapper(tempDir("fake-go-"), "go", "fake-go.ts");
   repo = join(tempDir("fork-"), "no-mistakes");
-  mkdirSync(join(repo, "cmd", "no-mistakes"), { recursive: true });
-  writeFileSync(join(repo, "go.mod"), "module github.com/kunchenguid/no-mistakes\n\ngo 1.25\n");
-  git(repo, "init", "-q", "-b", "main");
+  mkdirSync(repo, { recursive: true });
+  initFork(repo);
 });
 afterEach(async () => {
   await cardd.stop();
@@ -80,13 +77,8 @@ interface Run {
   readonly err: string[];
 }
 
-function install(
-  path: string,
-  args: readonly string[] = [],
-  ahead = "",
-  extra: Record<string, string> = {},
-): Run {
-  const done = spawnSync("node", [scratch.launch, "install", ...args], {
+function install(path: string, ahead = "", extra: Record<string, string> = {}): Run {
+  const done = spawnSync("node", [scratch.launch, "install"], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -95,9 +87,7 @@ function install(
       PI_CODING_AGENT_DIR: agentDir(),
       NM_HOME: nmHome(),
       FAKE_PI_STATE: join(home, "pi-packages"),
-      GIT_CONFIG_COUNT: "1",
-      GIT_CONFIG_KEY_0: `url.${repo}.insteadOf`,
-      GIT_CONFIG_VALUE_0: "https://github.com/1yian/no-mistakes",
+      ...routeFork(repo),
       ...extra,
       PATH: [ahead, join(home, ".local", "bin"), path, pathWithout("no-mistakes")]
         .filter((dir) => dir !== "")
@@ -168,7 +158,7 @@ test("a fresh install without Go names the missing no-mistakes and the fix, and 
 });
 
 test("an empty PI_TIERS_CONFIG writes the tiers file at the default Pi location", () => {
-  const done = install(piDir, [], "", { PI_TIERS_CONFIG: "" });
+  const done = install(piDir, "", { PI_TIERS_CONFIG: "" });
   assert.ok(
     done.out.includes(`tiers: wrote ${agentDir()}/tiers.json from ${template("tiers.json")}`),
   );
@@ -230,9 +220,7 @@ test("install builds the fork with Go, installs pi-tiers and the configs, create
   for (const part of [
     "Daily fleet update:",
     "update_fleet",
-    `pi update ${PI_TIERS}`,
-    "fleet install --latest",
-    "never no-mistakes update",
+    "Pi, pi-tiers, and the no-mistakes fork",
     '"updateReminder": false',
   ])
     assert.ok(schedule?.text.includes(part), `the reminder text names ${part}`);
@@ -305,22 +293,6 @@ test("a one-off schedule with the reminder's text is not the daily reminder, and
   }
 });
 
-test("install --latest rebuilds the fork only when its main moved", () => {
-  const first = commitAt(FIRST);
-  install(withGo());
-  const same = install(withGo(), ["--latest"]);
-  assert.equal(same.out[0], `no-mistakes: fork-${first} is the latest`);
-
-  const second = commitAt(SECOND);
-  const moved = install(withGo(), ["--latest"]);
-  assert.equal(moved.out[0], `no-mistakes: built fork-${second} into ${target()}`);
-  assert.equal(
-    execFileSync(target(), ["--version"], { encoding: "utf8" }),
-    version(second, SECOND),
-  );
-  assert.equal(install(withGo(), ["--latest"]).out[0], `no-mistakes: fork-${second} is the latest`);
-});
-
 test("install on a host that is not main's skips the reminder, and a cardd that is down fails it", async () => {
   commitAt(FIRST);
   assert.equal(install(withGo()).status, 0);
@@ -339,16 +311,25 @@ test("install on a host that is not main's skips the reminder, and a cardd that 
   ]);
 });
 
-test("install --latest says so when another no-mistakes on the PATH hides the build it made", () => {
-  commitAt(FIRST);
-  assert.equal(install(withGo()).status, 0);
+test("install says so when an older no-mistakes on the PATH hides the build it made", () => {
   const shadow = tempDir("shadow-");
-  const older = "no-mistakes version fork-980a45cf (980a45cf) 2026-11-18T03:52:20Z";
+  const older = "no-mistakes version fork-0123abcd (0123abcd) 2026-10-01T00:00:00Z";
   writeFileSync(join(shadow, "no-mistakes"), `#!/bin/sh\necho '${older}'\n`, { mode: 0o755 });
-  const second = commitAt(SECOND);
-  const hidden = install(withGo(), ["--latest"], shadow);
+  const commit = commitAt(FIRST);
+  const hidden = install(withGo(), shadow);
   assert.equal(hidden.status, 1);
   assert.deepEqual(hidden.err, [
-    `no-mistakes: built fork-${second} into ${target()}, but the no-mistakes on the PATH is "${older}". Fix: put ${join(home, ".local", "bin")} first on the PATH`,
+    `no-mistakes: built fork-${commit} into ${target()}, but the no-mistakes on the PATH is "${older}". Fix: put ${join(home, ".local", "bin")} first on the PATH`,
   ]);
+});
+
+test("install refuses to publish a fork build below the minimum, and leaves nothing installed", () => {
+  const commit = commitAt("2026-11-01T00:00:00-06:00");
+  const done = install(withGo());
+  assert.equal(done.status, 1);
+  assert.deepEqual(done.err, [
+    `no-mistakes: the latest build of 1yian/no-mistakes, fork-${commit} (2026-11-01T06:00:00Z) is too old, was staged and not installed: the existing no-mistakes is unchanged`,
+  ]);
+  assert.equal(existsSync(target()), false);
+  assert.equal(existsSync(`${target()}.new`), false);
 });

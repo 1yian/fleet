@@ -96,7 +96,6 @@ function parseCommandLine() {
       json: { type: "boolean" },
       undo: { type: "boolean" },
       check: { type: "boolean" },
-      latest: { type: "boolean" },
       maintenance: { type: "boolean" },
       from: { type: "string" },
       url: { type: "string" },
@@ -278,7 +277,7 @@ switch (command ?? "") {
     break;
   }
   case "install": {
-    const lines = await install(root, values.latest === true);
+    const lines = await install(root);
     for (const { text, failed } of lines) (failed ? console.error : console.log)(text);
     if (lines.some(({ failed }) => failed)) process.exit(1);
     break;

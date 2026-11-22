@@ -130,11 +130,11 @@ async function laneConfig(lane: LaneConfig): Promise<Config> {
   };
 }
 
-async function config(pi: ExtensionAPI): Promise<Config | undefined> {
+function credentials(pi: ExtensionAPI): (() => Promise<Config>) | undefined {
   const supplied = suppliedConfig(pi);
-  if (supplied !== undefined) return supplied;
+  if (supplied !== undefined) return () => Promise.resolve(supplied);
   const lane = readLaneConfig(HOME());
-  return lane === undefined ? undefined : laneConfig(lane);
+  return lane === undefined ? undefined : () => laneConfig(lane);
 }
 
 function announce(ctx: ExtensionContext, notes: readonly string[]): void {
@@ -465,9 +465,16 @@ export default function fleet(pi: ExtensionAPI): void {
     extensionsLoaded();
   });
   pi.on("session_start", async (_event, ctx) => {
-    const found = await config(pi);
-    if (started || found === undefined || refuseWithoutTiers(ctx)) return;
+    const lookup = credentials(pi);
+    if (started || lookup === undefined || refuseWithoutTiers(ctx)) return;
     started = true;
+    let found: Config;
+    try {
+      found = await lookup();
+    } catch (error) {
+      started = false;
+      throw error;
+    }
     const applied =
       found.secrets === undefined
         ? []

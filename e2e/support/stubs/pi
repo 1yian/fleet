@@ -1,0 +1,11 @@
+#!/bin/sh
+here=$(cd "$(dirname "$0")" && pwd)
+case "$1" in
+  update | list | install) exec node "$here/../fake-pi.ts" "$@" ;;
+esac
+IFS=:
+for dir in $PATH; do
+  [ -n "$dir" ] && [ "$dir" != "$here" ] && [ -x "$dir/pi" ] && exec "$dir/pi" "$@"
+done
+echo "pi: not found" >&2
+exit 127

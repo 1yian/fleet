@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { commitFork, initFork, routeFork } from "./fork-fixture.ts";
 import { tempDir } from "./run-root.ts";
 import { seedTiers } from "./tiers-fixture.ts";
 
@@ -24,6 +25,9 @@ const LIVE_ENVIRONMENT = [
   "HERDR_WORKSPACE_ID",
   "PI_TIERS_CONFIG",
   "NM_HOME",
+  "GIT_CONFIG_COUNT",
+  "FAKE_PI_LOG",
+  "FAKE_PI_SELF_UPDATE_REFUSAL",
 ];
 
 for (const name of LIVE_ENVIRONMENT) Reflect.deleteProperty(process.env, name);
@@ -46,3 +50,12 @@ const ROOMY_DISK = `--import=${new URL("./roomy-disk.ts", import.meta.url).href}
 const nodeOptions = process.env["NODE_OPTIONS"] ?? "";
 if (!nodeOptions.split(" ").includes(ROOMY_DISK))
   process.env["NODE_OPTIONS"] = `${nodeOptions} ${ROOMY_DISK}`.trim();
+
+const FORK = join(tempDir("fork-"), "no-mistakes");
+mkdirSync(FORK);
+initFork(FORK);
+process.env["FAKE_NO_MISTAKES_COMMIT"] = commitFork(FORK, "2026-11-19T08:47:26-06:00");
+Object.assign(process.env, routeFork(FORK));
+const PI_STATE = join(tempDir("pi-state-"), "packages");
+writeFileSync(PI_STATE, "git:github.com/1yian/pi-tiers\n");
+process.env["FAKE_PI_STATE"] = PI_STATE;

@@ -48,9 +48,11 @@ function pulledParts(row: Record<string, unknown>): string[] {
 
 function updatedLine(row: Record<string, unknown>): string {
   const lanes = Array.isArray(row["lanes"]) ? row["lanes"].map(String) : [];
+  const dependencies = Array.isArray(row["dependencies"]) ? row["dependencies"].map(String) : [];
   return [
     ...pulledParts(row),
     lanes.length === 0 ? "no lane homes" : `lane homes moved: ${lanes.join(", ")}`,
+    ...(dependencies.length === 0 ? [] : [`dependencies: ${dependencies.join(", ")}`]),
   ].join("; ");
 }
 
@@ -346,7 +348,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
     name: "update_fleet",
     label: "Update fleet",
     description:
-      "Updates the fleet to the latest origin/main, as /updatefleet does: checks every host first and stops before any change when a checkout or lane home has uncommitted changes or its own commits, or a host cannot be reached. Then it pulls each host's checkout, installs packages when the lockfile changed, builds the board, moves every lane home to the new commit, then updates cardd's checkout when config/lane.json has a cardd entry: when cardd's code changed, it backs up cardd's database, restarts cardd, and waits until cardd answers on the new code, and it stops without restarting any lane when cardd does not. Then it requests safe-point reloads of connected workers and second mates without interrupting their turns or long jobs, preserves stopped lanes and task waits, reports pending versus completed requests, reorders every host's herdr sidebar, and restarts main on its conversation when this turn ends. Main runs it right after every merged fleet change, without asking.",
+      "Updates the fleet to the latest origin/main, as /updatefleet does: checks every host first and stops before any change when a checkout or lane home has uncommitted changes or its own commits, or a host cannot be reached. Then it pulls each host's checkout, installs packages when the lockfile changed, builds the board, moves every lane home to the new commit, updates Pi, pi-tiers, and the 1yian/no-mistakes fork on each host to their latest remote (never restarting a no-mistakes daemon, never touching other Pi packages, and reporting a pinned pi-tiers, or a Pi that another package manager owns, as not updated), then updates cardd's checkout when config/lane.json has a cardd entry: when cardd's code changed, it backs up cardd's database, restarts cardd, and waits until cardd answers on the new code, and it stops without restarting any lane when cardd does not. Then it requests safe-point reloads of connected workers and second mates without interrupting their turns or long jobs, preserves stopped lanes and task waits, reports pending versus completed requests, reorders every host's herdr sidebar, and restarts main on its conversation when this turn ends. Main runs it right after every merged fleet change, without asking.",
     parameters: Type.Object({}),
     execute: async () => {
       const result = await run();
@@ -357,7 +359,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
   });
   pi.registerCommand("updatefleet", {
     description:
-      "Update the fleet to the latest origin/main on every host and cardd, restart cardd when its code changed, request safe-point reloads of workers and second mates, arrange every host's herdr sidebar, then restart main on its conversation.",
+      "Update the fleet to the latest origin/main on every host and cardd, update Pi, pi-tiers, and the no-mistakes fork on every host, restart cardd when its code changed, request safe-point reloads of workers and second mates, arrange every host's herdr sidebar, then restart main on its conversation.",
     handler: async (_args, ctx) => {
       if (ctx.hasUI) ctx.ui.notify("Updating the fleet on every host...", "info");
       const result = await run().catch((error: unknown) => ({
