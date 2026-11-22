@@ -6,6 +6,7 @@ import { costLine, DAY_MS, type CostRow } from "./cost.ts";
 import { DISK_CLEARED, DISK_MESSAGE, diskWatch, type Alert } from "./disk-alarm.ts";
 import { HostUnread, HostUnreachable, records } from "./host.ts";
 import { sidebarHostName } from "./arrange.ts";
+import { firstPassHosts } from "./first-pass.ts";
 import type { Link } from "./link.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
 import { fleet, maintenanceResult } from "./lane-maintenance-client.ts";
@@ -434,13 +435,13 @@ function keepRunning(
     }
   };
   const dailyCost = costNotice(pi, config, home, isDown);
-  const tick = async (): Promise<void> => {
-    await Promise.all(hostsOf(config).map(superviseHost));
-    await dailyCost();
+  const tick = async (only?: readonly string[]): Promise<void> => {
+    await Promise.all((only ?? hostsOf(config)).map(superviseHost));
+    if (only === undefined) await dailyCost();
   };
   const timer = setInterval(() => void tick(), INTERVAL_MS);
   timer.unref();
-  void tick();
+  void tick(firstPassHosts(pi));
   pi.on("session_shutdown", () => {
     shutDown = true;
     clearInterval(timer);

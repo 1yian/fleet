@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -132,14 +132,15 @@ async function start(options: { cardd?: boolean; olderCardd?: boolean } = {}): P
       ? {}
       : { cardd: { root: app.root, db: cardd.db, restart: cardd.restartCommand } }),
   });
-  const settings = (lane: string) => ({
+  const settings = (lane: string, host?: string) => ({
     url: cardd.url,
     token: cardd.addLane(lane, "main"),
     args: mateArgs(h),
+    ...(host === undefined ? {} : { host }),
   });
   here.addLane("ops", settings("ops"));
-  const farHome = p620.addLane("far", settings("far"));
-  vm.addLane("vmlane", settings("vmlane"));
+  const farHome = p620.addLane("far", settings("far", "p620"));
+  vm.addLane("vmlane", settings("vmlane", "vm"));
   const ghost = await cardd.connect(cardd.addLane("ghost", "main"));
   const lab = await HerdrLab.start({
     ...h.piEnv("mate"),
@@ -215,6 +216,17 @@ const enrolled = (db: string): string[] => {
   }
 };
 
+const updateMessages = (f: Fleet): string[] =>
+  readdirSync(join(f.h.dir, "sessions")).flatMap((file) =>
+    readFileSync(join(f.h.dir, "sessions", file), "utf8")
+      .split("\n")
+      .filter((line) => line.includes('"customType":"fleet-update"'))
+      .map((line) => String(Reflect.get(parseRecord(line), "content"))),
+  );
+
+const scratchCalls = (log: string): number =>
+  callsTo(log).filter((call) => call.includes("'scratch'")).length;
+
 const tips = (f: Fleet): string[] => [f.here.root, f.p620.root, f.vm.root].map((root) => tip(root));
 
 test("/updatefleet with a host list updates only those hosts: the excluded host gets no call and no reload enrollment, and the report says so", async () => {
@@ -222,6 +234,7 @@ test("/updatefleet with a host list updates only those hosts: the excluded host 
   const old = tip(f.here.root);
   const excluded = callsTo(f.vmLog).length;
   const fresh = landOnRemote(f.remote, "fleet-fix");
+  const supervised = scratchCalls(f.p620Log);
 
   await f.lab.submit(f.pane, "/updatefleet local p620");
   const after = await until(async () => {
@@ -233,6 +246,10 @@ test("/updatefleet with a host list updates only those hosts: the excluded host 
       : undefined;
   }, "main, ops, and far to run a new Pi");
 
+  await until(
+    () => (scratchCalls(f.p620Log) > supervised ? true : undefined),
+    "the relaunched main's first supervision pass to reach p620",
+  );
   assert.equal(after["2ndmate-vmlane"], f.before["2ndmate-vmlane"]);
   assert.deepEqual(tips(f), [fresh, fresh, old]);
   assert.equal(callsTo(f.vmLog).length, excluded);
@@ -335,11 +352,28 @@ test("a host list enrolls no reload when cardd cannot scope enrollment, so an ol
 
   const said = await toolRun(f, { hosts: ["local", "p620"] });
 
-  assert.match(said, /Unable to reload: cardd did not accept scoped reload enrollment/);
+  assert.match(said, /Unable to reload: scoped reload enrollment could not be confirmed/);
   assert.equal(callsTo(f.vmLog).length, excluded);
   assert.deepEqual(enrolled(f.cardd.db), []);
   const now = await running(f.lab);
   assert.equal(now["2ndmate-ops"], f.before["2ndmate-ops"]);
   assert.equal(now["2ndmate-far"], f.before["2ndmate-far"]);
   assert.equal(now["2ndmate-vmlane"], f.before["2ndmate-vmlane"]);
+});
+
+test("a malformed slash command or an empty host list is refused before any host is contacted, and an omitted list stays every host", async () => {
+  const f = await start();
+  const before = [callsTo(f.p620Log).length, callsTo(f.vmLog).length];
+  const old = tips(f);
+
+  await f.lab.submit(f.pane, "/updatefleet ,");
+  const said = await until(() => {
+    const [message] = updateMessages(f);
+    return message;
+  }, "main to record the refusal of a malformed host list");
+  assert.equal(said, '[fleet] update: unknown host ",": choose from local, p620, vm');
+  assert.match(await toolRun(f, { hosts: [] }), /hosts/);
+
+  assert.deepEqual([callsTo(f.p620Log).length, callsTo(f.vmLog).length], before);
+  assert.deepEqual(tips(f), old);
 });

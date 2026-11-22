@@ -409,6 +409,7 @@ const ClientMessage = Type.Union([
     inFile: Type.Array(Type.Integer()),
     process: Type.Optional(Type.String()),
     pid: Type.Optional(Type.Integer({ minimum: 1 })),
+    host: Type.Optional(Type.String({ minLength: 1 })),
     startedAt: Type.Optional(Type.Integer({ minimum: 0 })),
     maintenance: Type.Optional(Type.Boolean()),
     running: Type.Optional(Type.Boolean()),

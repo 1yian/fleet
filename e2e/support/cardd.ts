@@ -20,6 +20,7 @@ import {
 import { FakeGitHub } from "./github.ts";
 import { spawnGuarded } from "./guarded.ts";
 import { tempDir } from "./run-root.ts";
+import { placementOf } from "./placement.ts";
 
 const MAIN = fileURLToPath(new URL("../../packages/cardd/src/main.ts", import.meta.url));
 const KEEPALIVE = fileURLToPath(new URL("./keepalive.ts", import.meta.url));
@@ -294,6 +295,7 @@ export class Cardd {
       inFile,
       process: this.processOf(token),
       runtime,
+      ...placementOf(token),
       ...(running ? { running } : {}),
       ...(maintenance ? { maintenance } : {}),
       ...(started ? { started } : {}),
@@ -313,11 +315,9 @@ export class Cardd {
   }
 
   private processOf(token: string): string {
-    const known = this.processes.get(token);
-    if (known !== undefined) return known;
-    const created = randomUUID();
-    this.processes.set(token, created);
-    return created;
+    const process = this.processes.get(token) ?? randomUUID();
+    this.processes.set(token, process);
+    return process;
   }
 
   async restart(args?: readonly string[]): Promise<void> {

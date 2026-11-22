@@ -17,6 +17,7 @@ import { goneJobs, MISSED_HEARTBEATS, type JobLossGrace } from "./job-loss.ts";
 import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, markRead, toPush } from "./deliveries.ts";
 import { adoptMaintenance, pendingFor } from "./maintenance.ts";
+import { adoptPlacement } from "./maintenance-targets.ts";
 import { adoptProcess } from "./incidents.ts";
 import { sanitize } from "./incident-kinds.ts";
 import { expireJobStarts } from "./jobs.ts";
@@ -335,6 +336,7 @@ class Hub {
         message.maintenance === true,
         message.runtime,
       );
+      adoptPlacement(this.db, session.id, message.host);
       confirm(this.db, session.id, message.inFile);
       return told;
     });

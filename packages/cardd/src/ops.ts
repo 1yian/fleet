@@ -167,8 +167,8 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   "maintenance.request": (db, session, raw, timing) =>
     requestMaintenance(db, session, check(OPS["maintenance.request"].args, raw), timing),
   "maintenance.scoped": (db, session, raw, timing) => {
-    const { batch, kind, hosts, mates } = check(OPS["maintenance.scoped"].args, raw);
-    return requestMaintenance(db, session, { batch, kind }, timing, { hosts, mates });
+    const { batch, hosts } = check(OPS["maintenance.scoped"].args, raw);
+    return requestMaintenance(db, session, { batch, kind: "reload" }, timing, { hosts });
   },
   "maintenance.status": (db, session, raw) =>
     maintenanceStatus(db, session, check(OPS["maintenance.status"].args, raw)),

@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { firstPassHosts, hostNamesOf } from "./first-pass.ts";
 import { HostUnreachable, NoTransport, onHost } from "./host.ts";
+import { readLaneConfig } from "./lane-config.ts";
 import type { Link } from "./link.ts";
 
 const SYNC_FUNCTIONS = readFileSync(fileURLToPath(new URL("./sync.sh", import.meta.url)), "utf8");
@@ -61,12 +63,22 @@ export async function refreshClonesInTurn(clones: readonly Clone[]): Promise<str
   return lines.filter((line) => !NOTHING_CHANGED.test(line));
 }
 
-async function refreshAndReport(pi: ExtensionAPI, link: Link): Promise<void> {
+function allowedHosts(pi: ExtensionAPI, home: string): readonly string[] | undefined {
+  const scoped = firstPassHosts(pi);
+  if (scoped === undefined) return undefined;
+  const config = readLaneConfig(home);
+  return config === undefined ? [] : hostNamesOf(config, scoped);
+}
+
+async function refreshAndReport(pi: ExtensionAPI, link: Link, home: string): Promise<void> {
   const projects = await link.call("projects", {});
+  const allowed = allowedHosts(pi, home);
   const clones = projects
     .filter(({ delivery }) => delivery !== "local-only")
     .flatMap(({ name, base, clones: each }) =>
-      each.map(({ host, path }) => ({ project: name, host, path, base })),
+      each
+        .filter(({ host }) => allowed === undefined || allowed.includes(host))
+        .map(({ host, path }) => ({ project: name, host, path, base })),
     );
   const lines = await refreshClonesInTurn(clones);
   if (lines.length === 0) return;
@@ -81,12 +93,12 @@ async function refreshAndReport(pi: ExtensionAPI, link: Link): Promise<void> {
   );
 }
 
-export function refreshEveryCloneOnFirstConnect(pi: ExtensionAPI, link: Link): void {
+export function refreshEveryCloneOnFirstConnect(pi: ExtensionAPI, link: Link, home: string): void {
   let started = false;
   pi.events.on("fleet:connected", () => {
     if (started) return;
     started = true;
-    void refreshAndReport(pi, link).catch((error: unknown) => {
+    void refreshAndReport(pi, link, home).catch((error: unknown) => {
       console.error(`clone refresh: ${String(error)}`);
     });
   });

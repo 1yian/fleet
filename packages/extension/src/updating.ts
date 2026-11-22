@@ -3,8 +3,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { check, VersionSchema, type Version } from "@fleet/protocol";
 import Type from "typebox";
 import { arrangeOn, tagWorkers } from "./arrange.ts";
-import { fleetHostName } from "@fleet/protocol/route";
-import { HostUnreachable, ownHostName } from "./host.ts";
+import { hostNamesOf } from "./first-pass.ts";
+import { HostUnreachable } from "./host.ts";
 import { LANE_FILE, readLaneConfig, type CarddConfig, type LaneConfig } from "./lane-config.ts";
 import { fleet, hostsOf, runningMates, soleHosts, withLanes } from "./lanes.ts";
 import type { Link } from "./link.ts";
@@ -271,11 +271,13 @@ async function checkCardd(config: LaneConfig, cardd: CarddConfig): Promise<HostR
     : reply;
 }
 
-async function updateFleet(
-  config: LaneConfig,
-  link: Link,
-  target: Target,
-): Promise<{ ok: boolean; text: string }> {
+interface Result {
+  readonly ok: boolean;
+  readonly text: string;
+  readonly firstPass?: readonly string[];
+}
+
+async function updateFleet(config: LaneConfig, link: Link, target: Target): Promise<Result> {
   const checked: HostReply[] = [];
   for (const host of target.hosts) checked.push(await askHost(config, host, ["--check"]));
   if (config.cardd !== undefined) checked.push(await checkCardd(config, config.cardd));
@@ -309,10 +311,11 @@ async function updateFleet(
   const tags = await tagWorkersOn(link, target.hosts, placement).catch((error: unknown) => [
     `Worker metadata not refreshed: ${messageOf(error)}`,
   ]);
-  const lanes = await reloadLines(link, target, placement);
+  const lanes = await reloadLines(link, config, target);
   const sidebars = await arrangeAll(config, target.hosts);
   return {
     ok: true,
+    ...(target.scoped ? { firstPass: target.hosts } : {}),
     text: [
       "Fleet updated.",
       `Hosts:\n${hostLines}`,
@@ -325,20 +328,10 @@ async function updateFleet(
 
 type Placement = { readonly running: ReadonlyMap<string, string[]> } | { readonly failure: string };
 
-async function reloadLines(link: Link, target: Target, placement: Placement): Promise<string[]> {
-  let scope: ReloadScope | undefined;
-  if (target.scoped) {
-    if ("failure" in placement)
-      return [
-        `Unable to reload: mates on the selected hosts could not be identified (${placement.failure}), so nothing was enrolled`,
-      ];
-    scope = {
-      hosts: target.hosts.flatMap((host) =>
-        host === "local" ? ["local", fleetHostName(), ownHostName()] : [host],
-      ),
-      mates: [...placement.running.keys()],
-    };
-  }
+async function reloadLines(link: Link, config: LaneConfig, target: Target): Promise<string[]> {
+  const scope: ReloadScope | undefined = target.scoped
+    ? { hosts: hostNamesOf(config, target.hosts) }
+    : undefined;
   return requestAndAwait(link, scope, randomUUID(), MAINTENANCE_WAIT_MS).then(
     maintenanceReport,
     (error: unknown) => [`Unable to reload: ${messageOf(error)}`],
@@ -396,8 +389,9 @@ const reply = (text: string) => ({ content: [{ type: "text" as const, text }], d
 export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void {
   if (readLaneConfig(home) === undefined) return;
   let restartPending = false;
+  let restartScope: readonly string[] | undefined;
   let running = false;
-  const run = async (hosts?: readonly string[]): Promise<{ ok: boolean; text: string }> => {
+  const run = async (hosts?: readonly string[]): Promise<Result> => {
     if (running) throw new Error("the fleet update is already running");
     running = true;
     try {
@@ -405,7 +399,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
       if (config === undefined) throw new Error(`${LANE_FILE} in ${home} cannot be read`);
       const target = chooseTarget(config, hosts);
       const result = await withLanes(target.hosts, () => updateFleet(config, link, target));
-      return result.ok ? { ok: true, text: `${result.text}\n${mainLine()}` } : result;
+      return result.ok ? { ...result, text: `${result.text}\n${mainLine()}` } : result;
     } finally {
       running = false;
     }
@@ -414,7 +408,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
     name: "update_fleet",
     label: "Update fleet",
     description:
-      "Updates the fleet to the latest origin/main, as /updatefleet does: checks every host first and stops before any change when a checkout or lane home has uncommitted changes or its own commits, or a host cannot be reached. Then it pulls each host's checkout, installs packages when the lockfile changed, builds the board, moves every lane home to the new commit, updates Pi, pi-tiers, and the 1yian/no-mistakes fork on each host to their latest remote (never restarting a no-mistakes daemon, never touching other Pi packages, and reporting a pinned pi-tiers, or a Pi that another package manager owns, as not updated), then updates cardd's checkout when config/lane.json has a cardd entry: when cardd's code changed, it backs up cardd's database, restarts cardd, and waits until cardd answers on the new code, and it stops without restarting any lane when cardd does not. Then it requests safe-point reloads of connected workers and second mates without interrupting their turns or long jobs, preserves stopped lanes and task waits, reports pending versus completed requests, reorders every host's herdr sidebar, and restarts main on its conversation when this turn ends. Main runs it right after every merged fleet change, without asking. With hosts, it updates only those hosts: the list is resolved once, an empty or unknown name is refused before any host is contacted, and no alias is inferred. A host that is not listed is never contacted, not even for the first check, and the report names it as not targeted, not checked. The list must include local, where main runs, and the host of cardd. Reload requests, worker metadata, and the sidebar then cover only workers and second mates that are positively on a listed host, and the update refuses to enroll anyone when cardd cannot scope reloads. Without hosts, every host takes part.",
+      "Updates the fleet to the latest origin/main, as /updatefleet does: checks every host first and stops before any change when a checkout or lane home has uncommitted changes or its own commits, or a host cannot be reached. Then it pulls each host's checkout, installs packages when the lockfile changed, builds the board, moves every lane home to the new commit, updates Pi, pi-tiers, and the 1yian/no-mistakes fork on each host to their latest remote (never restarting a no-mistakes daemon, never touching other Pi packages, and reporting a pinned pi-tiers, or a Pi that another package manager owns, as not updated), then updates cardd's checkout when config/lane.json has a cardd entry: when cardd's code changed, it backs up cardd's database, restarts cardd, and waits until cardd answers on the new code, and it stops without restarting any lane when cardd does not. Then it requests safe-point reloads of connected workers and second mates without interrupting their turns or long jobs, preserves stopped lanes and task waits, reports pending versus completed requests, reorders every host's herdr sidebar, and restarts main on its conversation when this turn ends. Main runs it right after every merged fleet change, without asking. With hosts, it updates only those hosts: the list is resolved once, an empty or unknown name is refused before any host is contacted, and no alias is inferred. A host that is not listed is never contacted, not even for the first check, and the report names it as not targeted, not checked. The list must include local, where main runs, and the host of cardd. Reload requests, worker metadata, and the sidebar then cover only workers whose host is listed and second mates whose own connection reports a listed host, and nobody is enrolled through an unscoped request when cardd cannot scope reloads. Main's restart after a scoped update starts its first supervision and clone pass on the listed hosts only. Without hosts, every host takes part.",
     parameters: Type.Object({
       hosts: Type.Optional(
         Type.Array(Type.String({ minLength: 1 }), {
@@ -428,6 +422,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
       const result = await run(hosts);
       if (!result.ok) throw new Error(result.text);
       restartPending = ownPane() !== undefined;
+      restartScope = result.firstPass;
       return reply(result.text);
     },
   });
@@ -435,15 +430,15 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
     description:
       "Update the fleet to the latest origin/main on every host and cardd, or only on the hosts named after the command (/updatefleet local p620; local and cardd's host are required, and other hosts are never contacted), update Pi, pi-tiers, and the no-mistakes fork on every host, restart cardd when its code changed, request safe-point reloads of workers and second mates, arrange every host's herdr sidebar, then restart main on its conversation.",
     handler: async (args, ctx) => {
-      const hosts = args.split(/[\s,]+/).filter((name) => name !== "");
-      const named = hosts.length === 0 ? undefined : hosts;
+      const named = args.trim() === "" ? undefined : args.trim().split(/\s+/);
       if (ctx.hasUI)
         ctx.ui.notify(`Updating the fleet on ${named?.join(", ") ?? "every host"}...`, "info");
-      const result = await run(named).catch((error: unknown) => ({
+      const result: Result = await run(named).catch((error: unknown) => ({
         ok: false,
         text: error instanceof Error ? error.message : String(error),
       }));
       restartPending = result.ok && ownPane() !== undefined;
+      restartScope = result.firstPass;
       pi.sendMessage(
         { customType: "fleet-update", content: `[fleet] update: ${result.text}`, display: true },
         { triggerTurn: true, deliverAs: "followUp" },
@@ -454,6 +449,8 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
     if (!restartPending) return;
     restartPending = false;
     const pane = ownPane();
-    if (pane !== undefined) relaunchSelf(ctx, pane);
+    const scope = restartScope;
+    restartScope = undefined;
+    if (pane !== undefined) relaunchSelf(ctx, pane, undefined, undefined, scope);
   });
 }

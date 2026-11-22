@@ -35,13 +35,11 @@ export const MAINTENANCE_OPS = {
     args: Type.Object(
       {
         batch: Batch,
-        kind: Type.Literal("reload"),
         hosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-        mates: Type.Array(Type.String({ minLength: 1 })),
       },
       {
         description:
-          "Requests reloads like maintenance.request, but enrolls only workers whose host is in hosts and mates whose lane is in mates. Any other session is never enrolled. A cardd without this operation refuses it, so a scoped caller never falls back to enrolling everyone",
+          "Requests reloads like maintenance.request, but enrolls only workers whose attempt host is in hosts and mates whose connection reported a host in hosts. A mate that reported no host, or any other session, is never enrolled. A cardd without this operation refuses it, so a scoped caller never falls back to enrolling everyone",
       },
     ),
     result: Rows,

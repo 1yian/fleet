@@ -17,14 +17,17 @@ export interface Target {
 
 export interface Scope {
   readonly hosts: readonly string[];
-  readonly mates: readonly string[];
 }
 
-const inScope = (row: Record<string, unknown>, scope: Scope | undefined): boolean =>
-  scope === undefined ||
-  (row["role"] === "mate"
-    ? scope.mates.includes(String(row["lane"]))
-    : scope.hosts.includes(String(row["host"])));
+export function adoptPlacement(db: DatabaseSync, session: string, host: string | undefined): void {
+  db.prepare("UPDATE sessions SET placed_host = ? WHERE id = ?").run(host ?? "", session);
+}
+
+const inScope = (row: Record<string, unknown>, scope: Scope | undefined): boolean => {
+  if (scope === undefined) return true;
+  const where = String(row[row["role"] === "mate" ? "placed" : "host"]);
+  return where !== "" && scope.hosts.includes(where);
+};
 
 export function targets(
   db: DatabaseSync,
@@ -35,7 +38,7 @@ export function targets(
 ): Target[] {
   const rows = db
     .prepare(
-      `SELECT s.id AS id, s.role AS role, s.lane AS lane, s.host AS host, s.process AS process, s.runtime AS runtime, s.maintenance AS supported, coalesce(s.last_seen, 0) AS seen,
+      `SELECT s.id AS id, s.role AS role, s.host AS host, s.placed_host AS placed, s.process AS process, s.runtime AS runtime, s.maintenance AS supported, coalesce(s.last_seen, 0) AS seen,
          s.stopping_until AS until, s.state IN ('idle', 'running', 'waiting') AS connected
        FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt
        WHERE s.id != ? AND s.state NOT IN ('starting', 'closed')
