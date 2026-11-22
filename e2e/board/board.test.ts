@@ -4,8 +4,7 @@ import { fileURLToPath } from "node:url";
 import { after, before, beforeEach, test } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
 import type { Card } from "@fleet/protocol";
-import type { Cardd } from "../support/cardd.ts";
-import { type Session } from "../support/cardd.ts";
+import type { Cardd, Session } from "../support/cardd.ts";
 import { OUTSIDE_DATE } from "../support/fleet.ts";
 import {
   boundBoardFile,
@@ -381,12 +380,10 @@ test("a board load that finishes late is followed by the queued newer one", asyn
     assert.ok(waited < 5000, "the board never finished its startup and live-socket reads");
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-
   heldCalls = calls + 1;
   holding = true;
   await question("Pick the API version", ["v1", "v2"]);
   await heldRead;
-
   await question("Renew the certificate", ["now", "later"]);
   await new Promise((resolve) => setTimeout(resolve, 1000));
   assert.equal(
@@ -395,7 +392,6 @@ test("a board load that finishes late is followed by the queued newer one", asyn
     "the live change queues behind the held read instead of starting another",
   );
   assert.equal(await page.getByText("Renew the certificate?").count(), 0);
-
   release();
   await page.getByText("Pick the API version?").waitFor();
   await page.getByText("Renew the certificate?").waitFor();
