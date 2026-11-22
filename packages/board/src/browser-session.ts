@@ -34,10 +34,6 @@ class Viewer {
   private recovering = false;
   private latest: BrowserFrame | undefined;
   private trusted = false;
-  private activation:
-    | { tab: string; epoch: number; authority: number; settled: boolean }
-    | undefined;
-  private previewed = false;
   private stated = false;
   private authority = 0;
   private frames = 0;
@@ -70,7 +66,6 @@ class Viewer {
         this.epoch += 1;
         this.stated = false;
         this.latest = undefined;
-        this.previewed = false;
         this.frame(undefined);
         this.events = [];
         this.recovering = true;
@@ -123,32 +118,10 @@ class Viewer {
     return this.mutating || this.quarantined || this.recovering || !this.matched();
   }
 
-  private previews(frame: BrowserFrame): boolean {
-    const { activation } = this;
-    return (
-      activation?.tab === frame.meta.targetId &&
-      activation.epoch === this.epoch &&
-      activation.authority === this.authority
-    );
-  }
-
-  private promote(): void {
-    const { activation, latest } = this;
-    const state = this.current.state;
-    if (activation === undefined || !activation.settled || activation.epoch !== this.epoch) return;
-    if (!this.previewed || latest?.meta.targetId !== activation.tab) return;
-    if (state?.activeTab !== activation.tab) return;
-    this.trusted = true;
-    this.previewed = false;
-    this.set(this.current);
-    this.resume();
-  }
-
   private accept(frame: BrowserFrame): void {
     const was = this.matched();
     this.latest = frame;
     this.trusted = !this.stated || this.current.state?.activeTab === frame.meta.targetId;
-    this.previewed = !this.trusted && this.previews(frame);
     this.frame(frame);
     const now = this.matched();
     if (was && !now) {
@@ -176,7 +149,6 @@ class Viewer {
     this.epoch += 1;
     this.stated = false;
     this.latest = undefined;
-    this.previewed = false;
     this.frame(undefined);
     this.discard();
     this.set({ offline: true, notice });
@@ -225,16 +197,9 @@ class Viewer {
     if (completed) this.invalidateCommand();
     if (!owns && pending !== "take") this.issuedTake = false;
     if (lost || previous?.activeTab !== state.activeTab) this.events = [];
-    const moved = this.stated && previous?.activeTab !== state.activeTab;
     this.stated = true;
-    if (this.activation !== undefined && this.activation.tab !== state.activeTab)
-      this.activation = undefined;
-    if (
-      this.latest !== undefined &&
-      ((moved && !this.trusted && !this.previewed) || this.latest.meta.targetId !== state.activeTab)
-    ) {
+    if (this.latest !== undefined && this.latest.meta.targetId !== state.activeTab) {
       this.latest = undefined;
-      this.previewed = false;
       this.frame(undefined);
     }
     const key = `${String(owns)}:${state.activeTab ?? ""}`;
@@ -249,7 +214,6 @@ class Viewer {
       pending: completed ? undefined : pending,
       notice: lost ? (pending === "done" ? "Control returned to the agent." : LOST) : notice,
     });
-    this.promote();
     this.resume();
   }
 
@@ -304,19 +268,11 @@ class Viewer {
 
   private async mutate(pending: Pending): Promise<number> {
     this.mutating = true;
-    this.activation =
-      typeof pending === "object"
-        ? { tab: pending.tab, epoch: this.epoch, authority: this.authority, settled: false }
-        : undefined;
     const posting = this.post("command", commandFor(pending));
     this.mutation = posting;
     const code = await posting;
     this.mutating = false;
     if (code !== 204 && code !== 409) this.quarantined = true;
-    if (code === 204 && this.activation !== undefined) {
-      this.activation.settled = true;
-      this.promote();
-    } else this.activation = undefined;
     return code;
   }
 
