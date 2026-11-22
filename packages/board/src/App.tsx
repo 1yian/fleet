@@ -136,19 +136,6 @@ function useEscape(close: () => void): void {
   }, [close]);
 }
 
-function BoardNav({ workers }: { readonly workers: boolean }) {
-  return (
-    <nav className="board-nav" aria-label="Fleet views">
-      <a href="#/" aria-current={workers ? undefined : "page"}>
-        Board
-      </a>
-      <a href="#/workers" aria-current={workers ? "page" : undefined}>
-        Active Workers
-      </a>
-    </nav>
-  );
-}
-
 export function App() {
   const changes = useChanges();
   const now = useNow();
@@ -212,7 +199,6 @@ export function App() {
   return (
     <main className="kanban">
       <BrowserBoardLinks enabled={board.browsers} {...browsers} />
-      <BoardNav workers={workers} />
       {banner}
       {workers ? (
         <ActiveWorkers board={board} available={available} onOpen={openCard} />
