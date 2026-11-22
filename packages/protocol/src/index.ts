@@ -435,6 +435,7 @@ const ClientMessage = Type.Union([
 export type ClientMessage = Static<typeof ClientMessage>;
 
 export const BoardSchema = Type.Object({
+  workerStaleBefore: Type.Integer(),
   cards: Type.Array(BoardCardSchema),
   holds: Type.Array(
     Type.Object({

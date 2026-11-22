@@ -46,7 +46,7 @@ const onControl = (event: MouseEvent): boolean =>
 const opens = (event: MouseEvent): boolean =>
   event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey;
 
-function TitleLink(props: { readonly card: BoardCard; readonly onOpen: () => void }) {
+export function TitleLink(props: { readonly card: BoardCard; readonly onOpen: () => void }) {
   return (
     <a
       className="title"

@@ -6,6 +6,7 @@ import { CardDetail, NoCard } from "./CardDetail.tsx";
 import { useFacts } from "./facts.ts";
 import { deviceZone, questionsByCard } from "./format.ts";
 import { useCardRoute } from "./route.ts";
+import { ActiveWorkers } from "./ActiveWorkers.tsx";
 
 const TICK_MS = 30_000;
 
@@ -13,18 +14,21 @@ function useBoard(changes: number, tick: number, setNotice: (notice: string | un
   const [board, setBoard] = useState<Board | undefined>();
   const loads = useRef(0);
   const loadFailed = useRef(false);
+  const [available, setAvailable] = useState(false);
   const refresh = useCallback(() => {
     const load = ++loads.current;
     loadBoard().then(
       (loaded) => {
         if (load !== loads.current) return;
         setBoard(loaded);
+        setAvailable(true);
         if (loadFailed.current) setNotice(undefined);
         loadFailed.current = false;
       },
       (error: unknown) => {
         if (load !== loads.current) return;
         loadFailed.current = true;
+        setAvailable(false);
         setNotice(unreachable(error));
       },
     );
@@ -32,7 +36,7 @@ function useBoard(changes: number, tick: number, setNotice: (notice: string | un
   useEffect(() => {
     refresh();
   }, [changes, tick, refresh]);
-  return { board, refresh };
+  return { board, refresh, available };
 }
 
 function useNow(): number {
@@ -121,12 +125,25 @@ function useEscape(close: () => void): void {
   }, [close]);
 }
 
+function BoardNav({ workers }: { readonly workers: boolean }) {
+  return (
+    <nav className="board-nav" aria-label="Fleet views">
+      <a href="#/" aria-current={workers ? undefined : "page"}>
+        Board
+      </a>
+      <a href="#/workers" aria-current={workers ? "page" : undefined}>
+        Active Workers
+      </a>
+    </nav>
+  );
+}
+
 export function App() {
   const changes = useChanges();
   const now = useNow();
   const [notice, setNotice] = useState<string | undefined>();
-  const { board, refresh } = useBoard(changes, now, setNotice);
-  const { card: open, open: openCard, close } = useCardRoute();
+  const { board, refresh, available } = useBoard(changes, now, setNotice);
+  const { card: open, workers, open: openCard, close } = useCardRoute();
   const [drafts, setDrafts] = useState<ReadonlyMap<number, string>>(new Map());
   const facts = useFacts(board?.cards, now);
 
@@ -179,17 +196,22 @@ export function App() {
     );
   return (
     <main className="kanban">
+      <BoardNav workers={workers} />
       {banner}
-      <Kanban
-        board={board}
-        now={now}
-        facts={facts}
-        onOpen={openCard}
-        notices={notices}
-        onAnswer={answer}
-        onLater={later}
-        onDismiss={dismiss}
-      />
+      {workers ? (
+        <ActiveWorkers board={board} available={available} onOpen={openCard} />
+      ) : (
+        <Kanban
+          board={board}
+          now={now}
+          facts={facts}
+          onOpen={openCard}
+          notices={notices}
+          onAnswer={answer}
+          onLater={later}
+          onDismiss={dismiss}
+        />
+      )}
     </main>
   );
 }

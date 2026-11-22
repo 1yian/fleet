@@ -1,0 +1,111 @@
+import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { after, before, test } from "node:test";
+import { chromium, type Browser, type Page } from "playwright";
+import type { Card } from "@fleet/protocol";
+import { boundBoardFile, openBoardPage } from "../support/board.ts";
+import { begin, newCard, startFleet } from "../support/fleet.ts";
+
+const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
+const SHOTS = process.env["FLEET_E2E_SHOTS"];
+
+boundBoardFile();
+
+let browser: Browser;
+before(async () => {
+  browser = await chromium.launch();
+});
+after(async () => {
+  await browser.close();
+});
+
+async function shoot(page: Page): Promise<void> {
+  if (SHOTS === undefined) return;
+  mkdirSync(SHOTS, { recursive: true });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.screenshot({ path: join(SHOTS, `active-workers-${String(width)}.png`) });
+  }
+}
+
+function row(page: Page, group: string, card: Card) {
+  return page
+    .getByRole("region", { name: group, exact: true })
+    .getByRole("listitem")
+    .filter({ has: page.getByRole("link", { name: card.title, exact: true }) });
+}
+
+test("active workers move between working, waiting, and disconnected without reloading the board", async (context) => {
+  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
+  context.after(() => cardd.stop());
+  const cleo = await cardd.connect(cardd.addLane("cleo", "main"));
+  const page = await openBoardPage(context, browser);
+  const address = cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");
+
+  await page.goto(address);
+  const nav = page.getByRole("navigation", { name: "Fleet views" });
+  const workers = nav.getByRole("link", { name: "Active Workers" });
+  await workers.click();
+  await page.getByRole("heading", { name: "Active Workers" }).waitFor();
+  await page.getByText("No workers are working now.").waitFor();
+
+  const building = await newCard(main, "Make search results easier to scan");
+  const checking = await newCard(cleo, "Validate the landing page");
+  const held = await newCard(cleo, "Compare the new signup flows");
+  const gone = await newCard(main, "Investigate delayed notifications");
+  const queued = await newCard(main, "Draft the help center outline");
+  const builder = await cardd.connect(await begin(main, building), [], true, true);
+  const reviewer = await cardd.connect(await begin(cleo, checking), [], true, true);
+  await reviewer.call("report", {
+    status: "in-review",
+    text: "The validation pipeline is running.",
+  });
+  await cardd.connect(await begin(cleo, held));
+  await cleo.call("hold", { card: held.id, question: "Which flow should we ship?" });
+  const lostToken = await begin(main, gone);
+  const lost = await cardd.connect(lostToken, [], true, true);
+  await lost.close();
+
+  const working = row(page, "Working", building);
+  await working.getByText("Running", { exact: true }).waitFor();
+  assert.match(await working.innerText(), new RegExp(`#${String(building.id)} · main`));
+  const waiting = row(page, "Waiting", checking);
+  await waiting.getByText("In review", { exact: true }).waitFor();
+  assert.match(await waiting.innerText(), new RegExp(`#${String(checking.id)} · cleo`));
+  await row(page, "Waiting", held).getByText("With main", { exact: true }).waitFor();
+  await row(page, "Disconnected or stale", gone)
+    .getByText("Disconnected", { exact: true })
+    .waitFor();
+  assert.equal(await page.getByRole("link", { name: queued.title }).count(), 0);
+  await shoot(page);
+
+  await working.getByRole("link", { name: building.title }).click();
+  await page.getByRole("heading", { name: building.title }).waitFor();
+  await page.getByRole("button", { name: "Fleet" }).click();
+  await working.getByRole("link", { name: building.title }).waitFor();
+  assert.equal(await workers.getAttribute("aria-current"), "page");
+
+  await builder.call("report", { status: "blocked", text: "Need my mate to decide." });
+  await row(page, "Waiting", building).getByText("With main", { exact: true }).waitFor();
+  await working.waitFor({ state: "detached" });
+
+  await cardd.connect(lostToken, [], true, true);
+  await row(page, "Working", gone).getByText("Running", { exact: true }).waitFor();
+  await row(page, "Disconnected or stale", gone).waitFor({ state: "detached" });
+});
+
+test("a connected worker with stale running activity is never shown as working", async (context) => {
+  const { cardd, main } = await startFleet({ CARDD_TIMING_SCALE: "0.04" }, ["--board", BOARD]);
+  context.after(() => cardd.stop());
+  const page = await openBoardPage(context, browser);
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
+  await page.getByText("No workers are working now.").waitFor();
+
+  const task = await newCard(main, "Check the release checklist");
+  await cardd.connect(await begin(main, task), [], true, true);
+  await row(page, "Working", task).getByText("Running", { exact: true }).waitFor();
+  await row(page, "Disconnected or stale", task).getByText("Stale activity").waitFor();
+  await page.getByText("No workers are working now.").waitFor();
+});
