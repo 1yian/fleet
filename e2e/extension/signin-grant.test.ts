@@ -159,11 +159,11 @@ test("the captain's grant signs the lane's browser in without the worker seeing 
 
 test("a captain-selected span, not the whole entry, is the password", async () => {
   const entry = await captainSays(
-    `The vendor login is ${MARKER} - do not share`,
+    `🔑 The vendor login is ${MARKER} - do not share`,
   );
-  const start = `The vendor login is `.length;
+  const start = Array.from(`🔑 The vendor login is `).length;
   const ref = await grant(entry, {
-    span: { start, end: start + MARKER.length },
+    span: { start, end: start + Array.from(MARKER).length },
   });
   const browser = new FakeBrowser();
 

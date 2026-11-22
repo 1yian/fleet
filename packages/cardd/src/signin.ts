@@ -36,12 +36,14 @@ function selected(
   start: number | null,
   end: number | null,
 ): string {
-  const text = start === null || end === null ? body : body.slice(start, end);
+  const points = Array.from(body);
+  const text =
+    start === null || end === null ? body : points.slice(start, end).join("");
   if (
     text === "" ||
     text.length > MAX_PASSWORD ||
     /[\r\n]/.test(text) ||
-    (end !== null && end > body.length)
+    (end !== null && end > points.length)
   )
     throw new Error(
       "the selected text is not a one-line password: select the exact span of the entry that is the password",
