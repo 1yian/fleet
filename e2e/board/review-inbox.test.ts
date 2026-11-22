@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { check, OPS } from "@fleet/protocol";
 import { begin, newCard, startFleet, status } from "../support/fleet.ts";
 import { Site } from "../support/public-host.ts";
-import { labFor, post, reviewSource, viaEdge } from "../support/review-source-lab.ts";
+import { labFor, post, reviewSource, verdictOf, viaEdge } from "../support/review-source-lab.ts";
 
 const rounds = [
   {
@@ -203,7 +203,7 @@ test("a verdict replayed after a reconnect does not inherit a later session end"
   assert.equal(entries.filter((entry) => entry.kind === "review-feedback").length, 1);
 });
 
-test("feedback sent while Fleet confirms the source is delivered after the takeover with its end reported", async (t) => {
+test("feedback sent before the takeover notice is not forwarded and later feedback is", async (t) => {
   const { origin, key } = await reviewSource(t);
   const { edge, upstream } = await viaEdge(t, origin);
   const probe = edge.hold("/layout-warnings");
@@ -211,25 +211,23 @@ test("feedback sent while Fleet confirms the source is delivered after the takeo
   const worker = await cardd.connect(token);
   await bind(worker, "review-fence");
   await probe.arrived;
-  await post(origin, `/api/${key}/prompts`, {
-    prompts: [{ uid: "1", tag: "verdict", prompt: "Final while confirming", selector: "#v" }],
-    endSession: true,
-  });
+  await post(origin, `/api/${key}/prompts`, verdictOf("Sent before the notice"));
   probe.release();
-  const verdict = await worker.waitForEntry(
-    (entry) => entry.kind === "review-feedback" && entry.body === "Final while confirming",
-    "the verdict sent while the source was being confirmed",
+  await worker.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true && entry.body === "review-fence",
+    "the takeover notice",
   );
-  assert.equal(verdict.fields["sessionEnded"], null);
-  assert.deepEqual(verdict.fields["reviewKeys"], ["review-fence"]);
-  const order = worker.entries.map(({ entry }) => entry.id);
-  const notice = worker.entries.find(({ entry }) => entry.fields["fleetReview"] === true);
-  const ended = worker.entries.find(
-    ({ entry }) => entry.kind === "review-feedback" && entry.fields["sessionEnded"] === true,
+  await post(origin, `/api/${key}/prompts`, verdictOf("Sent after the notice"));
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Sent after the notice",
+    "the verdict sent after the notice",
   );
-  assert.ok(notice && ended);
-  assert.ok(order.indexOf(notice.entry.id) < order.indexOf(ended.entry.id));
-  assert.ok(order.indexOf(ended.entry.id) < order.indexOf(verdict.id));
+  assert.deepEqual(
+    worker.entries
+      .filter(({ entry }) => entry.kind === "review-feedback")
+      .map(({ entry }) => entry.body),
+    ["Sent after the notice"],
+  );
 });
 
 test("a mapped link with no stock session is never taken over", async (t) => {

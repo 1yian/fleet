@@ -288,4 +288,27 @@ test("a replacement upstream behind the same link starts from its own baseline",
       .map(({ entry }) => entry.body),
     ["Live on the replacement"],
   );
+  await post(origin, `/api/${key}/prompts`, verdictOf("Sent to the first upstream meanwhile"));
+  await again.close();
+  await cardd.stop();
+  cardd.env["CARDD_REVIEW_ORIGINS"] = `${reported}=${origin.origin}`;
+  await cardd.restart();
+  const back = await cardd.connect(token);
+  await back.waitForEntry(
+    (entry) => entry.fields["upstream"] === `${origin.origin}/session/${key}`,
+    "a new takeover notice when the first upstream returns",
+  );
+  await post(origin, `/api/${key}/prompts`, verdictOf("Live on the first upstream again"));
+  await back.waitForEntry(
+    (entry) =>
+      entry.kind === "review-feedback" && entry.body === "Live on the first upstream again",
+    "the live verdict after returning",
+  );
+  assert.deepEqual(
+    back.entries
+      .filter(({ entry }) => entry.kind === "review-feedback")
+      .map(({ entry }) => entry.body)
+      .filter((body) => body !== "Live on the replacement"),
+    ["Live on the first upstream again"],
+  );
 });

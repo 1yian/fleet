@@ -112,8 +112,16 @@ function epochNotices(
   origins: ReadonlyMap<string, string>,
 ): Entry[] {
   let start = 0;
-  entries.forEach(({ id, kind }, at) => {
-    if (HOLD_KINDS.has(kind) && !bound(factsFrom(entries.slice(0, at + 1)).hold, identity, origins))
+  entries.forEach(({ id, kind, author, fields }, at) => {
+    const elsewhere =
+      author === "fleet" &&
+      kind === "note" &&
+      fields["fleetReview"] === true &&
+      fields["upstream"] !== identity.source.href;
+    if (
+      elsewhere ||
+      (HOLD_KINDS.has(kind) && !bound(factsFrom(entries.slice(0, at + 1)).hold, identity, origins))
+    )
       start = id;
   });
   return entries.filter(
@@ -198,6 +206,7 @@ async function mapped(source: URL): Promise<boolean> {
 
 function listen(
   binding: Binding,
+  fence: boolean,
   receive: (moment: Moment) => void,
   closed: () => void,
 ): WebSocket {
@@ -211,6 +220,7 @@ function listen(
   });
   let revision = -1;
   let initial: ChatState | undefined;
+  let latest: ChatState | undefined;
   let fenced = false;
   let ready = false;
   let open = true;
@@ -238,14 +248,18 @@ function listen(
     if (fenced) return;
     fenced = true;
     known = new Set(promptIds(initial));
-    deliver({ chat: initial, sessionEnded: null, ended: false });
+    latest = initial;
+    if (!fence) deliver({ chat: initial, sessionEnded: null, ended: false });
     void mapped(source).then((present) => {
       if (!present) {
         socket.terminate();
         return;
       }
       ready = true;
-      for (const moment of waiting.splice(0)) deliver(moment);
+      if (fence) {
+        waiting.length = 0;
+        deliver({ chat: latest, sessionEnded: null, ended: false });
+      } else for (const moment of waiting.splice(0)) deliver(moment);
     });
   });
   const ended = () => {
@@ -262,6 +276,7 @@ function listen(
       initial = chat;
       return;
     }
+    latest = chat;
     const ids = promptIds(chat);
     if (ids.some((id) => !known.has(id))) {
       if (!ambiguous) open = true;
@@ -357,32 +372,34 @@ export class SourceReviews {
     };
   }
 
-  private claimant(href: string): { card: number; requests: string } | undefined {
+  private claimant(href: string): { card: number; requests: string } | "conflict" | undefined {
+    const found: { card: number; requests: string }[] = [];
     for (const card of [...this.candidates]) {
       const held = this.held(card, Infinity);
       if (held?.source.href === href && epochNotices(held.entries, held, this.origins).length > 0)
-        return { card, requests: JSON.stringify(held.requests) };
+        found.push({ card, requests: JSON.stringify(held.requests) });
     }
-    return undefined;
+    return found.length > 1 ? "conflict" : found[0];
+  }
+
+  private release(card: number, held: { source: URL; requests: readonly number[] } | undefined) {
+    for (const [href, claim] of this.claims) {
+      const current =
+        held?.source.href === href && claim.requests === JSON.stringify(held.requests);
+      if (claim.card === card && !current) this.claims.delete(href);
+    }
   }
 
   private owns(card: number): boolean {
     const held = this.held(card, Infinity);
-    for (const [href, claim] of this.claims)
-      if (
-        claim.card === card &&
-        (held === undefined ||
-          href !== held.source.href ||
-          claim.requests !== JSON.stringify(held.requests))
-      )
-        this.claims.delete(href);
+    this.release(card, held);
     if (held === undefined) return false;
     const href = held.source.href;
-    if (!this.claims.has(href))
-      this.claims.set(
-        href,
-        this.claimant(href) ?? { card, requests: JSON.stringify(held.requests) },
-      );
+    if (!this.claims.has(href)) {
+      const found = this.claimant(href);
+      if (found === "conflict") return false;
+      this.claims.set(href, found ?? { card, requests: JSON.stringify(held.requests) });
+    }
     return this.claims.get(href)?.card === card;
   }
 
@@ -393,8 +410,13 @@ export class SourceReviews {
     this.watching.delete(card);
     watching?.socket.terminate();
     if (binding === undefined) return;
+    const held = this.held(card, Infinity);
+    const fence =
+      held === undefined ||
+      baselineOf(epochNotices(held.entries, held, this.origins)) === undefined;
     const socket = listen(
       binding,
+      fence,
       (moment) => {
         this.record(binding, moment);
       },
