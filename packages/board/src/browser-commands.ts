@@ -48,3 +48,22 @@ export const LOST = "Control ended. You’re watching again.";
 export const CHANGED = "The remote browser changed before your request went through. Try again.";
 export const AMBIGUOUS =
   "The last change may not have finished, so input and control changes are off. You can keep watching. Leave this page to hand control back to the agent.";
+
+export function looseCommand(pending: Pending, fresh: boolean): boolean {
+  return fresh || pending === "take";
+}
+
+export function settles(pending: Pending | undefined, state: BrowserState): boolean {
+  const owns = state.viewer.controlling;
+  if (pending === "take") return owns;
+  if (pending === "done") return !owns;
+  return pending !== undefined && pending.tab === state.activeTab;
+}
+
+export function lostNotice(pending: Pending | undefined): string {
+  return pending === "done" ? "Control returned to the agent." : LOST;
+}
+
+export function lostControl(previous: BrowserState | undefined, state: BrowserState): boolean {
+  return previous?.viewer.controlling === true && !state.viewer.controlling;
+}
