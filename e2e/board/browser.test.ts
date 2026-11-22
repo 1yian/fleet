@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { check, BrowserCommandSchema } from "@fleet/protocol";
 import { chromium, type Page } from "playwright";
@@ -32,7 +32,12 @@ class BrowserEndpoint {
   private asking = false;
   private tab = 0;
   private outage = false;
-  private active = 0;
+  private withholding = false;
+  activeInputs = 0;
+  rejected = 0;
+  streamOpens = 0;
+  commandDelay = 0;
+  readonly order: string[] = [];
   readonly events: Record<string, unknown>[] = [];
   readonly commands: unknown[] = [];
   inputDelay = 0;
@@ -103,6 +108,12 @@ class BrowserEndpoint {
 
   endOutage(): void {
     this.outage = false;
+    this.withholding = true;
+  }
+
+  releaseState(): void {
+    this.withholding = false;
+    this.publish();
   }
 
   private begin(response: ServerResponse): void {
@@ -118,6 +129,7 @@ class BrowserEndpoint {
     const url = new URL(request.url ?? "/", "http://fixture");
     const viewer = url.searchParams.get("viewer") ?? "";
     if (this.outage && (url.pathname === "/v1/events" || url.pathname.endsWith("/stream"))) {
+      this.rejected += 1;
       response.writeHead(503).end();
       return;
     }
@@ -129,8 +141,9 @@ class BrowserEndpoint {
     } else if (url.pathname.endsWith("/stream")) {
       this.begin(response);
       this.viewers.set(viewer, response);
+      this.streamOpens += 1;
       response.once("close", () => this.viewers.delete(viewer));
-      this.state(viewer, response);
+      if (!this.withholding) this.state(viewer, response);
     } else {
       await this.mutate(url, viewer, request, response);
     }
@@ -148,8 +161,10 @@ class BrowserEndpoint {
       if (typeof chunk === "string") raw += chunk;
     }
     const body: unknown = JSON.parse(raw);
-    if (url.pathname.endsWith("/command")) this.command(viewer, body);
-    else if (this.holder !== viewer) {
+    if (url.pathname.endsWith("/command")) {
+      await new Promise((resolve) => setTimeout(resolve, this.commandDelay));
+      this.command(viewer, body);
+    } else if (this.holder !== viewer) {
       response.writeHead(409).end("viewer does not hold control, send control first");
       return;
     } else await this.input(body);
@@ -159,7 +174,10 @@ class BrowserEndpoint {
   private command(viewer: string, body: unknown): void {
     const command = check(BrowserCommandSchema, body);
     this.commands.push(command);
-    if (command.t === "tab") this.activeInputsAtTab = this.active;
+    if (command.t === "tab") {
+      this.activeInputsAtTab = this.activeInputs;
+      this.order.push("tab");
+    }
     if (command.t === "control") this.requested = command.on ? viewer : undefined;
     else if (command.t === "tab") this.tab = TABS.findIndex((tab) => tab.id === command.id);
     else {
@@ -172,14 +190,16 @@ class BrowserEndpoint {
   private async input(body: unknown): Promise<void> {
     assert.ok(typeof body === "object" && body !== null && "events" in body);
     assert.ok(Array.isArray(body.events));
-    this.active += 1;
+    this.activeInputs += 1;
     for (const raw of body.events) {
       const item: unknown = raw;
       assert.ok(typeof item === "object" && item !== null);
-      this.events.push({ ...item });
+      const entry: Record<string, unknown> = { ...item };
+      this.events.push(entry);
+      this.order.push(`${String(entry["t"])}:${String(entry["type"])}:${String(entry["key"])}`);
     }
     await new Promise((resolve) => setTimeout(resolve, this.inputDelay));
-    this.active -= 1;
+    this.activeInputs -= 1;
   }
 }
 
@@ -193,7 +213,7 @@ async function renderedJpegs(page: Page): Promise<string[]> {
 }
 
 async function until(condition: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100 && !condition(); attempt += 1)
+  for (let attempt = 0; attempt < 300 && !condition(); attempt += 1)
     await new Promise((resolve) => setTimeout(resolve, 50));
   assert.ok(condition());
 }
@@ -208,19 +228,25 @@ function near(value: unknown, expected: number): void {
   assert.ok(typeof value === "number" && Math.abs(value - expected) <= 2, String(value));
 }
 
+async function nextFrames(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      }),
+  );
+}
+
 async function screenClick(page: Page): Promise<void> {
   const rect = await page.getByRole("img", { name: "Live browser screen" }).boundingBox();
   assert.ok(rect);
   await page.mouse.click(rect.x + rect.width / 2, rect.y + rect.height / 2);
   await page.keyboard.press("x");
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) =>
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => resolve());
-        }),
-      ),
-  );
+  await nextFrames(page);
 }
 
 async function exerciseInput(page: Page, endpoint: BrowserEndpoint): Promise<void> {
@@ -268,8 +294,25 @@ async function exerciseInput(page: Page, endpoint: BrowserEndpoint): Promise<voi
   await page.mouse.up();
   await screenClick(page);
   await until(() => delivered(endpoint, { t: "key", type: "keyUp", key: "x" }).length === 1);
-  assert.equal(delivered(endpoint, { t: "mouse", type: "mousePressed" }).length, 2);
+  const presses = delivered(endpoint, { t: "mouse", type: "mousePressed" });
+  assert.equal(presses.length, 2);
+  assert.equal(presses[1]?.["clickCount"], 1);
   assert.equal(delivered(endpoint, { t: "mouse", type: "mouseReleased" }).length, 2);
+}
+
+async function exerciseTabSwitch(page: Page, endpoint: BrowserEndpoint): Promise<void> {
+  endpoint.order.length = 0;
+  endpoint.inputDelay = 400;
+  await screenClick(page);
+  await until(() => endpoint.activeInputs > 0);
+  await page.keyboard.down("Shift");
+  await page.getByRole("button", { name: "Workshop" }).click();
+  await page.keyboard.up("Shift");
+  await until(() => endpoint.order.includes("tab"));
+  assert.equal(endpoint.activeInputsAtTab, 0);
+  const release = endpoint.order.indexOf("key:keyUp:Shift");
+  assert.ok(release >= 0 && release < endpoint.order.indexOf("tab"));
+  endpoint.inputDelay = 0;
 }
 
 async function exerciseOutage(page: Page, endpoint: BrowserEndpoint): Promise<void> {
@@ -277,7 +320,16 @@ async function exerciseOutage(page: Page, endpoint: BrowserEndpoint): Promise<vo
   const batches = endpoint.events.length;
   endpoint.startOutage();
   await page.getByText("Browser connection interrupted").waitFor();
+  await until(() => endpoint.rejected > 0);
+  const opens = endpoint.streamOpens;
   endpoint.endOutage();
+  await until(() => endpoint.streamOpens > opens);
+  await page.mouse.click(300, 250);
+  await page.keyboard.press("x");
+  await nextFrames(page);
+  assert.equal(endpoint.events.length, batches);
+  await page.getByText("Browser connection interrupted").waitFor();
+  endpoint.releaseState();
   await page.getByText("You’re in control").waitFor();
   assert.equal(endpoint.commands.length, commands);
   assert.equal(endpoint.events.length, batches);
@@ -285,7 +337,7 @@ async function exerciseOutage(page: Page, endpoint: BrowserEndpoint): Promise<vo
   await until(() => endpoint.events.length > batches);
 }
 
-test("the board watches lanes and only drives after stream confirmation, until control is returned or lost", async (t) => {
+async function launch(t: TestContext) {
   const browser = await chromium.launch();
   t.after(() => browser.close());
   const drawing = await openBoardPage(t, browser, { width: 480, height: 300 });
@@ -307,7 +359,13 @@ test("the board watches lanes and only drives after stream confirmation, until c
     CARDD_BROWSER_TOKEN_FILE: token,
   });
   const page = await openBoardPage(t, browser);
-  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/"));
+  const base = cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");
+  return { endpoint, jpeg, page, base };
+}
+
+test("the board watches lanes and only drives after stream confirmation, until control is returned or lost", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
+  await page.goto(base);
   await page.getByRole("link", { name: "Browsers" }).click();
   await page.getByRole("link", { name: "garden Ready to watch" }).click();
   await page.getByText("Watching · Read only").waitFor();
@@ -345,9 +403,7 @@ test("the board watches lanes and only drives after stream confirmation, until c
   await screenClick(page);
   assert.equal((await input).status(), 204);
   await exerciseInput(page, endpoint);
-  endpoint.inputDelay = 400;
-  await screenClick(page);
-  await page.getByRole("button", { name: "Workshop" }).click();
+  await exerciseTabSwitch(page, endpoint);
   await page.waitForFunction(
     (next) =>
       document.querySelector(".browser-surface img")?.getAttribute("src") ===
@@ -358,8 +414,6 @@ test("the board watches lanes and only drives after stream confirmation, until c
     await page.getByRole("button", { name: "Workshop" }).getAttribute("aria-current"),
     "true",
   );
-  assert.equal(endpoint.activeInputsAtTab, 0);
-  endpoint.inputDelay = 0;
 
   await exerciseOutage(page, endpoint);
 
@@ -379,4 +433,22 @@ test("the board watches lanes and only drives after stream confirmation, until c
   await screenClick(page);
   assert.equal(sent.length, before);
   assert.equal(await page.getByText("viewer does not hold control").count(), 0);
+});
+
+test("leaving the board right after Take control does not leave the viewer holding control", async (t) => {
+  const { endpoint, page, base } = await launch(t);
+  endpoint.commandDelay = 300;
+  await page.goto(`${base}#/browser/garden`);
+  await page.getByText("Watching · Read only").waitFor();
+  const issued = page.waitForRequest((request) =>
+    new URL(request.url()).pathname.endsWith("/command"),
+  );
+  await page.getByRole("button", { name: "Take control" }).click();
+  await issued;
+  await page.getByRole("link", { name: "‹ Browsers" }).click();
+  await until(() => endpoint.commands.length === 2);
+  assert.deepEqual(endpoint.commands, [
+    { t: "control", on: true },
+    { t: "control", on: false },
+  ]);
 });
