@@ -30,6 +30,20 @@ export const MAINTENANCE_OPS = {
     args: Type.Object({ batch: Batch, kind: Type.Enum(MAINTENANCE_KINDS) }),
     result: Rows,
   },
+  "maintenance.scoped": {
+    roles: ["mate"],
+    args: Type.Object(
+      {
+        batch: Batch,
+        hosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+      },
+      {
+        description:
+          "Requests reloads like maintenance.request, but enrolls only workers whose attempt host is in hosts and mates whose connection reported a host in hosts. A mate that reported no host, or any other session, is never enrolled. A cardd without this operation refuses it, so a scoped caller never falls back to enrolling everyone",
+      },
+    ),
+    result: Rows,
+  },
   "maintenance.status": {
     roles: ["mate"],
     args: Type.Object({ batch: Batch, failUnverified: Type.Optional(Type.Boolean()) }),

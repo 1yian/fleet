@@ -6,6 +6,7 @@ import { costLine, DAY_MS, type CostRow } from "./cost.ts";
 import { DISK_CLEARED, DISK_MESSAGE, diskWatch, type Alert } from "./disk-alarm.ts";
 import { HostUnread, HostUnreachable, records } from "./host.ts";
 import { sidebarHostName } from "./arrange.ts";
+import { firstPassHosts } from "./first-pass.ts";
 import type { Link } from "./link.ts";
 import { readLaneConfig, type LaneConfig } from "./lane-config.ts";
 import { fleet, maintenanceResult } from "./lane-maintenance-client.ts";
@@ -64,7 +65,7 @@ function placedName(host: string, row: Record<string, unknown>): string {
   return sidebarHostName(typeof row["host"] === "string" ? row["host"] : undefined);
 }
 
-function soleHosts(runningHosts: Map<string, string[]>): Map<string, string> {
+function soleHosts(runningHosts: ReadonlyMap<string, string[]>): Map<string, string> {
   const found = new Map<string, string>();
   for (const [lane, hosts] of runningHosts) {
     const [host] = hosts;
@@ -88,10 +89,13 @@ async function collectRunning(
   }
 }
 
-export async function mateHosts(config: LaneConfig): Promise<Map<string, string>> {
+export async function scopedMateHosts(
+  config: LaneConfig,
+  hosts: readonly string[],
+): Promise<Map<string, string>> {
   const here = sidebarHostName(process.env["FLEET_HOST"]);
   const runningHosts = new Map([[config.lane, [here]]]);
-  for (const host of hostsOf(config)) await collectRunning(config, host, runningHosts);
+  for (const host of hosts) await collectRunning(config, host, runningHosts);
   return soleHosts(runningHosts);
 }
 
@@ -431,13 +435,13 @@ function keepRunning(
     }
   };
   const dailyCost = costNotice(pi, config, home, isDown);
-  const tick = async (): Promise<void> => {
-    await Promise.all(hostsOf(config).map(superviseHost));
-    await dailyCost();
+  const tick = async (only?: readonly string[]): Promise<void> => {
+    await Promise.all((only ?? hostsOf(config)).map(superviseHost));
+    if (only === undefined) await dailyCost();
   };
   const timer = setInterval(() => void tick(), INTERVAL_MS);
   timer.unref();
-  void tick();
+  void tick(firstPassHosts(pi));
   pi.on("session_shutdown", () => {
     shutDown = true;
     clearInterval(timer);

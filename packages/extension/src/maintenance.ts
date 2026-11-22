@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { maintenanceLine, type Maintenance } from "@fleet/protocol";
 import { spawnDetached } from "./detached.ts";
+import { FIRST_PASS_ARG, firstPassFlagValue } from "./first-pass.ts";
 import { mateRelaunchArgs, readLaneConfig } from "./lane-config.ts";
 import type { Link } from "./link.ts";
 import { PROCESS_ARG } from "./process-id.ts";
@@ -29,6 +30,7 @@ export function relaunchSelf(
   pane: string,
   staleAt?: number,
   report?: ReloadReceipt,
+  firstPass?: readonly string[],
 ): void {
   const running = process.argv
     .slice(2)
@@ -37,11 +39,16 @@ export function relaunchSelf(
         arg !== "-c" &&
         arg !== "--continue" &&
         !arg.startsWith(STALE_RELOAD_ARG) &&
+        !arg.startsWith(FIRST_PASS_ARG) &&
         !arg.startsWith(PROCESS_ARG),
     );
   const lane = readLaneConfig(process.cwd());
   const kept = lane === undefined ? running : mateRelaunchArgs(running, lane);
-  const args = staleAt === undefined ? kept : [...kept, `${STALE_RELOAD_ARG}${String(staleAt)}`];
+  const stale = staleAt === undefined ? kept : [...kept, `${STALE_RELOAD_ARG}${String(staleAt)}`];
+  const args =
+    firstPass === undefined
+      ? stale
+      : [...stale, `${FIRST_PASS_ARG}${firstPassFlagValue(firstPass)}`];
   const direnv = lane?.direnv;
   const helper = spawnDetached(
     process.execPath,
@@ -210,9 +217,27 @@ export function maintenanceReport(rows: readonly Maintenance[]): string[] {
 
 const POLL_MS = 500;
 
+export interface ReloadScope {
+  readonly hosts: readonly string[];
+}
+
+const enroll = (link: Link, batch: string, scope: ReloadScope | undefined) =>
+  scope === undefined
+    ? link.call("maintenance.request", { batch, kind: "reload" })
+    : link.call("maintenance.scoped", { batch, hosts: [...scope.hosts] });
+
+const CARDD_WITHOUT_SCOPE =
+  "cardd answered that it has no scoped reload enrollment, so nothing was enrolled: update cardd first";
+
+const UNCONFIRMED_SCOPE =
+  "scoped reload enrollment could not be confirmed, so some sessions on the selected hosts may or may not have been enrolled: a cardd from before scoped enrollment drops the connection instead of answering, so update cardd first if it is old";
+
+const refusedScope = (error: unknown): boolean =>
+  String(error).includes("unknown operation maintenance.scoped");
+
 export async function requestAndAwait(
   link: Link,
-  kind: Maintenance["kind"],
+  scope: ReloadScope | undefined,
   batch: string,
   waitMs: number,
 ): Promise<Maintenance[]> {
@@ -222,9 +247,19 @@ export async function requestAndAwait(
   const first = async (): Promise<Maintenance[]> => {
     for (;;) {
       try {
-        return await link.call("maintenance.request", { batch, kind });
+        return await enroll(link, batch, scope);
       } catch (error) {
-        if (Date.now() > deadline) throw error;
+        if (scope !== undefined && refusedScope(error))
+          throw new Error(CARDD_WITHOUT_SCOPE, { cause: error });
+        if (Date.now() > deadline)
+          throw scope === undefined
+            ? error
+            : new Error(
+                `${UNCONFIRMED_SCOPE} (${error instanceof Error ? error.message : String(error)})`,
+                {
+                  cause: error,
+                },
+              );
         await new Promise((resolve) => setTimeout(resolve, POLL_MS));
       }
     }

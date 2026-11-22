@@ -8,7 +8,7 @@ import {
   type OpArgs,
 } from "@fleet/protocol";
 import { sanitize } from "./incident-kinds.ts";
-import { stopOf, untilOf } from "./lane-stop.ts";
+import { outcome, targets, UNSUPPORTED, type Scope, type Target } from "./maintenance-targets.ts";
 import { json, laneCardOf, addEntry, mainLane, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
@@ -33,9 +33,6 @@ const TERMINAL = "('completed', 'failed')";
 
 const IN_FLIGHT =
   "an earlier update's reload was already in progress, so this update could not verify it";
-
-const UNSUPPORTED =
-  "runs code from before safe reloads, so it was left running: restart it by hand";
 
 const batchRows = (db: DatabaseSync, batch: string): Maintenance[] =>
   rowsOf(
@@ -298,59 +295,6 @@ export function expireMaintenance(db: DatabaseSync, now: number, t: Timings): st
   ];
 }
 
-interface Target {
-  readonly id: string;
-  readonly role: "mate" | "worker";
-  readonly connected: boolean;
-  readonly supported: boolean;
-  readonly process: string | null;
-  readonly runtime: string | null;
-  readonly seen: number;
-}
-
-function targets(db: DatabaseSync, requester: string, kind: string, now: number): Target[] {
-  const rows = db
-    .prepare(
-      `SELECT s.id AS id, s.role AS role, s.process AS process, s.runtime AS runtime, s.maintenance AS supported, coalesce(s.last_seen, 0) AS seen,
-         s.stopping_until AS until, s.state IN ('idle', 'running', 'waiting') AS connected
-       FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt
-       WHERE s.id != ? AND s.state NOT IN ('starting', 'closed')
-         AND (s.role = 'mate' OR a.state = 'active')
-         AND (? = 'reload' OR s.role = 'mate')
-       ORDER BY s.role DESC, s.id`,
-    )
-    .all(requester, kind)
-    .filter((row) => stopOf(untilOf(row), now).kind === "up");
-  return rows.map((row) => ({
-    id: String(row["id"]),
-    role: row["role"] === "mate" ? "mate" : "worker",
-    connected: row["connected"] === 1,
-    supported: row["supported"] === 1,
-    process: typeof row["process"] === "string" ? row["process"] : null,
-    runtime: typeof row["runtime"] === "string" ? row["runtime"] : null,
-    seen: Number(row["seen"]),
-  }));
-}
-
-function outcome(
-  target: Target,
-  now: number,
-  t: Timings,
-): { state: "pending" | "failed"; detail: string } {
-  if (!target.connected && now - target.seen <= t.notConnected)
-    return { state: "pending", detail: "reconnecting: the request waits for it to connect" };
-  if (!target.connected)
-    return {
-      state: "failed",
-      detail: "not connected (stopped, held, or down), so it was left as it is",
-    };
-  if (!target.supported) return { state: "failed", detail: UNSUPPORTED };
-  return {
-    state: "pending",
-    detail: "waiting for a safe point: its turn and any job finish first",
-  };
-}
-
 function attach(
   db: DatabaseSync,
   batch: string,
@@ -426,12 +370,13 @@ export function requestMaintenance(
   caller: Session,
   raw: OpArgs<"maintenance.request">,
   t: Timings,
+  scope?: Scope,
 ): { value: Maintenance[]; notify: string[] } {
   if (caller.lane !== mainLane(db))
     throw new Error("only main can ask the fleet to reload or stow");
   if (raw.kind === "reload" && known(db, raw.batch))
     return { value: projected(db, batchRows(db, raw.batch)), notify: [] };
-  const notify = targets(db, caller.id, raw.kind, t.wall()).flatMap((target) =>
+  const notify = targets(db, caller.id, raw.kind, t.wall(), scope).flatMap((target) =>
     requestTarget(db, caller, raw, target, t),
   );
   return { value: projected(db, batchRows(db, raw.batch)), notify };

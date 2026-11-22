@@ -47,6 +47,7 @@ export interface LinkOptions {
   readonly token: string;
   readonly inFile: () => number[];
   readonly process?: string;
+  readonly host?: string | undefined;
   readonly running?: () => boolean;
   readonly onPush: (push: Push) => void;
   readonly onConnect: () => void;
@@ -88,6 +89,7 @@ export class Link {
         maintenance: this.options.onMaintenance !== undefined,
         running: this.options.running?.() === true,
         ...(id === undefined ? {} : { process: id }),
+        ...(this.options.host === undefined ? {} : { host: this.options.host }),
         runtime: this.runtime,
         ...(this.announced ? {} : { started: true }),
       };

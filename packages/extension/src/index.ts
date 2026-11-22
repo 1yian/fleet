@@ -39,12 +39,12 @@ import { Link, type Push } from "./link.ts";
 import { shimKillCommands } from "./shims.ts";
 import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
-import { processId } from "./process-id.ts";
 import { tierProblems } from "./prerequisites.ts";
 import { reportActivity, trackRun } from "./progress.ts";
 import { MUTABLE_TAIL } from "./cache-ttl.ts";
 import { WORKER_PROMPT } from "./prompts.ts";
 import { MaintenanceQueue, STALE_RELOAD_FLAG } from "./maintenance.ts";
+import { announcedIdentity, registerFirstPassFlag } from "./first-pass.ts";
 import { registerMate } from "./mate.ts";
 import { registerRestart } from "./restart.ts";
 import { registerQuestions } from "./questions.ts";
@@ -339,7 +339,7 @@ function start(
     url,
     token,
     inFile: () => idsInSessionFile(sessionFile),
-    process: processId(),
+    ...announcedIdentity(role),
     running: runInProgress,
     onUnreadable: (error) => {
       if (unreadable === error) return;
@@ -406,7 +406,7 @@ function start(
   }
   watchMainCardd(pi, link, { url, role, lane }, HOME());
   if (lane === "main") {
-    refreshEveryCloneOnFirstConnect(pi, link);
+    refreshEveryCloneOnFirstConnect(pi, link, HOME());
     registerUpdate(pi, HOME(), link);
     startDiscordBridge(pi, HOME(), ctx);
   }
@@ -451,6 +451,7 @@ export default function fleet(pi: ExtensionAPI): void {
     description:
       "When this process last relaunched itself because cardd's messages were unreadable",
   });
+  registerFirstPassFlag(pi);
   pi.registerFlag("fleet-bws", {
     type: "string",
     description: "Where to read this session's bws secrets, as JSON without any secret value",

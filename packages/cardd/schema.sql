@@ -263,7 +263,7 @@ CREATE TABLE sessions (
   state TEXT NOT NULL CHECK (
     state IN ('starting', 'idle', 'running', 'waiting', 'exited', 'lost', 'closed')
   ),
-  last_seen INTEGER, process TEXT, generation INTEGER NOT NULL DEFAULT 0, maintenance INTEGER NOT NULL DEFAULT 0 CHECK (maintenance IN (0, 1)), batch_since INTEGER, turn_since INTEGER, progress_at INTEGER, stopping_until INTEGER, runtime TEXT,
+  last_seen INTEGER, process TEXT, generation INTEGER NOT NULL DEFAULT 0, maintenance INTEGER NOT NULL DEFAULT 0 CHECK (maintenance IN (0, 1)), batch_since INTEGER, turn_since INTEGER, progress_at INTEGER, stopping_until INTEGER, runtime TEXT, placed_host TEXT NOT NULL DEFAULT '',
   CHECK ((role = 'worker') = (attempt IS NOT NULL))
 ) STRICT;
 
