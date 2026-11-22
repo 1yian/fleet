@@ -78,6 +78,7 @@ export class FakeDiscord {
   typings = 0;
   rejected = 0;
   transcript = "";
+  readsFail = false;
   private nextId = FIRST_ID;
   private readonly stored: Stored[] = [];
   private readonly served = new Map<string, Buffer>();
@@ -261,13 +262,18 @@ export class FakeDiscord {
       send(200, { url: `${this.origin.replace(/^http/, "ws")}/gateway`, shards: 1 });
     else if (url.pathname === channel) send(200, { id: this.channel, guild_id: this.guild });
     else if (url.pathname === `${channel}/messages` && request.method === "GET")
-      send(200, this.listed(url));
+      this.readMessages(url, send);
     else if (url.pathname === `${channel}/typing`) {
       this.typings++;
       send(204);
     } else if (url.pathname === `${channel}/messages` && request.method === "POST")
       await this.accept(request, bytes, send);
     else send(404, { message: "Unknown Channel" });
+  }
+
+  private readMessages(url: URL, send: (status: number, body?: unknown) => void): void {
+    if (this.readsFail) send(500, { message: "Internal Server Error" });
+    else send(200, this.listed(url));
   }
 
   private serveGateway(socket: WebSocket): void {

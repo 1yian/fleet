@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { isRecord } from "../lane-config.ts";
 import type { BridgeConfig } from "./config.ts";
+import type { Health } from "./health.ts";
 import { describeError, type Log } from "./log.ts";
 
 const REQUEST_MS = 30_000;
@@ -34,12 +35,18 @@ export class Discord {
   private readonly channel: string;
   private readonly authorization: string;
   private readonly log: Log;
+  private readonly health: Health;
 
-  constructor(config: Pick<BridgeConfig, "token" | "channel" | "discordUrl">, log: Log) {
+  constructor(
+    config: Pick<BridgeConfig, "token" | "channel" | "discordUrl">,
+    log: Log,
+    health: Health,
+  ) {
     this.base = config.discordUrl;
     this.channel = config.channel;
     this.authorization = `Bot ${config.token}`;
     this.log = log;
+    this.health = health;
   }
 
   private async get(path: string): Promise<unknown> {
@@ -75,6 +82,16 @@ export class Discord {
     }
   }
 
+  private async message(path: string, request: () => RequestInit): Promise<void> {
+    try {
+      await this.post(path, request);
+    } catch (error) {
+      this.health.failed("post");
+      throw error;
+    }
+    this.health.succeeded("post");
+  }
+
   private json(payload: unknown): () => RequestInit {
     return () => ({
       method: "POST",
@@ -107,15 +124,15 @@ export class Discord {
     return isRecord(newest) && typeof newest["id"] === "string" ? newest["id"] : undefined;
   }
 
-  async messagesAfter(cursor: string): Promise<readonly unknown[]> {
+  async messagesAfter(cursor: string): Promise<readonly unknown[] | undefined> {
     const body = await this.get(
       `/channels/${this.channel}/messages?after=${cursor}&limit=${String(POLL_LIMIT)}`,
     );
-    return Array.isArray(body) ? body.map((item: unknown) => item) : [];
+    return Array.isArray(body) ? body.map((item: unknown) => item) : undefined;
   }
 
   async say(text: string): Promise<void> {
-    await this.post(`/channels/${this.channel}/messages`, this.json({ content: text }));
+    await this.message(`/channels/${this.channel}/messages`, this.json({ content: text }));
   }
 
   async typing(): Promise<void> {
@@ -140,7 +157,7 @@ export class Discord {
           signal: AbortSignal.timeout(TRANSFER_MS),
         };
       };
-      await this.post(`/channels/${this.channel}/messages`, request);
+      await this.message(`/channels/${this.channel}/messages`, request);
       return true;
     } catch (error) {
       this.log(`uploading ${basename(file)} failed: ${describeError(error)}`);
