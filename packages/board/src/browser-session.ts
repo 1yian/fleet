@@ -126,7 +126,11 @@ class Viewer {
   private accept(frame: BrowserFrame): void {
     const was = this.matched();
     this.latest = frame;
-    this.trusted = !this.stated || this.current.state?.activeTab === frame.meta.targetId;
+    const { state, pending } = this.current;
+    this.trusted =
+      !this.stated ||
+      state?.activeTab === frame.meta.targetId ||
+      (typeof pending === "object" && pending.tab === frame.meta.targetId);
     this.frame(frame);
     const now = this.matched();
     if (was && !now) {
@@ -204,7 +208,10 @@ class Viewer {
     if (lost || previous?.activeTab !== state.activeTab) this.events = [];
     const moved = this.stated && previous?.activeTab !== state.activeTab;
     this.stated = true;
-    if (this.latest !== undefined && (moved || this.latest.meta.targetId !== state.activeTab)) {
+    if (
+      this.latest !== undefined &&
+      ((moved && !this.trusted) || this.latest.meta.targetId !== state.activeTab)
+    ) {
       this.latest = undefined;
       this.frame(undefined);
     }

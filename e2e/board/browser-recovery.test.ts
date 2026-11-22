@@ -257,10 +257,21 @@ test("Done stays available when the stream confirms ownership with no open tab",
   await takeControl(page, endpoint, base);
   await clickAndSettle(page, endpoint);
   endpoint.closeAllTabs();
+  await page.locator(".browser-surface").waitFor({ state: "detached" });
   await page.getByRole("button", { name: "Done", disabled: false }).waitFor();
-  assert.equal(await page.locator(".browser-surface").count(), 0);
   await page.getByRole("button", { name: "Done" }).click();
   await page.getByText("Control returned to the agent.").waitFor();
   assert.deepEqual(endpoint.commands, [{ t: "control", on: true }, { t: "done" }]);
   assert.equal(endpoint.controlled, false);
+});
+
+test("a frame for the requested tab that arrives before its state is kept", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  endpoint.sendFrameBeforeState();
+  await page.getByRole("button", { name: "Workshop" }).click();
+  await page
+    .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
+    .waitFor();
 });
