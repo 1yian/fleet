@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { basename } from "node:path";
 import type { GroqSpeech, LocalSpeech, SpeechConfig } from "./config.ts";
+import type { Health } from "./health.ts";
 import { describeError, type Log } from "./log.ts";
 
 const TRANSCRIBE_MS = 120_000;
@@ -98,15 +99,17 @@ async function viaGroq(speech: GroqSpeech, file: string): Promise<string> {
   return (await response.text()).trim();
 }
 
-export function transcriber(speech: SpeechConfig, log: Log): Transcribe {
+export function transcriber(speech: SpeechConfig, log: Log, health: Health): Transcribe {
   return async (file) => {
     try {
       const text =
         speech.engine === "groq" ? await viaGroq(speech, file) : await viaWhisper(speech, file);
       if (text === "") log("transcription found no speech");
+      health.spoke(text === "" ? "no speech" : "ok");
       return text === "" ? undefined : text;
     } catch (error) {
       log(`transcription failed: ${describeError(error)}`);
+      health.spoke("failed");
       return undefined;
     }
   };

@@ -6,7 +6,8 @@ import { bridgeSettings, CAPTAIN, EXTENSION, ONLINE, userTexts } from "../suppor
 import { Cardd } from "../support/cardd.ts";
 import { FakeDiscord } from "../support/fake-discord.ts";
 import { FakeWhisper } from "../support/fake-whisper.ts";
-import { Harness, poll } from "../support/harness.ts";
+import { askBridge, isStamp, waitForStatus } from "../support/bridge-status.ts";
+import { Harness, poll, type Pi } from "../support/harness.ts";
 
 const VOICE_MESSAGE = 8192;
 const RECORDING = Buffer.from("4f676753000200000000000000000000", "hex");
@@ -26,8 +27,10 @@ afterEach(async () => {
   await cardd.stop();
 });
 
-async function startMain(settings: Record<string, string>): Promise<void> {
-  h.startPi(
+const home = (): string => join(h.dir, "work");
+
+async function startMain(settings: Record<string, string>): Promise<Pi> {
+  const pi = h.startPi(
     "main",
     {
       FLEET_URL: cardd.url,
@@ -39,6 +42,19 @@ async function startMain(settings: Record<string, string>): Promise<void> {
     [EXTENSION],
   );
   await discord.waitForPost((post) => post.content === ONLINE, "the online notice");
+  return pi;
+}
+
+async function assertSpoke(pi: Pi, engine: string, result: string): Promise<void> {
+  const read = await waitForStatus(home(), `speech to report ${result}`, (status) =>
+    isStamp(status("speech.at")),
+  );
+  assert.equal(read("speech.engine"), engine);
+  assert.equal(read("speech.result"), result);
+  assert.match(
+    await askBridge(pi),
+    new RegExp(`speech \\(${engine}\\): last result ${result}, \\S+`),
+  );
 }
 
 const voiceNote = (): void => {
@@ -60,7 +76,7 @@ const logged = (text: string): Promise<string> =>
 test("a voice message is transcribed on the host by whisper.cpp, with no network call", async () => {
   const whisper = new FakeWhisper(["move the standup", "to noon"]);
   h.onModel(() => ({ text: "Moved." }));
-  await startMain({ ...whisper.env, BRIDGE_WHISPER_LANGUAGE: "en" });
+  const pi = await startMain({ ...whisper.env, BRIDGE_WHISPER_LANGUAGE: "en" });
 
   voiceNote();
   assert.equal(userTexts(await h.waitForCall(0)).at(-1), "move the standup to noon");
@@ -80,6 +96,7 @@ test("a voice message is transcribed on the host by whisper.cpp, with no network
   assert.equal(existsSync(wav), false, "the converted audio was left behind");
   assert.deepEqual(readFileSync(input), RECORDING);
   assert.deepEqual(discord.transcriptions, []);
+  await assertSpoke(pi, "local", "ok");
 });
 
 test("the language is detected unless BRIDGE_WHISPER_LANGUAGE names one", async () => {
@@ -97,7 +114,7 @@ test("a voice message is transcribed by Groq only when BRIDGE_STT is groq", asyn
   discord.transcript = "move the standup to noon";
   const whisper = new FakeWhisper(["not this one"]);
   h.onModel(() => ({ text: "Moved." }));
-  await startMain({
+  const pi = await startMain({
     ...whisper.env,
     BRIDGE_STT: "groq",
     BRIDGE_GROQ_API_KEY: discord.groqKey,
@@ -122,6 +139,7 @@ test("a voice message is transcribed by Groq only when BRIDGE_STT is groq", asyn
     ],
   );
   assert.deepEqual([whisper.calls("ffmpeg"), whisper.calls("whisper-cli")], [[], []]);
+  await assertSpoke(pi, "groq", "ok");
 });
 
 test("a Groq key alone does not send the audio to Groq", async () => {
@@ -145,7 +163,7 @@ async function assertUntranscribed(
 ): Promise<void> {
   const whisper = new FakeWhisper(["unused"]);
   h.onModel(() => ({ text: "Noted." }));
-  await startMain({ ...whisper.env, ...settings(whisper) });
+  const pi = await startMain({ ...whisper.env, ...settings(whisper) });
 
   voiceNote();
   const text = userTexts(await h.waitForCall(0)).at(-1) ?? "";
@@ -154,6 +172,7 @@ async function assertUntranscribed(
   );
   assert.match(text, reference);
   assert.match(await logged("transcription failed"), why);
+  await assertSpoke(pi, "local", "failed");
 }
 
 test("a model file that is missing leaves the voice message as a file, and the log says so", async () => {
