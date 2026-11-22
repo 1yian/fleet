@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
-import type { Session } from "./cardd.ts";
+import type { Card } from "@fleet/protocol";
+import type { Cardd, Session } from "./cardd.ts";
 import { begin, newCard, startFleet } from "./fleet.ts";
 import { Lavish } from "./lavish.ts";
 import { Edge, Site } from "./public-host.ts";
@@ -73,3 +74,30 @@ export const verdictOf = (prompt: string) => ({
   prompts: [{ uid: "1", tag: "verdict", prompt, selector: "#v" }],
   endSession: false,
 });
+
+export async function handOffKey(
+  lab: { cardd: Cardd; mate: Session; worker: Session },
+  card: Card,
+  holdEntry: number,
+  reviewKey: string,
+): Promise<void> {
+  const { cardd, mate, worker } = lab;
+  assert.equal(
+    await cardd.act(card.id, {
+      kind: "answer",
+      hold: holdEntry,
+      choice: "Continue",
+      written: true,
+    }),
+    200,
+  );
+  await mate.call("comment", {
+    card: card.id,
+    text: `The review of ${reviewKey} is resolved, the next round follows`,
+    resolves: reviewKey,
+  });
+  await worker.waitForEntry(
+    (entry) => entry.kind === "comment" && entry.fields["resolves"] === reviewKey,
+    `the mate's resolution of ${reviewKey}`,
+  );
+}

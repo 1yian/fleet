@@ -124,8 +124,9 @@ test("a deferred hold that never took over does not keep the source from another
     (entry) => entry.fields["fleetReview"] === true,
     "the other card taking over while the first never had",
   );
+  const { entries } = check(OPS.card.result, await main.call("card", { card: card.id }));
   assert.deepEqual(
-    first.entries.filter(({ entry }) => entry.body === "never"),
+    entries.filter((entry) => entry.fields["fleetReview"] === true),
     [],
   );
 });

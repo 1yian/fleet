@@ -3,7 +3,14 @@ import { test } from "node:test";
 import { check, OPS } from "@fleet/protocol";
 import { begin, newCard, startFleet, status } from "../support/fleet.ts";
 import { Site } from "../support/public-host.ts";
-import { labFor, post, reviewSource, verdictOf, viaEdge } from "../support/review-source-lab.ts";
+import {
+  handOffKey,
+  labFor,
+  post,
+  reviewSource,
+  verdictOf,
+  viaEdge,
+} from "../support/review-source-lab.ts";
 
 const rounds = [
   {
@@ -97,15 +104,7 @@ test("successive stock Lavish submissions reach the Fleet worker inbox once per 
     assert.equal(hold.entry, feedback.fields["round"]);
     const next = rounds[index + 1];
     if (next !== undefined && next.reviewKey !== reviewKey) {
-      assert.equal(
-        await cardd.act(card.id, {
-          kind: "answer",
-          hold: hold.entry,
-          choice: round.submit,
-          written: true,
-        }),
-        200,
-      );
+      await handOffKey({ cardd, mate: main, worker }, card, hold.entry, reviewKey);
     }
   }
   assert.equal(await status(main, unmapped), "needs-you");
