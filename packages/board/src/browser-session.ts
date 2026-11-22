@@ -37,9 +37,12 @@ type Status = {
   readonly pending?: Pending | undefined;
   readonly notice?: string | undefined;
   readonly offline?: boolean | undefined;
+  readonly fenced?: boolean | undefined;
 };
 
 const LOST = "Control ended. You’re watching again.";
+const AMBIGUOUS =
+  "The last change may not have finished. You can keep watching, but reload this page before taking control again.";
 
 function commandFor(pending: Pending): BrowserCommand {
   if (pending === "take") return { t: "control", on: true };
@@ -63,6 +66,9 @@ class Viewer {
   private events: BrowserInput[] = [];
   private readonly held = new Map<string, BrowserInput>();
   private mutation: Promise<number> = Promise.resolve(0);
+  private mutating = false;
+  private quarantined = false;
+  private epoch = 0;
   private issuedTake = false;
   private scheduled = 0;
   private sending = false;
@@ -70,19 +76,31 @@ class Viewer {
 
   private readonly lane: string;
   private readonly show: (status: Status) => void;
+  private readonly frame: (frame: BrowserFrame | undefined) => void;
 
-  constructor(lane: string, show: (status: Status) => void, frame: (frame: BrowserFrame) => void) {
+  constructor(
+    lane: string,
+    show: (status: Status) => void,
+    frame: (frame: BrowserFrame | undefined) => void,
+  ) {
     this.lane = lane;
     this.show = show;
+    this.frame = frame;
     const viewer = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
       byte.toString(16).padStart(2, "0"),
     ).join("");
     this.suffix = `?viewer=${viewer}`;
     this.stream = openStream(this.url("stream"), {
       failed: () => {
-        this.invalidateCommand();
+        this.epoch += 1;
+        this.frame(undefined);
         this.discard();
-        this.set({ offline: true, notice: this.current.notice });
+        if (!this.mutating) this.invalidateCommand();
+        this.set({
+          offline: true,
+          pending: this.mutating ? this.current.pending : undefined,
+          notice: this.current.notice,
+        });
       },
       wire: (source, ready) => {
         jsonEvent(
@@ -94,7 +112,7 @@ class Viewer {
             this.confirm(state);
           },
         );
-        jsonEvent(source, "frame", (raw) => check(BrowserFrameSchema, raw), frame);
+        jsonEvent(source, "frame", (raw) => check(BrowserFrameSchema, raw), this.frame);
       },
     });
   }
@@ -106,7 +124,15 @@ class Viewer {
   private set(status: Status): void {
     if (this.closed) return;
     this.current = status;
-    this.show(status);
+    this.show({ ...status, fenced: this.mutating || this.quarantined });
+  }
+
+  private reopen(notice: string | undefined): void {
+    this.epoch += 1;
+    this.frame(undefined);
+    this.discard();
+    this.set({ offline: true, notice });
+    this.stream.restart();
   }
 
   private discard(): void {
@@ -175,37 +201,65 @@ class Viewer {
     }
   }
 
+  private canCommand(pending: Pending, state: BrowserState): boolean {
+    return (
+      !this.mutating &&
+      this.current.pending === undefined &&
+      state.viewer.controlling === (pending !== "take") &&
+      (!this.quarantined || pending === "done")
+    );
+  }
+
   async command(pending: Pending): Promise<void> {
     const state = this.current.state;
-    if (
-      state === undefined ||
-      this.current.pending !== undefined ||
-      state.viewer.controlling !== (pending !== "take")
-    )
-      return;
+    if (state === undefined || !this.canCommand(pending, state)) return;
     this.set({ state, pending });
     const ticket = ++this.ticket;
-    const unconfirmed = (): void => {
-      if (this.ticket !== ticket) return;
-      this.invalidateCommand();
-      this.discard();
-      this.set({ offline: true, notice: commandError(pending) });
-      this.stream.restart();
-    };
     await this.settle();
     if (this.ticket !== ticket) return;
     if (pending === "take") this.issuedTake = true;
+    const epoch = this.epoch;
+    const code = await this.mutate(pending);
+    this.resolve(pending, ticket, epoch, code);
+  }
+
+  private async mutate(pending: Pending): Promise<number> {
+    this.mutating = true;
     const posting = this.post("command", commandFor(pending));
     this.mutation = posting;
     const code = await posting;
+    this.mutating = false;
+    if (code !== 204 && code !== 409) this.quarantined = true;
+    return code;
+  }
+
+  private unconfirmed(pending: Pending, ticket: number): void {
     if (this.ticket !== ticket) return;
-    if (code === 204) this.confirmationTimer = window.setTimeout(unconfirmed, 5000);
-    else unconfirmed();
+    this.invalidateCommand();
+    this.reopen(commandError(pending));
+  }
+
+  private resolve(pending: Pending, ticket: number, epoch: number, code: number): void {
+    if (this.closed) return;
+    const ambiguous = code !== 204 && code !== 409;
+    if (ambiguous || this.epoch !== epoch) {
+      this.invalidateCommand();
+      this.reopen(
+        ambiguous ? AMBIGUOUS : code === 409 ? commandError(pending) : this.current.notice,
+      );
+    } else if (this.ticket !== ticket) this.set(this.current);
+    else if (code === 204)
+      this.confirmationTimer = window.setTimeout(() => {
+        this.unconfirmed(pending, ticket);
+      }, 5000);
+    else this.unconfirmed(pending, ticket);
   }
 
   private canDrive(): boolean {
     return (
       !this.closed &&
+      !this.mutating &&
+      !this.quarantined &&
       this.current.pending === undefined &&
       this.current.state?.viewer.controlling === true
     );
@@ -279,7 +333,7 @@ class Viewer {
 
 export function useBrowserViewer(lane: string) {
   const [status, setStatus] = useState<Status>({});
-  const [frame, setFrame] = useState<BrowserFrame>();
+  const [frame, setFrame] = useState<BrowserFrame | undefined>();
   const viewer = useRef<Viewer>(null);
   useEffect(() => {
     const next = new Viewer(lane, setStatus, setFrame);
