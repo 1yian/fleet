@@ -42,6 +42,7 @@ type Status = {
 };
 
 const LOST = "Control ended. You’re watching again.";
+const CHANGED = "The remote browser changed before your request went through. Try again.";
 const AMBIGUOUS =
   "The last change may not have finished, so input and control changes are off. You can keep watching. Leave this page to hand control back to the agent.";
 
@@ -72,6 +73,7 @@ class Viewer {
   private recovering = false;
   private latest: BrowserFrame | undefined;
   private authority = 0;
+  private queuedAuthority = 0;
   private confirmedKey: string | undefined;
   private epoch = 0;
   private issuedTake = false;
@@ -223,6 +225,7 @@ class Viewer {
     if (key !== this.confirmedKey) {
       this.confirmedKey = key;
       this.authority += 1;
+      this.events = [];
       this.remote.clear();
     }
     this.set({
@@ -263,11 +266,17 @@ class Viewer {
     if (state === undefined || !this.canCommand(pending, state)) return;
     this.set({ state, pending });
     const ticket = ++this.ticket;
+    const authority = this.authority;
     await this.settle();
     if (this.ticket !== ticket) return;
     if (this.quarantined) {
       this.invalidateCommand();
       this.reopen(AMBIGUOUS);
+      return;
+    }
+    if (this.authority !== authority || !this.matched()) {
+      this.invalidateCommand();
+      this.set({ state: this.current.state, notice: CHANGED });
       return;
     }
     if (pending === "take") this.issuedTake = true;
@@ -333,7 +342,7 @@ class Viewer {
       event.type === "mouseMoved"
     )
       this.events.pop();
-    this.events.push(event);
+    this.enqueue([event]);
     this.schedule();
   }
 
@@ -343,6 +352,20 @@ class Viewer {
       this.scheduled = 0;
       this.flush();
     });
+  }
+
+  private enqueue(events: BrowserInput[]): void {
+    if (this.events.length === 0) this.queuedAuthority = this.authority;
+    this.events.push(...events);
+  }
+
+  private deliverable(): boolean {
+    return (
+      this.queuedAuthority === this.authority &&
+      !this.mutating &&
+      this.matched() &&
+      this.current.state?.viewer.controlling === true
+    );
   }
 
   private flush(): void {
@@ -365,6 +388,10 @@ class Viewer {
   }
 
   private send(): void {
+    if (!this.deliverable()) {
+      this.events = [];
+      return;
+    }
     this.sending = true;
     const authority = this.authority;
     const batch = this.events.splice(0, 40);
@@ -392,7 +419,7 @@ class Viewer {
       if (this.sending) await this.inflight;
       else {
         if (this.events.length === 0 && this.authorised(epoch))
-          this.events.push(...this.remote.values());
+          this.enqueue([...this.remote.values()]);
         if (this.events.length === 0) return;
         this.send();
       }
