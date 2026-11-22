@@ -59,7 +59,7 @@ export class Cardd {
   private supervised = false;
   private readonly processes = new Map<string, string>();
   readonly startNewProcess = (token: string): boolean => this.processes.delete(token);
-  private readonly env: NodeJS.ProcessEnv;
+  readonly env: NodeJS.ProcessEnv;
   output = "";
   errors = "";
   private readonly pidFile = join(tempDir("fleet-keepalive-"), "cardd.pid");

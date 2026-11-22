@@ -142,7 +142,7 @@ function formatSourceReview(entry: Entry, card: string): string {
       ? "Lavish session ended"
       : ended === false
         ? "Lavish session still open"
-        : "Lavish session state unknown after a reconnect";
+        : "Lavish session state unknown";
   return `[fleet] Lavish feedback on ${card} [${keys}] (${state}; ${noted}):\n${entry.body}`;
 }
 

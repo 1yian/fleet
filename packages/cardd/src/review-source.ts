@@ -29,17 +29,20 @@ type ChatState = Static<typeof Chat>;
 
 interface Binding {
   readonly card: number;
+  readonly identity: string;
   readonly round: number;
   readonly reviewKeys: readonly string[];
   readonly session: string;
+  readonly question: string;
+  readonly requests: readonly number[];
   readonly source: URL;
   readonly worker: string;
 }
 
 interface Moment {
   readonly chat: ChatState | undefined;
+  readonly sessionEnded: boolean | null;
   readonly ended: boolean;
-  readonly replay: boolean;
 }
 
 interface Submission {
@@ -68,14 +71,14 @@ function submissions(chat: ChatState): Submission[] {
 const promptIds = (chat: ChatState | undefined): string[] =>
   chat === undefined ? [] : submissions(chat).flatMap(({ prompts }) => prompts.map(({ id }) => id));
 
-function seenPrompts(entries: readonly Entry[], session: string): ReadonlySet<string> {
+function seenPrompts(entries: readonly Entry[], { source }: Binding): ReadonlySet<string> {
   return new Set(
     entries.flatMap(({ author, kind, fields }) => {
       const prompts = fields["sourcePrompts"];
       if (
         author !== AUTHOR ||
         kind !== "review-feedback" ||
-        fields["session"] !== session ||
+        fields["upstream"] !== source.href ||
         !Array.isArray(prompts)
       )
         return [];
@@ -84,28 +87,20 @@ function seenPrompts(entries: readonly Entry[], session: string): ReadonlySet<st
   );
 }
 
-function recordedNotice(entries: readonly Entry[], { round, worker }: Binding): boolean {
-  return entries.some(
+function noticeFor(entries: readonly Entry[], { requests, source }: Binding): Entry[] {
+  return entries.filter(
     ({ author, kind, fields }) =>
       author === "fleet" &&
       kind === "note" &&
       fields["fleetReview"] === true &&
-      fields["round"] === round &&
-      fields["worker"] === worker,
+      fields["upstream"] === source.href &&
+      JSON.stringify(fields["requests"]) === JSON.stringify(requests),
   );
 }
 
-function baselineOf(
-  entries: readonly Entry[],
-  { round }: Binding,
-): ReadonlySet<string> | undefined {
-  const baseline = entries.find(
-    ({ author, kind, fields }) =>
-      author === "fleet" &&
-      kind === "note" &&
-      fields["fleetReview"] === true &&
-      fields["round"] === round &&
-      Array.isArray(fields["baseline"]),
+function baselineOf(entries: readonly Entry[], binding: Binding): ReadonlySet<string> | undefined {
+  const baseline = noticeFor(entries, binding).find(({ fields }) =>
+    Array.isArray(fields["baseline"]),
   )?.fields["baseline"];
   return Array.isArray(baseline)
     ? new Set(baseline.filter((id) => typeof id === "string"))
@@ -131,6 +126,7 @@ function addReceipt(
         round: binding.round,
         reviewKeys: binding.reviewKeys,
         session: binding.session,
+        upstream: binding.source.href,
         sessionEnded,
         sourcePrompts: prompts,
       },
@@ -139,46 +135,28 @@ function addReceipt(
   );
 }
 
-function appendPrompts(
+function appendFeedback(
   db: DatabaseSync,
   binding: Binding,
   entries: readonly Entry[],
-  { chat, ended, replay }: Moment,
+  { chat, sessionEnded, ended }: Moment,
   baseline: ReadonlySet<string>,
-): { added: boolean; told: boolean } {
-  const batches = chat === undefined ? [] : submissions(chat);
-  const seen = seenPrompts(entries, binding.session);
-  const last = batches.at(-1);
-  const pending = batches
-    .map((batch) => ({
-      batch,
-      fresh: batch.prompts.filter(({ id }) => !seen.has(id) && !baseline.has(id)),
-    }))
-    .filter(({ fresh }) => fresh.length > 0);
-  for (const { batch, fresh } of pending) {
+): boolean {
+  const seen = seenPrompts(entries, binding);
+  const pending = (chat === undefined ? [] : submissions(chat))
+    .map(({ prompts }) => prompts.filter(({ id }) => !seen.has(id) && !baseline.has(id)))
+    .filter((fresh) => fresh.length > 0);
+  if (ended) addReceipt(db, binding, "", [], true);
+  for (const fresh of pending) {
     addReceipt(
       db,
       binding,
       fresh.map(({ text }) => text).join("\n\n"),
       fresh.map(({ id }) => id),
-      replay ? null : ended && batch === last,
+      sessionEnded,
     );
   }
-  const told = ended && last !== undefined && pending.at(-1)?.batch === last;
-  return { added: pending.length > 0, told };
-}
-
-function appendFeedback(
-  db: DatabaseSync,
-  binding: Binding,
-  entries: readonly Entry[],
-  moment: Moment,
-  baseline: ReadonlySet<string>,
-): boolean {
-  const { added, told } = appendPrompts(db, binding, entries, moment, baseline);
-  if (!moment.ended || told) return added;
-  addReceipt(db, binding, "", [], true);
-  return true;
+  return ended || pending.length > 0;
 }
 
 async function mapped(source: URL): Promise<boolean> {
@@ -206,8 +184,8 @@ function listen(
   let initial: ChatState | undefined;
   let fenced = false;
   let ready = false;
-  let ending = false;
   let open = true;
+  let ambiguous = false;
   let known = new Set<string>();
   const waiting: Moment[] = [];
   const deliver = (moment: Moment) => {
@@ -228,53 +206,50 @@ function listen(
   socket.on("error", () => undefined);
   socket.on("close", closed);
   socket.on("pong", () => {
-    if (!fenced) {
-      fenced = true;
-      known = new Set(promptIds(initial));
-      deliver({ chat: initial, ended: false, replay: true });
-      void mapped(source).then((present) => {
-        if (!present) {
-          socket.terminate();
-          return;
-        }
-        ready = true;
-        for (const moment of waiting.splice(0)) deliver(moment);
-      });
-    } else if (ending) {
-      ending = false;
-      if (open) {
-        open = false;
-        deliver({ chat: undefined, ended: true, replay: false });
+    if (fenced) return;
+    fenced = true;
+    known = new Set(promptIds(initial));
+    deliver({ chat: initial, sessionEnded: null, ended: false });
+    void mapped(source).then((present) => {
+      if (!present) {
+        socket.terminate();
+        return;
       }
-    }
+      ready = true;
+      for (const moment of waiting.splice(0)) deliver(moment);
+    });
   });
+  const ended = () => {
+    if (!fenced) open = false;
+    else if (open) {
+      open = false;
+      ambiguous = true;
+      deliver({ chat: undefined, sessionEnded: null, ended: true });
+    }
+  };
+  const synced = (chat: ChatState) => {
+    if (!fenced) {
+      if (initial === undefined) socket.ping();
+      initial = chat;
+      return;
+    }
+    const ids = promptIds(chat);
+    if (ids.some((id) => !known.has(id))) {
+      if (!ambiguous) open = true;
+      deliver({ chat, sessionEnded: ambiguous ? null : false, ended: false });
+      ambiguous = false;
+    }
+    known = new Set(ids);
+  };
   socket.on("message", (raw: Buffer) => {
     try {
       const message = check(Event, JSON.parse(raw.toString("utf8")));
-      if (message.type === "ended") {
-        if (fenced) {
-          ending = true;
-          socket.ping();
-        } else open = false;
-      }
+      if (message.type === "ended") ended();
       if (message.type !== "chat-sync") return;
       const chat = check(Chat, message.data);
       if (chat.chat_revision <= revision) return;
       revision = chat.chat_revision;
-      if (!fenced) {
-        if (initial === undefined) socket.ping();
-        initial = chat;
-      } else {
-        const ids = promptIds(chat);
-        const submitted = ids.some((id) => !known.has(id));
-        known = new Set(ids);
-        const ended = ending && submitted;
-        if (submitted) {
-          open = !ended;
-          ending = false;
-        }
-        deliver({ chat, ended, replay: false });
-      }
+      synced(chat);
     } catch (error) {
       console.warn(`Lavish source feedback for c-${String(binding.card)} could not be read`, error);
       socket.terminate();
@@ -282,6 +257,9 @@ function listen(
   });
   return socket;
 }
+
+const same = (a: Binding | undefined, b: Binding | undefined): boolean =>
+  a?.identity === b?.identity && a?.worker === b?.worker;
 
 export class SourceReviews {
   private readonly candidates = new Set<number>();
@@ -330,21 +308,31 @@ export class SourceReviews {
     if (source === undefined || !reviewDecision(entries, hold)) return undefined;
     const worker = workerOf(this.db, card);
     if (worker === undefined) return undefined;
+    const requests = hold.reviewRequests ?? [];
     return {
       card,
+      identity: JSON.stringify([source.href, requests]),
       round: hold.entry,
       reviewKeys: hold.keys,
+      question: hold.question,
+      requests,
       worker,
       source,
       session: hold.review,
     };
   }
 
+  private owned(card: number, { source }: Binding): boolean {
+    return [...this.watching].some(
+      ([other, { binding }]) => other !== card && binding.source.href === source.href,
+    );
+  }
+
   private refreshCard(card: number): void {
-    const binding = this.binding(card);
+    const found = this.binding(card);
     const watching = this.watching.get(card);
-    if (watching?.binding.round === binding?.round && watching?.binding.worker === binding?.worker)
-      return;
+    const binding = found !== undefined && this.owned(card, found) ? undefined : found;
+    if (same(watching?.binding, binding)) return;
     this.watching.delete(card);
     watching?.socket.terminate();
     if (binding === undefined) return;
@@ -360,13 +348,15 @@ export class SourceReviews {
     this.watching.set(card, { binding, socket });
   }
 
-  private record(binding: Binding, moment: Moment): void {
-    if (this.watching.get(binding.card)?.binding !== binding) return;
+  private record(listening: Binding, moment: Moment): void {
+    if (this.watching.get(listening.card)?.binding !== listening) return;
     const changed = transaction(this.db, () => {
+      const binding = this.binding(listening.card);
+      if (binding === undefined || !same(binding, listening)) return false;
       const entries = cardEntries(this.db, binding.card);
-      const hold = factsFrom(entries).hold;
-      if (hold?.entry !== binding.round || !reviewDecision(entries, hold)) return false;
-      const notice = !recordedNotice(entries, binding);
+      const notice = !noticeFor(entries, binding).some(
+        ({ fields }) => fields["worker"] === binding.worker,
+      );
       const baseline = baselineOf(entries, binding) ?? new Set(promptIds(moment.chat));
       if (notice)
         addEntry(
@@ -375,10 +365,11 @@ export class SourceReviews {
             card: binding.card,
             author: "fleet",
             kind: "note",
-            body: hold.question,
+            body: binding.question,
             fields: {
               fleetReview: true,
-              round: binding.round,
+              requests: binding.requests,
+              upstream: binding.source.href,
               worker: binding.worker,
               baseline: [...baseline],
             },
@@ -387,6 +378,6 @@ export class SourceReviews {
         );
       return appendFeedback(this.db, binding, entries, moment, baseline) || notice;
     });
-    if (changed) this.notify(binding.worker);
+    if (changed) this.notify(listening.worker);
   }
 }

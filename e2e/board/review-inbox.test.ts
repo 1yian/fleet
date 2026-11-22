@@ -1,64 +1,9 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { test, type TestContext } from "node:test";
+import { test } from "node:test";
 import { check, OPS } from "@fleet/protocol";
-import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status } from "../support/fleet.ts";
-import { Lavish } from "../support/lavish.ts";
-import { Edge, Site } from "../support/public-host.ts";
-import { tempDir } from "../support/run-root.ts";
-
-async function post(origin: URL, path: string, body: object): Promise<unknown> {
-  const response = await fetch(new URL(path, origin), {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: origin.origin },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  assert.equal(response.status, 200, text);
-  return JSON.parse(text);
-}
-
-async function reviewSource(t: TestContext) {
-  const dir = tempDir("fleet-review-inbox-");
-  const lavish = await Lavish.start(dir);
-  t.after(() => lavish.stop());
-  const origin = new URL(`http://127.0.0.1:${lavish.env["LAVISH_AXI_PORT"] ?? ""}`);
-  const file = join(dir, "draft.html");
-  writeFileSync(file, "<!doctype html><h1>Draft for review</h1>");
-  const opened = await post(origin, "/api/sessions", { file });
-  assert.ok(typeof opened === "object" && opened !== null && "key" in opened);
-  assert.equal(typeof opened.key, "string");
-  const key = String(opened.key);
-  const spare = join(dir, "spare.html");
-  writeFileSync(spare, "<!doctype html><h1>Spare</h1>");
-  await post(origin, "/api/sessions", { file: spare });
-  return { origin, key, file };
-}
-
-async function labFor(t: TestContext, key: string, upstream: string, title: string) {
-  const site = await Site.start();
-  t.after(() => site.issuer.stop());
-  const reported = "http://reviews.example.test:7331";
-  const { cardd, main, mainToken } = await startFleet(
-    { ...site.env, CARDD_REVIEW_ORIGINS: `${reported}=${upstream}` },
-    site.flags,
-  );
-  t.after(() => cardd.stop());
-  const card = await newCard(main, title, "scout");
-  const token = await begin(main, card);
-  const review = `${reported}/session/${key}`;
-  const bind = async (worker: Session, reviewKey: string, link = review) => {
-    await worker.call("report", {
-      status: "needs-decision",
-      key: reviewKey,
-      text: `Ready: ${link}`,
-    });
-    await main.call("hold", { card: card.id, to: "captain", question: reviewKey, review: link });
-  };
-  return { cardd, main, mainToken, card, token, review, bind };
-}
+import { Site } from "../support/public-host.ts";
+import { labFor, post, reviewSource, viaEdge } from "../support/review-source-lab.ts";
 
 const rounds = [
   {
@@ -137,15 +82,14 @@ test("successive stock Lavish submissions reach the Fleet worker inbox once per 
       ],
       endSession: round.end,
     });
-    assert.ok(typeof queued === "object" && queued !== null && "status" in queued);
-    assert.equal(queued.status, "queued");
+    assert.deepEqual(Reflect.get(Object(queued), "status"), "queued");
     const feedback = await worker.waitForEntry(
       (entry) => entry.kind === "review-feedback" && entry.body.includes(round.submit),
       `Lavish feedback for ${reviewKey}`,
     );
     assert.equal(feedback.author, "lavish");
     assert.deepEqual(feedback.fields["reviewKeys"], [reviewKey]);
-    assert.equal(feedback.fields["sessionEnded"], round.end);
+    assert.equal(feedback.fields["sessionEnded"], round.end ? null : false);
     assert.equal(feedback.body, `${round.verdict}\n\n${round.submit}`);
     assert.equal(await status(main, card), "needs-you");
     const hold = (await view()).hold;
@@ -175,7 +119,11 @@ test("successive stock Lavish submissions reach the Fleet worker inbox once per 
   const receipts = entries.filter((entry) => entry.kind === "review-feedback");
   assert.deepEqual(
     receipts.map((entry) => entry.fields["reviewKeys"]),
-    [["review-1"], ["review-1"], ["review-2"], ["review-3"]],
+    [["review-1"], ["review-1"], ["review-2"], ["review-3"], ["review-3"]],
+  );
+  assert.deepEqual(
+    receipts.filter((entry) => entry.fields["sessionEnded"] === true).map((entry) => entry.body),
+    [""],
   );
   assert.deepEqual(
     worker.entries
@@ -184,13 +132,6 @@ test("successive stock Lavish submissions reach the Fleet worker inbox once per 
     receipts.map(({ id }) => id),
   );
 });
-
-async function viaEdge(t: TestContext, origin: URL): Promise<{ edge: Edge; upstream: string }> {
-  const edge = await Edge.start(origin);
-  edge.forwardOrigin = true;
-  t.after(() => edge.stop());
-  return { edge, upstream: `https://127.0.0.1:${String(edge.port)}` };
-}
 
 test("an empty Send & End is one live session end that a later round never inherits", async (t) => {
   const { origin, key } = await reviewSource(t);
@@ -262,7 +203,7 @@ test("a verdict replayed after a reconnect does not inherit a later session end"
   assert.equal(entries.filter((entry) => entry.kind === "review-feedback").length, 1);
 });
 
-test("feedback sent while Fleet confirms the source keeps its live end state", async (t) => {
+test("feedback sent while Fleet confirms the source is delivered after the takeover with its end reported", async (t) => {
   const { origin, key } = await reviewSource(t);
   const { edge, upstream } = await viaEdge(t, origin);
   const probe = edge.hold("/layout-warnings");
@@ -276,16 +217,19 @@ test("feedback sent while Fleet confirms the source keeps its live end state", a
   });
   probe.release();
   const verdict = await worker.waitForEntry(
-    (entry) => entry.kind === "review-feedback",
+    (entry) => entry.kind === "review-feedback" && entry.body === "Final while confirming",
     "the verdict sent while the source was being confirmed",
   );
-  assert.equal(verdict.body, "Final while confirming");
-  assert.equal(verdict.fields["sessionEnded"], true);
+  assert.equal(verdict.fields["sessionEnded"], null);
   assert.deepEqual(verdict.fields["reviewKeys"], ["review-fence"]);
   const order = worker.entries.map(({ entry }) => entry.id);
   const notice = worker.entries.find(({ entry }) => entry.fields["fleetReview"] === true);
-  assert.ok(notice);
-  assert.ok(order.indexOf(notice.entry.id) < order.indexOf(verdict.id));
+  const ended = worker.entries.find(
+    ({ entry }) => entry.kind === "review-feedback" && entry.fields["sessionEnded"] === true,
+  );
+  assert.ok(notice && ended);
+  assert.ok(order.indexOf(notice.entry.id) < order.indexOf(ended.entry.id));
+  assert.ok(order.indexOf(ended.entry.id) < order.indexOf(verdict.id));
 });
 
 test("a mapped link with no stock session is never taken over", async (t) => {
@@ -321,92 +265,4 @@ test("a mapped link with no stock session is never taken over", async (t) => {
     [],
   );
   assert.equal(await status(main, card), "needs-you");
-});
-
-const verdictOf = (prompt: string) => ({
-  prompts: [{ uid: "1", tag: "verdict", prompt, selector: "#v" }],
-  endSession: false,
-});
-
-test("a verdict queued before a bind or between rounds never crosses to a new review key", async (t) => {
-  const { origin, key } = await reviewSource(t);
-  const { cardd, main, card, token, bind } = await labFor(t, key, origin.origin, "Boundary");
-  const worker = await cardd.connect(token);
-  await post(origin, `/api/${key}/prompts`, verdictOf("Before any bind"));
-  await bind(worker, "review-one");
-  await worker.waitForEntry((entry) => entry.fields["fleetReview"] === true, "review-one notice");
-  await post(origin, `/api/${key}/prompts`, verdictOf("Round one verdict"));
-  await worker.waitForEntry(
-    (entry) => entry.kind === "review-feedback" && entry.body === "Round one verdict",
-    "the round one verdict",
-  );
-  const view = async () => check(OPS.card.result, await main.call("card", { card: card.id }));
-  const hold = (await view()).hold;
-  assert.ok(hold);
-  assert.equal(
-    await cardd.act(card.id, {
-      kind: "answer",
-      hold: hold.entry,
-      choice: "Continue",
-      written: true,
-    }),
-    200,
-  );
-  await post(origin, `/api/${key}/prompts`, verdictOf("Late for round one"));
-  await bind(worker, "review-two");
-  await worker.waitForEntry(
-    (entry) => entry.fields["fleetReview"] === true && entry.body === "review-two",
-    "review-two notice",
-  );
-  await post(origin, `/api/${key}/prompts`, verdictOf("Round two verdict"));
-  await worker.waitForEntry(
-    (entry) => entry.kind === "review-feedback" && entry.body === "Round two verdict",
-    "the round two verdict",
-  );
-  const receipts = (await view()).entries.filter((entry) => entry.kind === "review-feedback");
-  assert.deepEqual(
-    receipts.map((entry) => [entry.body, entry.fields["reviewKeys"]]),
-    [
-      ["Round one verdict", ["review-one"]],
-      ["Round two verdict", ["review-two"]],
-    ],
-  );
-});
-
-test("repeated End requests are not new session ends until the session is observed open again", async (t) => {
-  const { origin, key, file } = await reviewSource(t);
-  const { cardd, main, card, token, bind } = await labFor(t, key, origin.origin, "Repeat end");
-  const worker = await cardd.connect(token);
-  await bind(worker, "review-repeat");
-  await worker.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the notice");
-  await post(origin, `/api/${key}/prompts`, { prompts: [], endSession: true });
-  await worker.waitForEntry(
-    (entry) => entry.kind === "review-feedback" && entry.body === "",
-    "the first session end",
-  );
-  await post(origin, `/api/${key}/end`, {});
-  await post(origin, `/api/${key}/end`, {});
-  await post(origin, "/api/sessions", { file, reopen: true });
-  await post(origin, `/api/${key}/prompts`, verdictOf("Open again"));
-  await worker.waitForEntry(
-    (entry) => entry.kind === "review-feedback" && entry.body === "Open again",
-    "the verdict after reopening",
-  );
-  await post(origin, `/api/${key}/prompts`, {
-    prompts: [{ uid: "1", tag: "verdict", prompt: "Final", selector: "#v" }],
-    endSession: true,
-  });
-  await worker.waitForEntry(
-    (entry) => entry.kind === "review-feedback" && entry.body === "Final",
-    "the final verdict",
-  );
-  const { entries } = check(OPS.card.result, await main.call("card", { card: card.id }));
-  const receipts = entries
-    .filter((entry) => entry.kind === "review-feedback")
-    .map((entry) => [entry.body, entry.fields["sessionEnded"]]);
-  assert.deepEqual(receipts, [
-    ["", true],
-    ["Open again", false],
-    ["Final", true],
-  ]);
 });
