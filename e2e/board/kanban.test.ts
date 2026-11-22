@@ -88,6 +88,12 @@ test("the board starts directly below its view links on desktop and phone", asyn
     await shoot(`board-navigation-${String(viewport.width)}`);
     assert.equal(await page.getByRole("navigation", { name: "Lanes" }).count(), 0);
     const nav = page.getByRole("navigation", { name: "Fleet views" });
+    assert.equal(await nav.count(), 1);
+    assert.deepEqual(await nav.getByRole("link").allTextContents(), [
+      "Board",
+      "Active Workers",
+      "Analytics",
+    ]);
     assert.equal(
       await nav.getByRole("link", { name: "Board" }).getAttribute("aria-current"),
       "page",
