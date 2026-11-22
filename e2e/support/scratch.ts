@@ -126,13 +126,18 @@ export function configureMain(
   writeFileSync(join(scratch.root, "config", "lane.json"), JSON.stringify(lane));
 }
 
+export interface ObservationTiming {
+  readonly FLEET_LANE_OBSERVATION_MS: string;
+  readonly FLEET_MAINTENANCE_SWEEP_MS: string;
+}
+
 export async function startMain(
   lab: HerdrLab,
   scratch: Scratch,
   h: Harness,
   restart = false,
   args: readonly string[] = mateArgs(h),
-  env: Record<string, string> = {},
+  timing?: ObservationTiming,
 ): Promise<string> {
   const listed = records((await lab.run(["workspace", "list"]))["workspaces"]);
   const existing = listed.find((each) => each["label"] === "1stmate");
@@ -156,10 +161,10 @@ export async function startMain(
   const command = [...(restart ? ["--continue"] : []), ...args, ...probe]
     .map((arg) => `'${arg}'`)
     .join(" ");
-  const assignments = Object.entries(env).map(
-    ([name, value]) => `'${`${name}=${value}`.replaceAll("'", "'\\''")}'`,
-  );
-  const pi = assignments.length === 0 ? "pi" : `env ${assignments.join(" ")} pi`;
+  const pi =
+    timing === undefined
+      ? "pi"
+      : `env FLEET_LANE_OBSERVATION_MS='${timing.FLEET_LANE_OBSERVATION_MS}' FLEET_MAINTENANCE_SWEEP_MS='${timing.FLEET_MAINTENANCE_SWEEP_MS}' pi`;
   await lab.submit(pane, `cd '${scratch.root}' && ${pi} ${command}`);
   return pane;
 }
