@@ -160,6 +160,7 @@ class Viewer {
     if (was && !now) {
       this.frames += 1;
       this.events = [];
+      this.recovering = true;
     }
     if (was === now) return;
     this.set(this.current);
@@ -169,8 +170,9 @@ class Viewer {
   private resume(): void {
     if (this.closed || !this.recovering || !this.matched()) return;
     const epoch = this.epoch;
+    const frames = this.frames;
     void this.settle().then(() => {
-      if (this.epoch !== epoch) return;
+      if (this.epoch !== epoch || this.frames !== frames || !this.matched()) return;
       this.recovering = false;
       this.set(this.current);
     });
