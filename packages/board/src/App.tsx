@@ -5,7 +5,7 @@ import { Kanban } from "./Board.tsx";
 import { CardDetail, NoCard } from "./CardDetail.tsx";
 import { useFacts } from "./facts.ts";
 import { deviceZone, questionsByCard } from "./format.ts";
-import { useCardRoute } from "./route.ts";
+import { rememberScroll, useCardRoute } from "./route.ts";
 import { ActiveWorkers } from "./ActiveWorkers.tsx";
 
 const TICK_MS = 30_000;
@@ -135,10 +135,10 @@ function useEscape(close: () => void): void {
 function BoardNav({ workers }: { readonly workers: boolean }) {
   return (
     <nav className="board-nav" aria-label="Fleet views">
-      <a href="#/" aria-current={workers ? undefined : "page"}>
+      <a href="#/" aria-current={workers ? undefined : "page"} onClick={rememberScroll}>
         Board
       </a>
-      <a href="#/workers" aria-current={workers ? "page" : undefined}>
+      <a href="#/workers" aria-current={workers ? "page" : undefined} onClick={rememberScroll}>
         Active Workers
       </a>
     </nav>
