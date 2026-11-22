@@ -263,12 +263,15 @@ function listen(
     });
   });
   const ended = () => {
-    if (!fenced) open = false;
-    else if (open) {
+    if (!fenced) {
       open = false;
-      ambiguous = true;
+      return;
+    }
+    if (open) {
+      open = false;
       deliver({ chat: undefined, sessionEnded: null, ended: true });
     }
+    ambiguous = true;
   };
   const synced = (chat: ChatState) => {
     if (!fenced) {

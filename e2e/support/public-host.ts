@@ -203,6 +203,19 @@ export class Edge {
   private readonly server: Server;
   private gate: { path: string; arrive: () => void; open: Promise<undefined> } | undefined;
   private readonly tunnels: { path: string; close: () => void }[] = [];
+  private readonly sightings: { path: string; text: string; seen: () => void }[] = [];
+
+  frameSeen(path: string, text: string): Promise<undefined> {
+    const seen = Promise.withResolvers<undefined>();
+    this.sightings.push({
+      path,
+      text,
+      seen: () => {
+        seen.resolve(undefined);
+      },
+    });
+    return seen.promise;
+  }
 
   hold(path: string): { arrived: Promise<undefined>; release: () => void } {
     const arrived = Promise.withResolvers<undefined>();
@@ -253,6 +266,13 @@ export class Edge {
         upstream.write(head);
         socket.pipe(upstream);
         upstream.pipe(socket);
+        let tail = "";
+        upstream.on("data", (chunk: Buffer) => {
+          tail = (tail + chunk.toString("utf8")).slice(-65536);
+          for (const sighting of this.sightings)
+            if (request.url?.includes(sighting.path) === true && tail.includes(sighting.text))
+              socket.write(Buffer.alloc(0), sighting.seen);
+        });
       });
       for (const each of [socket, upstream]) {
         each.on("error", () => {

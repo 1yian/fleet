@@ -78,6 +78,31 @@ test("repeated End requests are not new ends and an end that cannot be tied to a
   ]);
 });
 
+test("a session taken over already ended and reopened is never reported as still open", async (t) => {
+  const { origin, key, file } = await reviewSource(t);
+  const { cardd, main, card, token, bind } = await labFor(t, key, origin.origin, "Reopened");
+  await post(origin, `/api/${key}/end`, {});
+  const worker = await cardd.connect(token);
+  await bind(worker, "review-reopened");
+  await worker.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the notice");
+  await post(origin, "/api/sessions", { file, reopen: true });
+  await post(origin, `/api/${key}/prompts`, {
+    prompts: [{ uid: "1", tag: "verdict", prompt: "Final after reopening", selector: "#v" }],
+    endSession: true,
+  });
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Final after reopening",
+    "the final verdict after reopening",
+  );
+  const { entries } = check(OPS.card.result, await main.call("card", { card: card.id }));
+  assert.deepEqual(
+    entries
+      .filter((entry) => entry.kind === "review-feedback")
+      .map((entry) => [entry.body, entry.fields["sessionEnded"]]),
+    [["Final after reopening", null]],
+  );
+});
+
 test("editing only a hold's question keeps its source baseline and listener", async (t) => {
   const { origin, key } = await reviewSource(t);
   const { cardd, main, card, token, bind } = await labFor(t, key, origin.origin, "Edit");
@@ -273,7 +298,7 @@ test("a replacement upstream behind the same link starts from its own baseline",
   cardd.env["CARDD_REVIEW_ORIGINS"] = `${reported}=${next.origin}`;
   await cardd.restart();
   const again = await cardd.connect(token);
-  await again.waitForEntry(
+  const replacementNotice = await again.waitForEntry(
     (entry) => entry.fields["upstream"] === `${next.origin}/session/${key}`,
     "the notice for the replacement upstream",
   );
@@ -295,7 +320,9 @@ test("a replacement upstream behind the same link starts from its own baseline",
   await cardd.restart();
   const back = await cardd.connect(token);
   await back.waitForEntry(
-    (entry) => entry.fields["upstream"] === `${origin.origin}/session/${key}`,
+    (entry) =>
+      entry.fields["upstream"] === `${origin.origin}/session/${key}` &&
+      entry.id > replacementNotice.id,
     "a new takeover notice when the first upstream returns",
   );
   await post(origin, `/api/${key}/prompts`, verdictOf("Live on the first upstream again"));

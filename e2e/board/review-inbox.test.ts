@@ -211,7 +211,9 @@ test("feedback sent before the takeover notice is not forwarded and later feedba
   const worker = await cardd.connect(token);
   await bind(worker, "review-fence");
   await probe.arrived;
+  const delivered = edge.frameSeen("/events/", "Sent before the notice");
   await post(origin, `/api/${key}/prompts`, verdictOf("Sent before the notice"));
+  await delivered;
   probe.release();
   await worker.waitForEntry(
     (entry) => entry.fields["fleetReview"] === true && entry.body === "review-fence",
