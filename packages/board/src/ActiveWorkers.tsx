@@ -24,14 +24,21 @@ interface Worker {
   readonly status: string;
 }
 
-function workerOf(card: BoardCard, staleBefore: number): Worker | undefined {
+function offlineOf(card: BoardCard, staleBefore: number): Worker | undefined {
   const { activity } = card;
-  if (card.mate || isScheduleLog(card) || activity === null) return undefined;
-  if (activity.state === "starting") return { card, group: "offline", status: "Not yet connected" };
-  if (activity.state === "lost" || activity.state === "exited")
-    return { card, group: "offline", status: "Disconnected" };
-  if (activity.state === "running" && activity.at <= staleBefore)
-    return { card, group: "offline", status: "Stale activity" };
+  if (activity === null) return undefined;
+  const status =
+    activity.state === "starting"
+      ? "Not yet connected"
+      : activity.state === "lost" || activity.state === "exited"
+        ? "Disconnected"
+        : activity.state === "running" && activity.at <= staleBefore
+          ? "Stale activity"
+          : undefined;
+  return status === undefined ? undefined : { card, group: "offline", status };
+}
+
+function liveOf(card: BoardCard, activity: NonNullable<BoardCard["activity"]>): Worker {
   const merging = card.status === "merging" && activity.state === "running";
   if (card.holder !== null || (card.status !== "working" && !merging)) {
     const approved = card.status === "merging" && card.holder === null;
@@ -44,6 +51,11 @@ function workerOf(card: BoardCard, staleBefore: number): Worker | undefined {
     group: "waiting",
     status: activity.state === "waiting" ? "Waiting on a job" : "Idle",
   };
+}
+
+function workerOf(card: BoardCard, staleBefore: number): Worker | undefined {
+  if (card.mate || isScheduleLog(card) || card.activity === null) return undefined;
+  return offlineOf(card, staleBefore) ?? liveOf(card, card.activity);
 }
 
 export function ActiveWorkers(props: {

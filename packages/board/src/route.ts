@@ -19,7 +19,7 @@ const fresh = (): string => `${String(Date.now())}-${Math.random().toString(36).
 function entry(): { readonly key: string | undefined; readonly opened: boolean } {
   const state: unknown = history.state;
   if (typeof state !== "object" || state === null) return { key: undefined, opened: false };
-  const key = Reflect.get(state, "key");
+  const key: unknown = Reflect.get(state, "key");
   return {
     key: typeof key === "string" ? key : undefined,
     opened: Reflect.get(state, "opened") === true,
