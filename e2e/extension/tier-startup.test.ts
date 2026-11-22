@@ -60,15 +60,6 @@ afterEach(async (t) => {
 
 const squeezed = (text: string): string => text.replace(/\s+/g, "");
 
-async function waitForScreen(pane: string, wanted: string, label: string): Promise<void> {
-  const deadline = Date.now() + WAIT_MS;
-  for (;;) {
-    if (squeezed(await lab.screen(pane)).includes(squeezed(wanted))) return;
-    assert.ok(Date.now() < deadline, `timed out waiting for the screen to show ${label}`);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-}
-
 async function waitForSurfaces(pane: string, status: string, label: string): Promise<void> {
   const wanted = squeezed(status);
   const deadline = Date.now() + WAIT_MS;
