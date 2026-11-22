@@ -186,23 +186,51 @@ export interface SweepSnapshot {
   readonly discovered: Discovery;
 }
 
-export function tierProblems(root: string, host: string): string[] {
+export interface TierShortfall {
+  readonly path: string;
+  readonly kind: "missing-file" | "invalid-json" | "incomplete";
+  readonly missing: string[];
+}
+
+export function tierShortfall(): TierShortfall | undefined {
   const path = tiersConfigPath();
   let config: unknown;
-  let state = "does not declare every tier";
+  let kind: TierShortfall["kind"] = "incomplete";
   try {
     config = JSON.parse(readFileSync(path, "utf8"));
   } catch (error) {
-    state =
-      Reflect.get(Object(error), "code") === "ENOENT" ? "does not exist" : "is not valid JSON";
+    kind = Reflect.get(Object(error), "code") === "ENOENT" ? "missing-file" : "invalid-json";
   }
   const declared = declaredTiers(config);
   const missing = requiredTiers().filter((name) => !declared.includes(name));
-  if (missing.length === 0) return [];
+  return missing.length === 0 ? undefined : { path, kind, missing };
+}
+
+const TIER_STATES: Record<TierShortfall["kind"], string> = {
+  "missing-file": "does not exist",
+  "invalid-json": "is not valid JSON",
+  incomplete: "does not declare every tier",
+};
+
+export function tierProblems(root: string, host: string): string[] {
+  const shortfall = tierShortfall();
+  if (shortfall === undefined) return [];
+  const { path, kind, missing } = shortfall;
   const fix = `run ${join(root, "bin", "fleet")} install, which writes ${TIERS_TEMPLATE} there when the file does not exist, or give each of them a tier with a non-empty chain in it`;
   return [
-    `tiers are not configured on ${host}: ${path} ${state}. Missing tiers (${String(missing.length)}): ${missing.join(", ")}. Fix: ${fix}`,
+    `tiers are not configured on ${host}: ${path} ${TIER_STATES[kind]}. Missing tiers (${String(missing.length)}): ${missing.join(", ")}. Fix: ${fix}`,
   ];
+}
+
+export function tierStatusLine({ path, kind, missing }: TierShortfall): string {
+  const count = String(missing.length);
+  const reason =
+    kind === "missing-file"
+      ? `missing (${count} tiers)`
+      : kind === "invalid-json"
+        ? "invalid (not valid JSON)"
+        : `invalid (${count} tiers not declared)`;
+  return `fleet: not joined - tiers file ${reason}: ${path}`;
 }
 
 export const newSnapshot = (retained: string[], discovered: Discovery): SweepSnapshot => ({

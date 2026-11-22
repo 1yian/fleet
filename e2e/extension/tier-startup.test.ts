@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -58,6 +58,26 @@ afterEach(async (t) => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
+const squeezed = (text: string): string => text.replace(/\s+/g, "");
+
+async function waitForScreen(pane: string, wanted: string, label: string): Promise<void> {
+  const deadline = Date.now() + WAIT_MS;
+  for (;;) {
+    if (squeezed(await lab.screen(pane)).includes(squeezed(wanted))) return;
+    assert.ok(Date.now() < deadline, `timed out waiting for the screen to show ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+async function waitForScreenWithout(pane: string, unwanted: string, label: string): Promise<void> {
+  const deadline = Date.now() + WAIT_MS;
+  for (;;) {
+    if (!squeezed(await lab.screen(pane)).includes(squeezed(unwanted))) return;
+    assert.ok(Date.now() < deadline, `timed out waiting for the screen to drop ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 const template = (): string =>
   join(realpathSync(scratch.root), "packages/extension/templates/tiers.json");
 
@@ -89,10 +109,38 @@ test("main started directly with pi names every missing tier, does not join the 
     h.events.some((event) => event["type"] === "fleet_connected"),
     false,
   );
+  const status = `fleet: not joined - tiers file invalid (2 tiers not declared): ${file}`;
+  await waitForScreen(pane, status, "the not-joined status");
+  await waitForScreen(pane, "Missing tiers (2): nm-fixer, reviewer", "the not-joined widget");
 
   copyFileSync(template(), file);
   await lab.submit(pane, "/probe-reload");
   await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+  await waitForScreenWithout(pane, "not joined - tiers", "the not-joined status");
+});
+
+test("main tells a missing tiers file from an invalid one in its status line", async () => {
+  configureMain(scratch, cardd.url, mainToken);
+  const file = join(h.dir, "agent", "tiers.json");
+  rmSync(file);
+  const pane = await startMain(lab, scratch, h);
+  await waitForScreen(
+    pane,
+    `fleet: not joined - tiers file missing (${String(TIERS.length)} tiers): ${file}`,
+    "the missing-file status",
+  );
+
+  writeFileSync(file, "{ not json");
+  await lab.submit(pane, "/probe-reload");
+  await waitForScreen(
+    pane,
+    `fleet: not joined - tiers file invalid (not valid JSON): ${file}`,
+    "the invalid-file status",
+  );
+  assert.equal(
+    h.events.some((event) => event["type"] === "fleet_connected"),
+    false,
+  );
 });
 
 test("main names every missing tier even when its lane token cannot be read", async () => {
