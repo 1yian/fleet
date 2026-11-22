@@ -33,6 +33,8 @@ const seen = (): string[] => {
     : [];
 };
 
+const CLEAN_RESTART = /^Started c-1-a1 again on [^\n]+, on its own session and branch [^\n]+\.$/;
+
 async function expectRestart(index: number, expected: RegExp): Promise<void> {
   const result = await poll(
     () =>
@@ -100,11 +102,11 @@ test("a restart with avoid starts the worker's Pi with PI_TIERS_AVOID, and a pla
   assert.deepEqual(await seenCount(1), ["(unset)"]);
 
   await mate.followUp("restart it, avoiding claude-max and openai");
-  await expectRestart(0, /^Started c-1-a1 again/);
+  await expectRestart(0, CLEAN_RESTART);
   assert.deepEqual(await seenCount(2), ["(unset)", "claude-max,openai"]);
 
   await mate.followUp("restart it again");
-  await expectRestart(1, /^Started c-1-a1 again/);
+  await expectRestart(1, CLEAN_RESTART);
   assert.deepEqual(await seenCount(3), ["(unset)", "claude-max,openai", "(unset)"]);
 });
 
@@ -153,17 +155,20 @@ test("a restart cannot avoid the provider of the worker's explicit GPT model, le
   await mate.followUp("ship the Spanish copy review");
   assert.deepEqual(await seenCount(1), ["(unset)"]);
 
+  await h.waitForCall(1, "worker", WORKER_WAIT_MS);
   await h.waitForCall(2, "mate", WORKER_WAIT_MS);
   await mate.followUp("restart it, avoiding claude-max and openai-codex");
   await expectRestart(0, /cannot avoid openai-codex/);
   assert.deepEqual(seen(), ["(unset)"]);
 
+  const beforeRestart = h.modelsOf("worker").length;
   await mate.followUp("restart it, avoiding only claude-max");
-  await expectRestart(1, /^Started c-1-a1 again/);
+  await expectRestart(1, CLEAN_RESTART);
   assert.deepEqual(await seenCount(2), ["(unset)", "claude-max"]);
-  await h.waitForCall(1, "worker", WORKER_WAIT_MS);
-  assert.ok(h.modelsOf("worker").length >= 2);
-  for (const each of h.modelsOf("worker")) assert.equal(each, model);
+  await h.waitForCall(beforeRestart, "worker", WORKER_WAIT_MS);
+  const replacement = h.modelsOf("worker").slice(beforeRestart);
+  assert.ok(replacement.length >= 1);
+  for (const each of replacement) assert.equal(each, model);
 });
 
 test("the card's own mate re-pins an explicit-model worker to the router with restart_card, and the worker keeps its card, conversation, and branch", async () => {
@@ -222,6 +227,7 @@ test("the card's own mate re-pins an explicit-model worker to the router with re
   await h.waitForCall(2, "mate", WORKER_WAIT_MS);
   await mate.followUp("move the onboarding worker to the quick tier");
   await seenCount(2);
+  await expectRestart(0, CLEAN_RESTART);
   while (h.modelsOf("worker").at(-1) !== "tier/quick") await nextWorkerCall();
   assert.match(launchedWith(), /--model\ntier\/quick\n/);
   assert.match(launchedWith(), /--session-id\nc-1-a1\n/);
