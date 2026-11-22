@@ -10,8 +10,11 @@ export interface Fleet {
   readonly main: Session;
 }
 
-export async function startFleet(env: Record<string, string> = {}): Promise<Fleet> {
-  const cardd = await Cardd.start(env);
+export async function startFleet(
+  env: Record<string, string> = {},
+  args: readonly string[] = [],
+): Promise<Fleet> {
+  const cardd = await Cardd.start(env, args);
   const mainToken = cardd.addLane("main");
   cardd.addProject("web", { maverick: "/clones/web", p620: "/clones/web" }, "acme/web");
   return { cardd, mainToken, main: await cardd.connect(mainToken) };

@@ -25,6 +25,7 @@ import { pairSockets } from "./job-env.ts";
 import { HerdrLab } from "./herdr.ts";
 import { records } from "./json.ts";
 import { until } from "./live-fleet.ts";
+import { ProbeRoute } from "./probe-route.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 
@@ -40,15 +41,18 @@ export class JobLab {
   readonly card: Card;
   readonly env: Record<string, string>;
   readonly jobDir: string;
+  readonly probe: ProbeRoute;
 
   private constructor(
     fleet: Fleet,
+    probe: ProbeRoute,
     h: Harness,
     lab: HerdrLab,
     card: Card,
     env: Record<string, string>,
   ) {
     this.fleet = fleet;
+    this.probe = probe;
     this.h = h;
     this.lab = lab;
     this.card = card;
@@ -59,7 +63,8 @@ export class JobLab {
   }
 
   static async start(timingScale = "0.04"): Promise<JobLab> {
-    const fleet = await startFleet({ CARDD_TIMING_SCALE: timingScale });
+    const probe = new ProbeRoute();
+    const fleet = await startFleet({ CARDD_TIMING_SCALE: timingScale }, ["--hosts", probe.hosts]);
     const h = await Harness.start();
     const lab = await HerdrLab.start({});
     const created = await lab.run(["workspace", "create", "--no-focus"]);
@@ -67,7 +72,7 @@ export class JobLab {
     if (typeof workspace !== "string") throw new Error("the lab returned no workspace");
     const card = await newCard(fleet.main, "Users see one scrollbar");
     const token = await begin(fleet.main, card, "run the tests");
-    return new JobLab(fleet, h, lab, card, {
+    return new JobLab(fleet, probe, h, lab, card, {
       FLEET_URL: fleet.cardd.url,
       FLEET_TOKEN: token,
       FLEET_ROLE: "worker",
