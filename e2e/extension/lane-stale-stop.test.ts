@@ -55,6 +55,31 @@ const rowOf = (args: readonly string[]): JsonRecord | undefined =>
   rowsOf(args).find((row) => row["lane"] === "loopy");
 const stateOf = (): unknown => rowOf(["status"])?.["state"];
 
+async function startupSettled(pane: string): Promise<void> {
+  await h.waitFor((event) => event["type"] === "session", "loopy to start its session");
+  let previous: string | undefined;
+  await until(async () => {
+    const reply = await lab.run(["pane", "process-info", "--pane", pane]);
+    const info = records([reply["process_info"]])[0];
+    const listed = info?.["foreground_processes"];
+    const rows = Array.isArray(listed) ? records(listed) : [];
+    const complete =
+      Array.isArray(listed) &&
+      rows.length > 0 &&
+      rows.length === listed.length &&
+      rows.every(
+        (row) =>
+          typeof row["pid"] === "number" &&
+          typeof row["name"] === "string" &&
+          Array.isArray(row["argv"]),
+      );
+    const key = complete ? rows.map((row) => String(row["pid"])).join(",") : undefined;
+    const settled = key !== undefined && key === previous;
+    previous = key;
+    return settled ? true : undefined;
+  }, "loopy's startup processes to settle");
+}
+
 async function heldThenStartedByHand(): Promise<string> {
   for (let start = 1; start <= 3; start += 1) {
     assert.equal(rowOf(["up"])?.["action"], "started");
@@ -73,9 +98,11 @@ async function heldThenStartedByHand(): Promise<string> {
     String(workspace?.["workspace_id"]),
   ]);
   const pane = String(records(listed["panes"])[0]?.["pane_id"]);
-  const args = ["--continue", ...mateArgs(h)].map((arg) => `'${arg}'`).join(" ");
+  const probe = ["-e", fileURLToPath(new URL("../support/probe.ts", import.meta.url))];
+  const args = ["--continue", ...mateArgs(h), ...probe].map((arg) => `'${arg}'`).join(" ");
   await lab.submit(pane, `pi ${args}`);
   await until(() => (stateOf() === "running" ? true : undefined), "loopy to run by hand");
+  await startupSettled(pane);
   return pane;
 }
 

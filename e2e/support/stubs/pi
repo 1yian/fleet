@@ -1,5 +1,5 @@
 #!/bin/sh
-here=$(cd "$(dirname "$0")" && pwd)
+here=${0%/*}
 case "$1" in
   update | list | install) exec node "$here/../fake-pi.ts" "$@" ;;
 esac
