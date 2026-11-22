@@ -1,0 +1,15 @@
+# Grok Bot report connector
+
+Fleet can take evidence from Grok Bot without making it a mate or a worker. Pi still owns the lane, decisions and card state. The connector only records a result on a card and delivers it as external data to the owning mate. It cannot read a card or call Fleet controls.
+
+1. The mate calls `grok_assign` with an open card ID. The returned `card`, `assignment` and `attempt` identify one expected result. No Fleet worker is needed and nothing is sent to Grok Bot automatically. Give the Bot those three values with the question and allowed source scope.
+2. The Bot calls `fleet_report_result` with those same values, nonempty `text` and either a nonempty `sources` array of source references or the literal `"unavailable"`. Ask for source IDs or permalinks that the intended reader can open. The connector does not verify the sources or change who can read them.
+3. `recorded` with an entry ID means the result is saved in Fleet. The `grok-bot` author identifies the authenticated connector, not a verified Bot instance or a person. An identical retry returns `duplicate` with the same ID; a different result for the same attempt is a `conflict`. If no result arrived, the mate can call `grok_assign` again with the card and existing assignment, then use the new attempt number. A superseded attempt or closed card returns `stale`. Unknown assignments and unknown attempts return `uncorrelated`.
+
+The [Grok Bot routine webhook](https://docs.x.ai/grok-bot/skills-routines-and-automations#webhooks) is a separate, inbound interface. Its HTTP `200` means a run started, not that the Bot reported. On the return path, inspect the MCP tool result, not the HTTP status. `recorded` means Fleet got and stored the callback, not that Grok Bot finished its turn or Pi has read or settled its delivery. Fleet only tracks the report receipt here. If no result arrives, the mate decides whether to reissue or close.
+
+## Transport
+
+The connector is off unless cardd starts with `CARDD_GROK_REPORT_TOKEN` set. Use a dedicated `grok.`-prefixed token followed by at least 32 random URL-safe characters. Never use a Fleet session token. The route on cardd's private listener is `/grok-report/mcp`. It uses stateless MCP Streamable HTTP. A future HTTPS edge must forward only this exact route to an allowed private cardd authority, not expose the board, `/call` or `/session`.
+
+[Grok Bot custom connectors](https://docs.x.ai/grok-bot/computer-and-apps#connect-an-app) document Remote HTTPS and configurable HTTP headers. Configure `Authorization: Bearer <adapter token>` in the connector, not in routine instructions or chat. Test account policy and unattended tool approval separately before relying on a real routine. No deployment or account connection is part of this prototype.

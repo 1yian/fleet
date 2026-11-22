@@ -3,6 +3,7 @@ import Value from "typebox/value";
 import { ApprovesArg } from "./approval.ts";
 import { COMPLAINT_OPS } from "./complaints.ts";
 import { INCIDENT_OPS } from "./incidents.ts";
+import { GROK_REPORT_OPS } from "./grok-report.ts";
 import { JOB_OPS } from "./jobs.ts";
 import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { MODEL_PIN } from "./model.ts";
@@ -22,6 +23,7 @@ export * from "./approval.ts";
 export { laidOut } from "./question.ts";
 export { CAPTAIN, howToReply } from "./reply.ts";
 export * from "./branch.ts";
+export { GrokReportArgs } from "./grok-report.ts";
 export * from "./health.ts";
 export * from "./http.ts";
 export * from "./next.ts";
@@ -49,11 +51,9 @@ export {
   type JobLife,
   type JobState,
 } from "./jobs.ts";
-
 export const HOLDERS = ["owner", "main", "captain"] as const;
 const Holder = Type.Enum(HOLDERS);
 export type Holder = Static<typeof Holder>;
-
 export const DELIVERIES = ["no-mistakes", "direct-PR", "local-only", "ops"] as const;
 const Delivery = Type.Enum(DELIVERIES);
 export type Delivery = Static<typeof Delivery>;
@@ -373,6 +373,7 @@ export const OPS = {
   ...JOB_OPS,
   ...MAINTENANCE_OPS,
   ...SIGNIN_OPS,
+  ...GROK_REPORT_OPS,
   report: {
     roles: ["worker"],
     args: Type.Object({

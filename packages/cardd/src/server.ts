@@ -13,6 +13,7 @@ import {
   type ServerMessage,
 } from "@fleet/protocol";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
+import { GROK_REPORT_PATH, grokReportEndpoint } from "./grok-connector.ts";
 import { runCheck } from "./check.ts";
 import { goneJobs, MISSED_HEARTBEATS, type JobLossGrace } from "./job-loss.ts";
 import type { Timings } from "./timing.ts";
@@ -98,6 +99,7 @@ class Hub {
   private readonly reading = new Set<string>();
   private readonly said = new Set<string>();
   readonly web: Web;
+  private readonly grokReport: ReturnType<typeof grokReportEndpoint>;
   readonly health: LoopHealth;
   open = 0;
 
@@ -114,6 +116,10 @@ class Hub {
       version(db).commit,
     );
     this.db = db;
+    this.grokReport = grokReportEndpoint(db, (recipient) => {
+      this.web.changed();
+      this.flush(recipient, false);
+    });
     this.timing = timing;
     this.hosts = hosts;
     setReviewOrigins(reviewOrigins);
@@ -295,6 +301,11 @@ class Hub {
 
   private async answerTailnet(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (this.answerHealth(request, response)) return;
+    if (request.url === GROK_REPORT_PATH && this.grokReport !== undefined) {
+      if (!this.web.allows(request, "tailnet")) this.web.refuse(response);
+      else await this.grokReport(request, response);
+      return;
+    }
     if (request.method === "POST" && request.url === "/call") await this.call(request, response);
     else await this.web.answer(request, response, "tailnet");
   }

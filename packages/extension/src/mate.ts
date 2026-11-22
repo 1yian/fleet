@@ -260,6 +260,14 @@ export function registerMate(
   });
   registerBoard(pi, link, lanes);
   registerSchedules(pi, link);
+  pi.registerTool({
+    name: "grok_assign",
+    label: "Assign a Grok Bot report",
+    description:
+      "Registers a reporting-only Grok Bot assignment on your open card. Pass the returned fields to the Bot. Give an existing assignment to supersede its pending attempt; this tool does not start a run.",
+    parameters: OPS["grok.assign"].args,
+    execute: async (_id, params) => reply(JSON.stringify(await link.call("grok.assign", params))),
+  });
   if (main) {
     pi.registerTool({
       name: "project_yolo",

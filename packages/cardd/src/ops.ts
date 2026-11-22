@@ -15,6 +15,7 @@ import { boardFor, cardView } from "./board.ts";
 import { requireOpen, statusWith, type Draft } from "./change.ts";
 import { closeBegin, closeFinish, type CloseCheck } from "./closing.ts";
 import { comment } from "./comments.ts";
+import { assignGrokReport } from "./grok-reports.ts";
 import { fileComplaint } from "./complaints.ts";
 import {
   acknowledgeMaintenance,
@@ -260,6 +261,10 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
       model: args.model,
     });
     return { value: begun, notify: [] };
+  },
+  "grok.assign": (db, session, raw) => {
+    const { card, assignment } = check(OPS["grok.assign"].args, raw);
+    return { value: assignGrokReport(db, ownCard(db, session, card), assignment), notify: [] };
   },
   "attempt.resume": (db, session, raw) => {
     const { card: id } = check(OPS["attempt.resume"].args, raw);
