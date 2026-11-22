@@ -29,6 +29,7 @@ export class BrowserEndpoint {
   arrivals = 0;
   private failing = false;
   private failingInput = false;
+  private refusing = false;
   private frameHeld = false;
   readonly order: string[] = [];
   readonly events: Record<string, unknown>[] = [];
@@ -133,6 +134,10 @@ export class BrowserEndpoint {
     this.failing = true;
   }
 
+  refuseNextInput(): void {
+    this.refusing = true;
+  }
+
   failNextInput(): void {
     this.failingInput = true;
   }
@@ -215,6 +220,11 @@ export class BrowserEndpoint {
       return;
     } else {
       await this.input(body);
+      if (this.refusing) {
+        this.refusing = false;
+        response.writeHead(409).end();
+        return;
+      }
       if (this.failingInput) {
         this.failingInput = false;
         response.writeHead(500).end();

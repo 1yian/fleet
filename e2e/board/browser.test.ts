@@ -93,11 +93,9 @@ async function exerciseTabSwitch(page: Page, endpoint: BrowserEndpoint): Promise
   await until(() => endpoint.order.includes("tab"));
   assert.equal(endpoint.activeInputsAtTab, 0);
   const tab = endpoint.order.indexOf("tab");
-  assert.ok(endpoint.order.indexOf("key:rawKeyDown:Shift") < tab);
-  assert.ok(
-    endpoint.order.indexOf("key:keyUp:Shift") > endpoint.order.indexOf("key:rawKeyDown:Shift"),
-  );
-  assert.ok(endpoint.order.indexOf("key:keyUp:Shift") < tab);
+  const press = endpoint.order.indexOf("key:rawKeyDown:Shift");
+  const release = endpoint.order.indexOf("key:keyUp:Shift");
+  assert.ok(press >= 0 && release > press && tab > release);
 }
 
 async function exerciseAmbiguousTab(
