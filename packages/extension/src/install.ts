@@ -20,7 +20,7 @@ const ERROR_LINES = 6;
 const BUILDINFO = "github.com/kunchenguid/no-mistakes/internal/buildinfo";
 const REMINDER_PREFIX = "Daily fleet update:";
 const REMINDER_AT = "05:00";
-const REMINDER_TEXT = `${REMINDER_PREFIX} run update_fleet, then on every host bring the dependencies to their latest remote: Pi and pi-tiers with pi update --all, the no-mistakes fork with fleet install --latest (never no-mistakes update: it installs upstream and resets the daemon), and any other pinned tool. Restart a no-mistakes daemon only when no pipeline runs. Report what changed. To stop this, set "updateReminder": false in config/lane.json and run fleet install.`;
+const REMINDER_TEXT = `${REMINDER_PREFIX} run update_fleet, then on every host: pi update; pi install ${PI_TIERS_SOURCE} then pi update ${PI_TIERS_SOURCE} (moves a pinned ref); fleet install --latest for the no-mistakes fork (never no-mistakes update); and bump any other pinned tool. Restart a no-mistakes daemon only when no pipeline runs. Report changes. To stop this, set "updateReminder": false in config/lane.json and run fleet install.`;
 
 export interface InstallLine {
   readonly text: string;
@@ -66,11 +66,13 @@ function reason(error: unknown): string {
     .join(" | ");
 }
 
-function buildNoMistakes(repo: string): { commit: string; target: string } {
+function buildNoMistakes(): { commit: string; target: string } {
   const work = mkdtempSync(join(tmpdir(), "fleet-no-mistakes-"));
   try {
     const source = join(work, "source");
-    run("git", ["clone", "--quiet", "--depth", "1", repo, source], { timeout: CLONE_TIMEOUT_MS });
+    run("git", ["clone", "--quiet", "--depth", "1", NO_MISTAKES_REPO, source], {
+      timeout: CLONE_TIMEOUT_MS,
+    });
     const commit = run("git", ["-C", source, "rev-parse", "--short=8", "HEAD"]);
     const committed = run("git", ["-C", source, "show", "-s", "--format=%cI", "HEAD"]);
     const date = new Date(committed).toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -92,8 +94,8 @@ function buildNoMistakes(repo: string): { commit: string; target: string } {
   }
 }
 
-const remoteHead = (repo: string): string =>
-  run("git", ["ls-remote", repo, "HEAD"], { timeout: CLONE_TIMEOUT_MS }).slice(0, 8);
+const remoteHead = (): string =>
+  run("git", ["ls-remote", NO_MISTAKES_REPO, "HEAD"], { timeout: CLONE_TIMEOUT_MS }).slice(0, 8);
 
 function goMissing(current: string | undefined, installed: { commit: string } | undefined): Error {
   const state =
@@ -111,24 +113,22 @@ function builtCommit(): { version: string | undefined; commit: string | undefine
 }
 
 function alreadyInstalled(
-  repo: string,
   latest: boolean,
   current: string | undefined,
   commit: string,
 ): string | undefined {
   if (current === undefined || noMistakesRefusal(current) !== undefined) return undefined;
   if (!latest) return `no-mistakes: fork-${commit} is installed`;
-  return commit === remoteHead(repo) ? `no-mistakes: fork-${commit} is the latest` : undefined;
+  return commit === remoteHead() ? `no-mistakes: fork-${commit} is the latest` : undefined;
 }
 
 function installNoMistakes(latest: boolean): string {
-  const repo = process.env["FLEET_NO_MISTAKES_REPO"] ?? NO_MISTAKES_REPO;
   const current = probe("no-mistakes", ["--version"]);
   const installed = current === undefined ? undefined : noMistakesBuild(current);
-  const done = alreadyInstalled(repo, latest, current, installed?.commit ?? "");
+  const done = alreadyInstalled(latest, current, installed?.commit ?? "");
   if (done !== undefined) return done;
   if (probe("go", ["version"]) === undefined) throw goMissing(current, installed);
-  const built = buildNoMistakes(repo);
+  const built = buildNoMistakes();
   const after = builtCommit();
   if (after.commit !== built.commit)
     throw new Error(
@@ -137,13 +137,21 @@ function installNoMistakes(latest: boolean): string {
   return `no-mistakes: built fork-${built.commit} into ${built.target}`;
 }
 
+function piTiersListed(listed: string): boolean {
+  return listed.split("\n").some((line) => {
+    if (!/^ {2}\S/.test(line)) return false;
+    const source = line.slice(2).replace(/ \(filtered\)$/, "");
+    return source === PI_TIERS_SOURCE || source.startsWith(`${PI_TIERS_SOURCE}@`);
+  });
+}
+
 function installPiTiers(): string {
   const listed = probe("pi", ["list"]);
   if (listed === undefined)
     throw new Error(
       "pi is missing or does not run. Fix: npm install -g @earendil-works/pi-coding-agent",
     );
-  if (listed.includes("pi-tiers")) return "pi-tiers: installed in Pi";
+  if (piTiersListed(listed)) return "pi-tiers: installed in Pi";
   run("pi", ["install", PI_TIERS_SOURCE], { timeout: CLONE_TIMEOUT_MS });
   return `pi-tiers: installed in Pi from ${PI_TIERS_SOURCE}`;
 }
@@ -163,8 +171,8 @@ async function reminder(root: string): Promise<string> {
   if (main === undefined)
     return "update reminder: skipped, this host is not main's (no config/lane.json in the checkout)";
   const mine = (await callCardd(main, "schedule.list", {})).filter(
-    ({ owner, to, text }) =>
-      owner === main.lane && to === main.lane && text.startsWith(REMINDER_PREFIX),
+    ({ owner, to, text, on }) =>
+      owner === main.lane && to === main.lane && on === null && text.startsWith(REMINDER_PREFIX),
   );
   if (main.updateReminder === false) {
     for (const { id } of mine) await callCardd(main, "schedule.remove", { id });

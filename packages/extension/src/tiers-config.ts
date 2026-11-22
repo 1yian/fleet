@@ -14,8 +14,10 @@ function piAgentDir(): string {
   return set === "~" || set.startsWith("~/") ? join(homedir(), set.slice(1)) : set;
 }
 
-export const tiersConfigPath = (): string =>
-  process.env["PI_TIERS_CONFIG"] ?? join(piAgentDir(), "tiers.json");
+export function tiersConfigPath(): string {
+  const set = process.env["PI_TIERS_CONFIG"];
+  return set === undefined || set === "" ? join(piAgentDir(), "tiers.json") : set;
+}
 
 export function readTiersConfig(): unknown {
   try {
@@ -25,18 +27,29 @@ export function readTiersConfig(): unknown {
   }
 }
 
-export function declaredTiers(config: unknown): string[] {
-  const tiers: unknown = Reflect.get(Object(config), "tiers");
-  if (typeof tiers !== "object" || tiers === null || Array.isArray(tiers)) return [];
-  return Object.entries(tiers).flatMap(([name, tier]) => {
-    const chain: unknown = Reflect.get(Object(tier), "chain");
-    const usable =
-      Array.isArray(chain) &&
-      chain.length > 0 &&
-      chain.every((rung) => typeof rung === "string" && rung !== "");
-    return usable ? [name] : [];
-  });
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+function usableRung(rung: unknown): boolean {
+  if (typeof rung !== "string") return false;
+  const slash = rung.indexOf("/");
+  if (slash <= 0) return false;
+  let model = rung.slice(slash + 1);
+  const colon = model.lastIndexOf(":");
+  if (colon > 0 && THINKING_LEVELS.includes(model.slice(colon + 1))) model = model.slice(0, colon);
+  return model !== "";
 }
 
+function tierEntries(config: unknown): [string, unknown][] {
+  const tiers: unknown = Reflect.get(Object(config), "tiers");
+  if (typeof tiers !== "object" || tiers === null || Array.isArray(tiers)) return [];
+  return Object.entries(tiers);
+}
+
+export const declaredTiers = (config: unknown): string[] =>
+  tierEntries(config).flatMap(([name, tier]) => {
+    const chain: unknown = Reflect.get(Object(tier), "chain");
+    return Array.isArray(chain) && chain.length > 0 && chain.every(usableRung) ? [name] : [];
+  });
+
 export const requiredTiers = (): string[] =>
-  declaredTiers(JSON.parse(readFileSync(TIERS_TEMPLATE, "utf8")));
+  tierEntries(JSON.parse(readFileSync(TIERS_TEMPLATE, "utf8"))).map(([name]) => name);

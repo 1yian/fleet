@@ -21,6 +21,7 @@ const GO_FIX =
 const PI_TIERS = "git:github.com/1yian/pi-tiers";
 
 let cardd: Cardd;
+let mainToken: string;
 let scratch: Scratch;
 let home: string;
 let piDir: string;
@@ -49,12 +50,14 @@ function commitAt(when: string): string {
 beforeEach(async () => {
   cardd = await Cardd.start();
   scratch = new Scratch();
-  configureMain(scratch, cardd.url, cardd.addLane("main"));
+  mainToken = cardd.addLane("main");
+  configureMain(scratch, cardd.url, mainToken);
   home = tempDir("home-");
   piDir = wrapper(tempDir("fake-pi-"), "pi", "fake-pi.ts");
   goDir = wrapper(tempDir("fake-go-"), "go", "fake-go.ts");
   repo = join(tempDir("fork-"), "no-mistakes");
   mkdirSync(join(repo, "cmd", "no-mistakes"), { recursive: true });
+  writeFileSync(join(repo, "go.mod"), "module github.com/kunchenguid/no-mistakes\n\ngo 1.25\n");
   git(repo, "init", "-q", "-b", "main");
 });
 afterEach(async () => {
@@ -77,7 +80,12 @@ interface Run {
   readonly err: string[];
 }
 
-function install(path: string, args: readonly string[] = [], ahead = ""): Run {
+function install(
+  path: string,
+  args: readonly string[] = [],
+  ahead = "",
+  extra: Record<string, string> = {},
+): Run {
   const done = spawnSync("node", [scratch.launch, "install", ...args], {
     encoding: "utf8",
     env: {
@@ -87,7 +95,10 @@ function install(path: string, args: readonly string[] = [], ahead = ""): Run {
       PI_CODING_AGENT_DIR: agentDir(),
       NM_HOME: nmHome(),
       FAKE_PI_STATE: join(home, "pi-packages"),
-      FLEET_NO_MISTAKES_REPO: repo,
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: `url.${repo}.insteadOf`,
+      GIT_CONFIG_VALUE_0: "https://github.com/1yian/no-mistakes",
+      ...extra,
       PATH: [ahead, join(home, ".local", "bin"), path, pathWithout("no-mistakes")]
         .filter((dir) => dir !== "")
         .join(":"),
@@ -95,6 +106,37 @@ function install(path: string, args: readonly string[] = [], ahead = ""): Run {
   });
   const lines = (text: string): string[] => text.split("\n").filter((line) => line !== "");
   return { status: done.status, out: lines(done.stdout), err: lines(done.stderr) };
+}
+
+interface Tree {
+  [key: string]: Tree | string;
+}
+
+function yamlTree(text: string): Tree {
+  const root: Tree = {};
+  const path: Tree[] = [root];
+  for (const line of text.split("\n")) {
+    const entry = line.trim();
+    if (entry === "") continue;
+    const depth = (line.length - line.trimStart().length) / 2;
+    const parent = path[depth] ?? root;
+    path.length = depth + 1;
+    if (entry.endsWith(":")) {
+      const child: Tree = {};
+      parent[entry.slice(0, -1)] = child;
+      path.push(child);
+    } else {
+      const split = entry.indexOf(": ");
+      parent[entry.slice(0, split)] = entry.slice(split + 2);
+    }
+  }
+  return root;
+}
+
+function valueAt(tree: Tree, ...keys: string[]): string | undefined {
+  let node: Tree | string | undefined = tree;
+  for (const key of keys) node = typeof node === "object" ? node[key] : undefined;
+  return typeof node === "string" ? node : undefined;
 }
 
 const withGo = (): string => [piDir, goDir].join(":");
@@ -118,7 +160,31 @@ test("a fresh install without Go names the missing no-mistakes and the fix, and 
     `no-mistakes config: wrote ${nmHome()}/config.yaml from ${template("no-mistakes.yaml")}`,
     `update reminder: created schedule #1, daily at 05:00 ${ZONE}, to main`,
   ]);
-  assert.equal(readFileSync(join(nmHome(), "config.yaml"), "utf8").includes("tier/nm-fixer"), true);
+  const config = yamlTree(readFileSync(join(nmHome(), "config.yaml"), "utf8"));
+  assert.equal(valueAt(config, "agent"), "pi");
+  assert.equal(valueAt(config, "agent_config", "pi", "model"), "tier/nm-default");
+  assert.equal(valueAt(config, "review_agents", "reviewer", "model"), "tier/reviewer");
+  assert.equal(valueAt(config, "review_agents", "fixer", "model"), "tier/nm-fixer");
+});
+
+test("an empty PI_TIERS_CONFIG writes the tiers file at the default Pi location", () => {
+  const done = install(piDir, [], "", { PI_TIERS_CONFIG: "" });
+  assert.ok(
+    done.out.includes(`tiers: wrote ${agentDir()}/tiers.json from ${template("tiers.json")}`),
+  );
+});
+
+test("a Pi package that only contains pi-tiers in its name does not stand in for pi-tiers, and a pinned pi-tiers does", () => {
+  const state = join(home, "pi-packages");
+  writeFileSync(
+    state,
+    "git:github.com/example/pi-tiers-extras\ngit:github.com/1yian/pi-tiers-fork\n",
+  );
+  assert.ok(install(piDir).out.includes(`pi-tiers: installed in Pi from ${PI_TIERS}`));
+  rmSync(state);
+  writeFileSync(state, `${PI_TIERS}@v0.1.14\n`);
+  assert.ok(install(piDir).out.includes("pi-tiers: installed in Pi"));
+  assert.equal(readFileSync(state, "utf8"), `${PI_TIERS}@v0.1.14\n`);
 });
 
 test("a too old no-mistakes, or the upstream build, fails the install the same way without Go", () => {
@@ -164,7 +230,7 @@ test("install builds the fork with Go, installs pi-tiers and the configs, create
   for (const part of [
     "Daily fleet update:",
     "update_fleet",
-    "pi update --all",
+    `pi update ${PI_TIERS}`,
     "fleet install --latest",
     "never no-mistakes update",
     '"updateReminder": false',
@@ -204,6 +270,39 @@ test("updateReminder false turns the reminder off and removes it, and turning it
   install(withGo());
   install(withGo());
   assert.equal((await reminders()).length, 1);
+});
+
+test("a one-off schedule with the reminder's text is not the daily reminder, and turning the reminder off leaves it", async () => {
+  commitAt(FIRST);
+  assert.equal(install(withGo()).status, 0);
+  const [daily] = (await cardd.board()).schedules;
+  assert.ok(daily !== undefined);
+  const main = await cardd.connect(mainToken);
+  try {
+    await main.call("schedule.set", {
+      id: daily.id,
+      to: "main",
+      at: daily.at,
+      timezone: daily.timezone,
+      on: "2099-01-01",
+      text: daily.text,
+    });
+    const again = install(withGo());
+    assert.match(again.out.at(-2) ?? "", /^update reminder: created schedule #\d+, daily at 05:00/);
+    const both = (await cardd.board()).schedules;
+    assert.equal(both.length, 2);
+    assert.equal(both.filter(({ on }) => on === null).length, 1);
+    assert.equal(both.filter(({ on }) => on === "2099-01-01").length, 1);
+
+    setReminder(false);
+    assert.equal(install(withGo()).status, 0);
+    assert.deepEqual(
+      (await cardd.board()).schedules.map(({ id, on }) => [id, on]),
+      [[daily.id, "2099-01-01"]],
+    );
+  } finally {
+    await main.close();
+  }
 });
 
 test("install --latest rebuilds the fork only when its main moved", () => {

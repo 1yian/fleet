@@ -186,7 +186,7 @@ export interface SweepSnapshot {
   readonly discovered: Discovery;
 }
 
-function tierProblems(root: string, host: string): string[] {
+export function tierProblems(root: string, host: string): string[] {
   const path = tiersConfigPath();
   let config: unknown;
   let state = "does not declare every tier";

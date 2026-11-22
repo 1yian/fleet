@@ -415,13 +415,14 @@ test("fleet up starts no mate until every tier is configured, names each missing
 
   const template = join(realpathSync(scratch.root), "packages/extension/templates/tiers.json");
   const tiers: Record<string, { chain: string[] }> = {};
+  const unusable: Record<string, string[]> = { compact: [], deep: ["not-a-model"] };
   for (const name of TIERS)
     if (name !== "nm-fixer" && name !== "reviewer")
-      tiers[name] = { chain: name === "compact" ? [] : ["fake/scripted"] };
+      tiers[name] = { chain: unusable[name] ?? ["fake/scripted"] };
   writeFileSync(file, JSON.stringify({ tiers }));
   assert.equal(
     refusal(["up"], env),
-    tiersRefusal(file, "does not declare every tier", ["nm-fixer", "compact", "reviewer"]),
+    tiersRefusal(file, "does not declare every tier", ["nm-fixer", "deep", "compact", "reviewer"]),
   );
   assert.equal(status(), "cleo: down\n");
 
