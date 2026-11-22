@@ -58,7 +58,7 @@ async function historicalCloses(path: string, main: Session): Promise<number> {
   const days = ["01", "02", "02", "04", "04", "04", "04", "04"];
   const cards = await Promise.all(
     days.map((_, i) =>
-      main.call("card.new", { title: `Historical card ${i + 1}`, kind: "captain" }),
+      main.call("card.new", { title: `Historical card ${String(i + 1)}`, kind: "captain" }),
     ),
   );
   const db = new DatabaseSync(path, { timeout: 5000 });
@@ -112,32 +112,9 @@ function ledgers(root: string) {
   };
 }
 
-test("analytics reconciles readable ledger usage and successful closes in the real board", async (context) => {
-  const root = tempDir("board-analytics-");
-  const clock = join(root, "clock");
-  writeFileSync(clock, NOW);
-  const { mainHome, secondHome } = ledgers(root);
-  const cardd = await startBoardServer(context, BOARD, { CARDD_CLOCK_FILE: clock });
-  const main = await cardd.connect(cardd.addLane("main", undefined, mainHome));
-  context.after(() => main.close());
-  cardd.addLane("cleo", "main", secondHome);
-  cardd.addLane("unavailable", "main", join(root, "absent"));
-  const cardId = await historicalCloses(cardd.db, main);
+type Locator = ReturnType<Page["locator"]>;
 
-  const browser = await chromium.launch();
-  context.after(() => browser.close());
-  const page = await openBoardPage(
-    context,
-    browser,
-    { width: 1440, height: 900 },
-    "America/Los_Angeles",
-  );
-  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/"));
-  await page.getByRole("link", { name: "Analytics" }).click();
-  const hourly = page.getByRole("region", { name: "Tokens used by hour" });
-  const inspector = hourly.locator("[aria-live=polite]");
-  await hourly.getByText("363,600", { exact: true }).waitFor();
-  assert.equal(await hourly.getByRole("button").count(), 25);
+async function inspectHours(page: Page, hourly: Locator, inspector: Locator): Promise<void> {
   await hourly
     .getByRole("button", { name: /^May 3, 12:30 to 13:00 UTC \(partial\): 20,500 tokens/ })
     .focus();
@@ -155,35 +132,9 @@ test("analytics reconciles readable ledger usage and successful closes in the re
   assert.match(await inspector.innerText(), /0 tokens · Input: 0 · Cached input: 0 · Output: 0/);
   await page.mouse.move(2, 2);
   assert.match(await inspector.innerText(), /0 tokens · Input: 0 · Cached input: 0 · Output: 0/);
+}
 
-  const lanes = page.getByRole("region", { name: "Tokens by lane" });
-  assert.deepEqual(await lanes.getByRole("listitem").allTextContents(), [
-    "main271,800Input: 62,500 · Cached input: 194,000 · Output: 15,300",
-    "cleo91,800Input: 10,000 · Cached input: 79,000 · Output: 2,800",
-  ]);
-  const closures = page.getByRole("region", { name: "Cards closed as done" });
-  assert.deepEqual(await closures.getByRole("listitem").allTextContents(), [
-    "0Apr 28",
-    "0Apr 29",
-    "0Apr 30",
-    "1May 1",
-    "2May 2",
-    "0May 3",
-    "4Today",
-  ]);
-  await shoot(page, "analytics-desktop.png");
-
-  await page.getByRole("link", { name: "Board", exact: true }).click();
-  await page.locator("main.kanban").waitFor();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goBack();
-  await hourly.getByText("363,600", { exact: true }).waitFor();
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390);
-  await hourly
-    .getByRole("button", { name: /^May 4, 12:00 to 12:30 UTC \(partial\): 23,300 tokens/ })
-    .focus();
-  await shoot(page, "analytics-mobile.png");
-
+async function draftsSurviveViews(page: Page, hourly: Locator, cardId: number): Promise<void> {
   await page.getByRole("link", { name: "Board", exact: true }).click();
   await page.evaluate((id) => {
     location.hash = `/c-${String(id)}`;
@@ -221,6 +172,65 @@ test("analytics reconciles readable ledger usage and successful closes in the re
   refuse();
   await page.getByRole("link", { name: "Board", exact: true }).click();
   await page.getByRole("alert").getByText("the card changed since you looked").waitFor();
+}
+
+test("analytics reconciles readable ledger usage and successful closes in the real board", async (context) => {
+  const root = tempDir("board-analytics-");
+  const clock = join(root, "clock");
+  writeFileSync(clock, NOW);
+  const { mainHome, secondHome } = ledgers(root);
+  const cardd = await startBoardServer(context, BOARD, { CARDD_CLOCK_FILE: clock });
+  const main = await cardd.connect(cardd.addLane("main", undefined, mainHome));
+  context.after(() => main.close());
+  cardd.addLane("cleo", "main", secondHome);
+  cardd.addLane("unavailable", "main", join(root, "absent"));
+  const cardId = await historicalCloses(cardd.db, main);
+
+  const browser = await chromium.launch();
+  context.after(() => browser.close());
+  const page = await openBoardPage(
+    context,
+    browser,
+    { width: 1440, height: 900 },
+    "America/Los_Angeles",
+  );
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/"));
+  await page.getByRole("link", { name: "Analytics" }).click();
+  const hourly = page.getByRole("region", { name: "Tokens used by hour" });
+  const inspector = hourly.locator("[aria-live=polite]");
+  await hourly.getByText("363,600", { exact: true }).waitFor();
+  assert.equal(await hourly.getByRole("button").count(), 25);
+  await inspectHours(page, hourly, inspector);
+
+  const lanes = page.getByRole("region", { name: "Tokens by lane" });
+  assert.deepEqual(await lanes.getByRole("listitem").allTextContents(), [
+    "main271,800Input: 62,500 · Cached input: 194,000 · Output: 15,300",
+    "cleo91,800Input: 10,000 · Cached input: 79,000 · Output: 2,800",
+  ]);
+  const closures = page.getByRole("region", { name: "Cards closed as done" });
+  assert.deepEqual(await closures.getByRole("listitem").allTextContents(), [
+    "0Apr 28",
+    "0Apr 29",
+    "0Apr 30",
+    "1May 1",
+    "2May 2",
+    "0May 3",
+    "4Today",
+  ]);
+  await shoot(page, "analytics-desktop.png");
+
+  await page.getByRole("link", { name: "Board", exact: true }).click();
+  await page.locator("main.kanban").waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goBack();
+  await hourly.getByText("363,600", { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390);
+  await hourly
+    .getByRole("button", { name: /^May 4, 12:00 to 12:30 UTC \(partial\): 23,300 tokens/ })
+    .focus();
+  await shoot(page, "analytics-mobile.png");
+
+  await draftsSurviveViews(page, hourly, cardId);
 
   appendFileSync(
     join(mainHome, "ledger", "profiles", "main", "usage.jsonl"),

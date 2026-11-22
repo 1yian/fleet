@@ -63,6 +63,19 @@ async function ledgerAt(home: string): Promise<string | undefined> {
   }
 }
 
+function timeOf(entry: Record<string, unknown> | undefined): number {
+  const date = entry?.["date"];
+  return typeof date === "string" ? Date.parse(date) : Number.NaN;
+}
+
+function duplicate(entry: Record<string, unknown> | undefined, seen: Set<string>): boolean {
+  const id = entry?.["id"];
+  if (typeof id !== "string" || id === "") return false;
+  if (seen.has(id)) return true;
+  seen.add(id);
+  return false;
+}
+
 async function usageIn(file: string, from: number, to: number): Promise<Map<number, Tokens>> {
   const hours = new Map<number, Tokens>();
   const seen = new Set<string>();
@@ -71,16 +84,10 @@ async function usageIn(file: string, from: number, to: number): Promise<Map<numb
   try {
     for await (const line of lines) {
       const entry = parse(line);
-      const date = entry?.["date"];
-      const at = typeof date === "string" ? Date.parse(date) : NaN;
+      const at = timeOf(entry);
       if (!(at >= from && at < to)) continue;
       const tokens = usageOf(entry);
-      if (tokens === undefined) continue;
-      const id = entry?.["id"];
-      if (typeof id === "string" && id !== "") {
-        if (seen.has(id)) continue;
-        seen.add(id);
-      }
+      if (tokens === undefined || duplicate(entry, seen)) continue;
       const hour = bucket(at, HOUR);
       const total = hours.get(hour) ?? empty();
       add(total, tokens);

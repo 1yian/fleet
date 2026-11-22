@@ -54,7 +54,7 @@ function Stack({
     <span
       key={key}
       className={`analytics-${key}`}
-      style={{ [axis]: `${(100 * tokens[key]) / max}%` }}
+      style={{ [axis]: `${String((100 * tokens[key]) / max)}%` }}
     />
   ));
 }
@@ -85,7 +85,31 @@ function hourLabels(hours: Data["hours"]) {
   });
 }
 
-type Interaction = { readonly kind: "hover" | "focus" | "tap"; readonly at: number };
+interface Interaction {
+  readonly kind: "hover" | "focus" | "tap";
+  readonly at: number;
+}
+
+function Legend() {
+  return (
+    <div className="analytics-legend">
+      {HIGHLIGHTS.map(([key, label]) => (
+        <span key={key}>
+          <i className={`analytics-${key}`} />
+          {label}
+        </span>
+      ))}
+      <span>
+        <i className="analytics-zero" />
+        Measured zero
+      </span>
+      <span>
+        <i className="analytics-missing" />
+        No records
+      </span>
+    </div>
+  );
+}
 
 function Hourly({ data }: { readonly data: Data }) {
   const [interactions, setInteractions] = useState<readonly Interaction[]>([]);
@@ -100,7 +124,7 @@ function Hourly({ data }: { readonly data: Data }) {
   const max = scale(Math.max(...data.hours.map(({ tokens }) => total(tokens))));
   const sum = data.hours.reduce((count, { tokens }) => count + total(tokens), 0);
   const sampled = data.hours.some(({ tokens }) => tokens !== null);
-  const grid = { gridTemplateColumns: `repeat(${data.hours.length}, minmax(0, 1fr))` };
+  const grid = { gridTemplateColumns: `repeat(${String(data.hours.length)}, minmax(0, 1fr))` };
 
   return (
     <section className="analytics-panel analytics-hourly" aria-labelledby="analytics-hourly">
@@ -114,22 +138,7 @@ function Hourly({ data }: { readonly data: Data }) {
           <span>recorded tokens</span>
         </div>
       </div>
-      <div className="analytics-legend">
-        {HIGHLIGHTS.map(([key, label]) => (
-          <span key={key}>
-            <i className={`analytics-${key}`} />
-            {label}
-          </span>
-        ))}
-        <span>
-          <i className="analytics-zero" />
-          Measured zero
-        </span>
-        <span>
-          <i className="analytics-missing" />
-          No records
-        </span>
-      </div>
+      <Legend />
       <div className="analytics-inspector" aria-live="polite">
         {selected === undefined ? (
           <span>Hover or focus an hour for its breakdown.</span>
@@ -248,7 +257,7 @@ function Closures({ days }: { readonly days: Data["closures"] }) {
           <li key={at}>
             <div className="analytics-day-track">
               <span
-                style={{ height: `${(100 * count) / max}%` }}
+                style={{ height: `${String((100 * count) / max)}%` }}
                 className={count === 0 ? "analytics-day-zero" : undefined}
               >
                 <strong>{number.format(count)}</strong>
@@ -272,9 +281,9 @@ function useAnalytics(): Data | Error | undefined {
     const load = async (): Promise<void> => {
       try {
         const response = await fetch("/api/analytics", { signal: controller.signal });
-        if (!response.ok) throw new Error("Could not load analytics from cardd.");
-        const data = check(AnalyticsSchema, await response.json());
-        if (!controller.signal.aborted) setResult(data);
+        const data = response.ok ? check(AnalyticsSchema, await response.json()) : undefined;
+        if (controller.signal.aborted) return;
+        setResult(data ?? new Error("Could not load analytics from cardd."));
       } catch {
         if (!controller.signal.aborted)
           setResult(new Error("Could not load analytics from cardd."));
