@@ -136,9 +136,8 @@ class Viewer {
   }
 
   private set(status: Status): void {
-    if (this.closed) return;
     this.current = status;
-    this.show({ ...status, fenced: this.blocked(), halted: this.quarantined });
+    if (!this.closed) this.show({ ...status, fenced: this.blocked(), halted: this.quarantined });
   }
 
   private matched(): boolean {
@@ -351,25 +350,29 @@ class Viewer {
   }
 
   private acknowledge(batch: BrowserInput[], code: number, authority: number): void {
-    if (code === 409) this.remote.clear();
     if (code === 204 && this.authority === authority) for (const event of batch) this.track(event);
+  }
+
+  private refused(authority: number): void {
+    if (this.authority !== authority) return;
+    this.authority += 1;
+    this.issuedTake = false;
+    this.discard();
+    this.invalidateCommand();
+    const state = this.current.state;
+    if (state !== undefined)
+      this.set({ state: { ...state, viewer: { controlling: false } }, notice: LOST });
   }
 
   private send(): void {
     this.sending = true;
-    const ticket = this.ticket;
     const authority = this.authority;
     const batch = this.events.splice(0, 40);
     this.inflight = this.post("input", { events: batch }).then((code) => {
       this.sending = false;
       this.acknowledge(batch, code, authority);
       if (code !== 204 && code !== 409) this.fence(AMBIGUOUS);
-      if (code === 409 && this.ticket === ticket && this.canDrive()) {
-        this.discard();
-        const state = this.current.state;
-        if (state !== undefined)
-          this.set({ state: { ...state, viewer: { controlling: false } }, notice: LOST });
-      }
+      if (code === 409) this.refused(authority);
       this.schedule();
     });
   }
@@ -400,13 +403,17 @@ class Viewer {
     this.closed = true;
     this.invalidateCommand();
     cancelAnimationFrame(this.scheduled);
-    void this.teardown(this.current.state?.viewer.controlling === true);
+    void this.teardown();
   }
 
-  private async teardown(controlling: boolean): Promise<void> {
+  private async teardown(): Promise<void> {
     await this.settle();
     await this.mutation;
-    if (!this.quarantined && !this.recovering && (controlling || this.issuedTake))
+    if (
+      !this.quarantined &&
+      !this.recovering &&
+      (this.current.state?.viewer.controlling === true || this.issuedTake)
+    )
       await this.post("command", { t: "control", on: false });
     this.stream.close();
   }
