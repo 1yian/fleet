@@ -13,8 +13,11 @@ import {
 export const unreachable = (error: unknown): string =>
   `The board could not reach cardd: ${error instanceof Error ? error.message : String(error)}`;
 
+const BOARD_DEADLINE_MS = 10_000;
+
 export async function loadBoard(): Promise<Board> {
-  return check(BoardSchema, await (await fetch("/api/board")).json());
+  const response = await fetch("/api/board", { signal: AbortSignal.timeout(BOARD_DEADLINE_MS) });
+  return check(BoardSchema, await response.json());
 }
 
 export async function loadThread(card: number): Promise<Thread> {
