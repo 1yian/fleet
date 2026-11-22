@@ -25,7 +25,8 @@ function useBoard(changes: number, tick: number, setNotice: (notice: string | un
     }
     reading.current = true;
     void (async () => {
-      do {
+      let again = true;
+      while (again) {
         queued.current = false;
         try {
           const loaded = await loadBoard();
@@ -38,7 +39,8 @@ function useBoard(changes: number, tick: number, setNotice: (notice: string | un
           setAvailable(false);
           setNotice(unreachable(error));
         }
-      } while (queued.current);
+        again = queued.current;
+      }
       reading.current = false;
     })();
   }, [setNotice]);
