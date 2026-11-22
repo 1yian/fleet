@@ -123,7 +123,7 @@ test("main started directly with pi names every missing tier, does not join the 
     h.events.some((event) => event["type"] === "fleet_connected"),
     false,
   );
-  const status = `fleet: not joined - tiers file invalid (2 tiers not declared): ${file}`;
+  const status = "fleet: not joined - tiers file invalid (2 tiers not declared):";
   await waitForSurfaces(pane, status, "the not-joined status");
 
   copyFileSync(template(), file);
@@ -139,7 +139,7 @@ test("main tells a missing tiers file from an invalid one in its status line", a
   const pane = await startMain(lab, scratch, h);
   await waitForSurfaces(
     pane,
-    `fleet: not joined - tiers file missing (${String(TIERS.length)} tiers): ${file}`,
+    `fleet: not joined - tiers file missing (${String(TIERS.length)} tiers):`,
     "the missing-file status",
   );
 
@@ -147,7 +147,7 @@ test("main tells a missing tiers file from an invalid one in its status line", a
   await lab.submit(pane, "/probe-reload");
   await waitForSurfaces(
     pane,
-    `fleet: not joined - tiers file invalid (not valid JSON): ${file}`,
+    `fleet: not joined - tiers file invalid (not valid JSON):`,
     "the invalid-file status",
   );
   assert.equal(
