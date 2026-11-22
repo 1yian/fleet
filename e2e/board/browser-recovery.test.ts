@@ -170,8 +170,8 @@ test("a command whose confirmed tab changed while its drain waited is not sent",
   await page.keyboard.up("Shift");
 });
 
-test("input queued before the screen stopped matching is not sent when a matching frame returns", async (t) => {
-  const { endpoint, page, base } = await launch(t);
+test("a matching frame returning does not resume input until the held key is released", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
   await takeControl(page, endpoint, base);
   await clickAndSettle(page, endpoint);
   endpoint.hold();
@@ -181,10 +181,14 @@ test("input queued before the screen stopped matching is not sent when a matchin
   endpoint.showFrame(1);
   await page.getByText("Control held · Input paused").waitFor();
   endpoint.showFrame(0);
-  await page.getByText("You’re in control").waitFor();
+  await page
+    .locator(`.browser-surface img[src="data:image/jpeg;base64,${jpeg[0] ?? ""}"]`)
+    .waitFor();
+  assert.equal(await page.getByText("You’re in control").count(), 0);
+  assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
   endpoint.release();
-  await until(() => endpoint.activeInputs === 0);
-  await nextFrames(page);
+  await page.getByText("You’re in control").waitFor();
+  assert.equal(endpoint.order.filter((entry) => entry === "key:keyUp:Shift").length, 1);
   assert.equal(endpoint.order.includes("key:keyDown:b"), false);
   assert.equal(endpoint.order.includes("key:keyUp:b"), false);
   await page.keyboard.up("Shift");
