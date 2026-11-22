@@ -28,6 +28,7 @@ import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { findSession, setSessionState, transaction, type Session } from "./store.ts";
 import { Access, type AccessConfig } from "./access.ts";
 import { Web } from "./web.ts";
+import type { BrowserUpstream } from "./browser.ts";
 import { LoopHealth } from "./health.ts";
 import { version } from "./version.ts";
 
@@ -107,6 +108,7 @@ class Hub {
     files: string | undefined,
     hosts: Hosts,
     access: Access | undefined,
+    browser: BrowserUpstream | undefined,
     reviewOrigins: ReadonlyMap<string, string>,
   ) {
     this.health = new LoopHealth(
@@ -125,6 +127,7 @@ class Hub {
       },
       files,
       access,
+      browser,
       reviewOrigins,
     );
   }
@@ -386,12 +389,14 @@ export async function serve(
     hostnames,
     hosts,
     access,
+    browser,
     reviewOrigins,
   }: {
     files?: string | undefined;
     hostnames: readonly string[];
     hosts: Hosts;
     access?: AccessConfig | undefined;
+    browser?: BrowserUpstream | undefined;
     reviewOrigins: ReadonlyMap<string, string>;
   },
 ): Promise<string> {
@@ -404,6 +409,7 @@ export async function serve(
     files,
     hosts,
     access === undefined ? undefined : new Access(access, timing),
+    browser,
     reviewOrigins,
   );
   hub.fillRepos();
