@@ -65,7 +65,7 @@ class Viewer {
   private ticket = 0;
   private confirmationTimer = 0;
   private events: BrowserInput[] = [];
-  private readonly held = new Map<string, BrowserInput>();
+  private readonly remote = new Map<string, BrowserInput>();
   private mutation: Promise<number> = Promise.resolve(0);
   private mutating = false;
   private quarantined = false;
@@ -100,7 +100,7 @@ class Viewer {
         this.latest = undefined;
         this.frame(undefined);
         this.events = [];
-        this.recovering = this.recovering || this.held.size > 0;
+        this.recovering = true;
         if (!this.mutating) this.invalidateCommand();
         this.set({
           offline: true,
@@ -159,8 +159,8 @@ class Viewer {
   }
 
   private resume(): void {
-    if (!this.recovering || !this.matched()) return;
-    void this.settle().then(() => {
+    if (this.closed || !this.recovering || !this.matched()) return;
+    void this.settle(true).then(() => {
       this.recovering = false;
       this.set(this.current);
     });
@@ -177,16 +177,16 @@ class Viewer {
 
   private discard(): void {
     this.events = [];
-    this.held.clear();
+    this.remote.clear();
     this.heldTarget = undefined;
   }
 
   private track(event: BrowserInput): void {
     if (event.t === "key") {
       const id = `key:${event.code}`;
-      if (event.type === "keyUp") this.held.delete(id);
+      if (event.type === "keyUp") this.remote.delete(id);
       else
-        this.held.set(id, {
+        this.remote.set(id, {
           t: "key",
           type: "keyUp",
           key: event.key,
@@ -196,8 +196,8 @@ class Viewer {
         });
     } else if (event.t === "mouse" && event.type !== "mouseMoved") {
       const id = `mouse:${event.button}`;
-      if (event.type === "mouseReleased") this.held.delete(id);
-      else this.held.set(id, { ...event, type: "mouseReleased", buttons: 0 });
+      if (event.type === "mouseReleased") this.remote.delete(id);
+      else this.remote.set(id, { ...event, type: "mouseReleased", buttons: 0 });
     }
   }
 
@@ -218,7 +218,7 @@ class Viewer {
     if (completed) this.invalidateCommand();
     if (!owns && pending !== "take") this.issuedTake = false;
     if (lost || previous?.activeTab !== state.activeTab) this.events = [];
-    if (!owns || state.activeTab !== this.heldTarget) this.held.clear();
+    if (!owns || state.activeTab !== this.heldTarget) this.remote.clear();
     this.set({
       state,
       pending: completed ? undefined : pending,
@@ -329,7 +329,6 @@ class Viewer {
       this.events.pop();
     this.events.push(event);
     this.heldTarget = target;
-    this.track(event);
     this.schedule();
   }
 
@@ -348,8 +347,11 @@ class Viewer {
   private send(): void {
     this.sending = true;
     const ticket = this.ticket;
-    this.inflight = this.post("input", { events: this.events.splice(0, 40) }).then((code) => {
+    const batch = this.events.splice(0, 40);
+    this.inflight = this.post("input", { events: batch }).then((code) => {
       this.sending = false;
+      if (code === 204) for (const event of batch) this.track(event);
+      if (code === 409) this.remote.clear();
       if (code !== 204 && code !== 409) this.fence(AMBIGUOUS);
       if (code === 409 && this.ticket === ticket && this.canDrive()) {
         this.discard();
@@ -361,12 +363,15 @@ class Viewer {
     });
   }
 
-  private async settle(): Promise<void> {
-    this.events.push(...this.held.values());
-    this.held.clear();
-    while (!this.quarantined && (this.events.length > 0 || this.sending)) {
-      if (!this.sending) this.send();
-      await this.inflight;
+  private async settle(confirmed = false): Promise<void> {
+    const release = confirmed || !this.recovering;
+    while (!this.quarantined) {
+      if (this.sending) await this.inflight;
+      else {
+        if (this.events.length === 0 && release) this.events.push(...this.remote.values());
+        if (this.events.length === 0) return;
+        this.send();
+      }
     }
   }
 
@@ -380,7 +385,7 @@ class Viewer {
   private async teardown(controlling: boolean): Promise<void> {
     await this.settle();
     await this.mutation;
-    if (!this.quarantined && (controlling || this.issuedTake))
+    if (!this.quarantined && !this.recovering && (controlling || this.issuedTake))
       await this.post("command", { t: "control", on: false });
     this.stream.close();
   }
