@@ -235,7 +235,12 @@ class Hub {
       } else if (message.t === "read") markRead(this.db, live().id, message.entry);
       else if (message.t === "ack") acknowledge(this.db, live().id, message.entry);
       else if (message.t === "activity") {
-        if (setSessionState(this.db, live().id, message.state, message.progress === true))
+        const id = live().id;
+        const seen = this.db.prepare("SELECT last_seen FROM sessions WHERE id = ?").get(id)?.[
+          "last_seen"
+        ];
+        const stale = typeof seen === "number" && Date.now() - seen >= this.timing.stall;
+        if (setSessionState(this.db, id, message.state, message.progress === true) || stale)
           this.web.changed();
       } else {
         const id = message.id;
