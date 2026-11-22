@@ -33,9 +33,9 @@ const seen = (): string[] => {
     : [];
 };
 
-const CLEAN_RESTART = /^Started c-1-a1 again on [^\n]+, on its own session and branch [^\n]+\.$/;
+const CLEAN_RESTART = "Started c-1-a1 again on local, on its own session and branch c-1-a1.";
 
-async function expectRestart(index: number, expected: RegExp): Promise<void> {
+async function expectRestart(index: number, expected: RegExp | string): Promise<void> {
   const result = await poll(
     () =>
       parts.h.events.filter(
@@ -44,7 +44,17 @@ async function expectRestart(index: number, expected: RegExp): Promise<void> {
     `restart_card result ${String(index + 1)}`,
     WORKER_WAIT_MS,
   );
-  assert.match(String(result["text"]), expected);
+  if (typeof expected === "string") assert.equal(String(result["text"]), expected);
+  else assert.match(String(result["text"]), expected);
+}
+
+async function replacementModel(): Promise<string | undefined> {
+  const { h } = parts;
+  for (let index = 0; ; index += 1) {
+    const turns = await h.waitForCall(index, "worker", WORKER_WAIT_MS);
+    if (turns.some((turn) => turn.text.includes("session was restarted")))
+      return h.modelsOf("worker")[index];
+  }
 }
 
 async function seenCount(count: number): Promise<string[]> {
@@ -161,14 +171,10 @@ test("a restart cannot avoid the provider of the worker's explicit GPT model, le
   await expectRestart(0, /cannot avoid openai-codex/);
   assert.deepEqual(seen(), ["(unset)"]);
 
-  const beforeRestart = h.modelsOf("worker").length;
   await mate.followUp("restart it, avoiding only claude-max");
   await expectRestart(1, CLEAN_RESTART);
   assert.deepEqual(await seenCount(2), ["(unset)", "claude-max"]);
-  await h.waitForCall(beforeRestart, "worker", WORKER_WAIT_MS);
-  const replacement = h.modelsOf("worker").slice(beforeRestart);
-  assert.ok(replacement.length >= 1);
-  for (const each of replacement) assert.equal(each, model);
+  assert.equal(await replacementModel(), model);
 });
 
 test("the card's own mate re-pins an explicit-model worker to the router with restart_card, and the worker keeps its card, conversation, and branch", async () => {
