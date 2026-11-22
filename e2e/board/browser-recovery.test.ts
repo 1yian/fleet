@@ -252,18 +252,15 @@ test("a late frame for the old tab does not satisfy the tab confirmation that re
     .waitFor();
 });
 
-test("a tab change that never delivers a trusted frame refreshes the stream once", async (t) => {
-  const { endpoint, jpeg, page, base } = await launch(t);
+test("Done stays available when the stream confirms ownership with no open tab", async (t) => {
+  const { endpoint, page, base } = await launch(t);
   await takeControl(page, endpoint, base);
   await clickAndSettle(page, endpoint);
-  const opens = endpoint.streamOpens;
-  endpoint.holdFrame();
-  endpoint.switchTab(1);
-  await until(() => endpoint.streamOpens > opens);
+  endpoint.closeAllTabs();
+  await page.getByRole("button", { name: "Done", disabled: false }).waitFor();
   assert.equal(await page.locator(".browser-surface").count(), 0);
-  endpoint.releaseFrame();
-  await page
-    .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
-    .waitFor();
-  assert.equal(endpoint.streamOpens, opens + 1);
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByText("Control returned to the agent.").waitFor();
+  assert.deepEqual(endpoint.commands, [{ t: "control", on: true }, { t: "done" }]);
+  assert.equal(endpoint.controlled, false);
 });

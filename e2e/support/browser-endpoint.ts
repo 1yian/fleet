@@ -33,6 +33,7 @@ export class BrowserEndpoint {
   private granting = false;
   granted = 0;
   private frameHeld = false;
+  private tabless = false;
   readonly order: string[] = [];
   readonly events: Record<string, unknown>[] = [];
   readonly commands: unknown[] = [];
@@ -55,7 +56,7 @@ export class BrowserEndpoint {
     return {
       lane: "garden",
       status: "ready",
-      tabs: TABS,
+      tabs: this.tabless ? [] : TABS,
       control: { kind: this.holder === undefined ? "agent" : "human" },
       credentialStep: false,
       captchaStep: false,
@@ -65,13 +66,13 @@ export class BrowserEndpoint {
   }
 
   private state(viewer: string, response: ServerResponse): void {
-    const activeTab = TABS[this.tab]?.id;
+    const activeTab = this.tabless ? null : TABS[this.tab]?.id;
     event(response, "state", {
       snapshot: this.lane(),
       activeTab,
       viewer: { controlling: this.holder === viewer },
     });
-    if (!this.frameHeld) this.frame(response);
+    if (!this.frameHeld && !this.tabless) this.frame(response);
   }
 
   private frame(response: ServerResponse): void {
@@ -159,6 +160,11 @@ export class BrowserEndpoint {
         jpeg: this.jpeg[index],
         meta: { targetId: TABS[index]?.id, deviceWidth: 480, deviceHeight: 300 },
       });
+  }
+
+  closeAllTabs(): void {
+    this.tabless = true;
+    this.publish();
   }
 
   grantOnTake(): void {
