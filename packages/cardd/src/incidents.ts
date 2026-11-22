@@ -8,7 +8,13 @@ import {
   type Mode,
   type Phase,
 } from "./incident-kinds.ts";
-import { applyIncident, insertOpened, intentOf, recoveryOffered } from "./incident-lifecycle.ts";
+import {
+  applyIncident,
+  insertOpened,
+  intentOf,
+  recoveryOffered,
+  retireOldAdvice,
+} from "./incident-lifecycle.ts";
 import {
   currentIntent,
   generationOf,
@@ -21,6 +27,7 @@ import {
 import { describe, labelOf, nextStep, stamp, tell } from "./incident-text.ts";
 import { QUEUED_DELIVERY, TAKEN_DELIVERY } from "./delivery-states.ts";
 import { transitionStop } from "./lane-stop.ts";
+import { retireSupersededNotices } from "./restart-requests.ts";
 import { addCard, addEntry, laneCardOf, parentOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
@@ -124,6 +131,7 @@ function failRecovery(
     {
       type: "recovery-failed",
       recoverable,
+      generation: generationOf(db, inc.actor),
       classification: kind,
       error,
       eligibleAt: eligible,
@@ -344,9 +352,15 @@ export function recover(
   const live = args.mode === "retry";
   const compaction = inc.phase === "compaction";
   const body = probeText(session.lane, plan.role, inc.id, compaction);
-  const fields = { for: plan.role, recovery: inc.id, ...(compaction ? { compaction } : {}) };
+  const fields = {
+    for: plan.role,
+    recovery: inc.id,
+    recoveryMode: args.mode,
+    ...(compaction ? { compaction } : {}),
+  };
   const draft = { card: inc.card, author: `mate:${session.lane}`, kind: "comment", body, fields };
   const entry = addEntry(db, draft, live ? [inc.actor] : []);
+  if (!live) retireSupersededNotices(db, inc.card);
   applyIncident(
     db,
     inc,
@@ -369,25 +383,31 @@ function reconnected(db: DatabaseSync, session: string): void {
   applyIncident(db, live, { type: "reconnected" }, Date.now());
 }
 
-export function adoptProcess(db: DatabaseSync, session: string, process: string | undefined): void {
-  transitionStop(db, session, { event: "connect" });
+export function adoptProcess(
+  db: DatabaseSync,
+  { id, card }: Session,
+  process: string | undefined,
+): void {
+  transitionStop(db, id, { event: "connect" });
   if (process === undefined) return;
-  const known = db.prepare("SELECT process FROM sessions WHERE id = ?").get(session)?.["process"];
+  const known = db.prepare("SELECT process FROM sessions WHERE id = ?").get(id)?.["process"];
   if (known === process) {
-    reconnected(db, session);
+    reconnected(db, id);
     return;
   }
   db.prepare("UPDATE sessions SET process = ?, generation = generation + 1 WHERE id = ?").run(
     process,
-    session,
+    id,
   );
-  const live = liveIncident(db, session);
+  if (card !== null) retireSupersededNotices(db, card);
+  const live = liveIncident(db, id);
   if (live === undefined) return;
+  retireOldAdvice(db, live.id);
   if (live.state === "recovering") {
     if (live.recoveryMode === "replace" && live.recoveryEntry !== null)
       db.prepare(
         "INSERT OR IGNORE INTO deliveries (session, entry, state, updated_at) VALUES (?, ?, 'pending', ?)",
-      ).run(session, live.recoveryEntry, Date.now());
+      ).run(id, live.recoveryEntry, Date.now());
     return;
   }
   applyIncident(db, live, { type: "process-changed" }, Date.now());

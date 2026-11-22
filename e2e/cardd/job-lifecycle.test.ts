@@ -6,11 +6,12 @@ import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protoc
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 import { until } from "../support/live-fleet.ts";
+import { exitedPid, ProbeRoute } from "../support/probe-route.ts";
 
 let fleet: Fleet;
 let beats: NodeJS.Timeout[] = [];
 beforeEach(async () => {
-  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001" });
+  fleet = await startFleet({ CARDD_TIMING_SCALE: "0.001" }, ["--hosts", new ProbeRoute().hosts]);
 });
 afterEach(async () => {
   for (const beat of beats) clearInterval(beat);
@@ -166,9 +167,12 @@ test("a reservation does not enter the job watch until the owning wrapper regist
     [silent],
   );
   assert.deepEqual(await worker.call("job.prepare", args), prepared);
-  assert.deepEqual(await worker.call("job.register", { job, launch: args.launch, pid: 1234 }), {
-    registered: true,
-  });
+  assert.deepEqual(
+    await worker.call("job.register", { job, launch: args.launch, pid: await exitedPid() }),
+    {
+      registered: true,
+    },
+  );
   assert.deepEqual(await worker.call("jobs", {}), [{ id: job, label: args.label }]);
   assert.deepEqual(await worker.call("job.alive", { job }), { running: true });
   assert.deepEqual(await worker.call("job.prepare", args), {

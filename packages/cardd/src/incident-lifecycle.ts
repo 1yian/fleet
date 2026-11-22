@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Status } from "@fleet/protocol";
-import { QUEUED_DELIVERY } from "./delivery-states.ts";
+import { QUEUED_DELIVERY, RETIRABLE_DELIVERY } from "./delivery-states.ts";
 import type { Kind, Mode, Phase } from "./incident-kinds.ts";
 import { isFinished, pausedNow } from "./status.ts";
 import { loadCard } from "./store.ts";
@@ -155,6 +155,7 @@ type IncidentEvent =
   | {
       readonly type: "recovery-failed";
       readonly recoverable: boolean;
+      readonly generation: number;
       readonly classification: Kind;
       readonly error: string;
       readonly eligibleAt: number | null;
@@ -270,6 +271,16 @@ function subjectOf(
   return event.type === "controlled" ? recoveringView(db, event.actor) : incident;
 }
 
+export function retireOldAdvice(db: DatabaseSync, incident: number): void {
+  db.prepare(
+    `DELETE FROM deliveries WHERE ${RETIRABLE_DELIVERY} AND entry IN (
+      SELECT e.id FROM incidents i JOIN sessions s ON s.id = i.actor
+      JOIN entries e ON e.card = i.card
+      WHERE i.id = ? AND i.generation < s.generation AND e.kind = 'finding' AND e.author = 'check'
+        AND instr(e.body, 'restart_card(card=' || i.card || ', incident=' || i.id || ', generation=' || i.generation || ',') > 0)`,
+  ).run(incident);
+}
+
 function writeFailed(
   db: DatabaseSync,
   id: number,
@@ -277,11 +288,12 @@ function writeFailed(
   event: Extract<IncidentEvent, { type: "recovery-failed" }>,
   at: number,
 ): void {
+  retireOldAdvice(db, id);
   db.prepare(
-    `UPDATE incidents SET state = ?, classification = ?, error = ?, eligible_at = ?, due_told = 0,
-       count = count + 1, last_at = ?, recovery_key = NULL, recovery_deadline = NULL
+    `UPDATE incidents SET state = ?, generation = ?, classification = ?, error = ?, eligible_at = ?,
+       due_told = 0, count = count + 1, last_at = ?, recovery_key = NULL, recovery_deadline = NULL
      WHERE id = ?`,
-  ).run(state, event.classification, event.error, event.eligibleAt, at, id);
+  ).run(state, event.generation, event.classification, event.error, event.eligibleAt, at, id);
 }
 
 function writeStarted(

@@ -268,6 +268,8 @@ const ENTRY_EFFECTS: Partial<Record<string, (basis: Basis, tally: Tally, entry: 
   },
 };
 
+export const affectsStanding = (kind: string): boolean => Object.hasOwn(ENTRY_EFFECTS, kind);
+
 export interface Facts {
   readonly hold: Hold | undefined;
   readonly occurrences: number;
@@ -368,6 +370,13 @@ export function standingFrom(basis: Basis, entries: readonly Entry[], now: numbe
 
 export function pausedNow(standing: Standing, now: number): boolean {
   return pauseInForce(standing.facts.pausedUntil, now);
+}
+
+export function acceptsRestartNotice(
+  { standing, entries }: { standing: Standing; entries: readonly Entry[] },
+  now: number,
+): boolean {
+  return standing.status === "working" && !pausedNow(standing, now) && !isFinished(entries);
 }
 
 export function resting(standing: Standing): boolean {

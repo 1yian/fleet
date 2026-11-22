@@ -9,9 +9,11 @@ const SEEN_MS = 60;
 
 export class TestClock {
   private readonly file = join(tempDir("clock-"), "skew");
+  private readonly epoch: number | undefined;
   private skewMs = 0;
 
-  constructor() {
+  constructor(epoch?: number) {
+    this.epoch = epoch;
     writeFileSync(this.file, "0");
   }
 
@@ -20,6 +22,7 @@ export class TestClock {
     return {
       ...base,
       FLEET_E2E_CLOCK: this.file,
+      ...(this.epoch === undefined ? {} : { FLEET_E2E_CLOCK_EPOCH: String(this.epoch) }),
       NODE_OPTIONS: `${options} --import=${PRELOAD}`.trim(),
     };
   }

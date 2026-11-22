@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import type { Move, Turn } from "../support/harness.ts";
 import {
   lastUser,
   mateConnected,
+  plan,
   startDispatchLab,
   stopDispatchLab,
   toolResults,
@@ -33,20 +33,8 @@ async function until<T>(read: () => Promise<T | undefined>, what: string): Promi
 
 const cardOne = async () => (await parts.cardd.board()).cards.find((card) => card.id === 1);
 
-async function promptMate(text: string): Promise<void> {
-  await until(async () => {
-    const state = await parts.mate.state();
-    return state["isStreaming"] === false ? true : undefined;
-  }, "the mate to settle");
-  parts.mate.prompt(text);
-}
-
-const plan = (turns: Turn[], plans: Record<string, readonly Move[]>): Move => {
-  const at = turns.findLastIndex((turn) => turn.role === "user");
-  const done = turns.slice(at).filter((turn) => turn.role === "toolResult").length;
-  const ask = turns[at]?.text ?? "";
-  const moves = Object.entries(plans).find(([key]) => ask.includes(key))?.[1] ?? [];
-  return moves[done] ?? { text: "noted" };
+const promptMate = (text: string): void => {
+  parts.mate.prompt(text, "followUp");
 };
 
 test("restart_card reconnects the worker of a paused card whose process is gone, keeps the card paused, and the next comment reaches it", async () => {
@@ -87,7 +75,7 @@ test("restart_card reconnects the worker of a paused card whose process is gone,
   }
 
   await mateConnected(h);
-  await promptMate("ship the scrollbar fix");
+  promptMate("ship the scrollbar fix");
   await until(async () => ((await cardOne())?.status === "paused" ? true : undefined), "the pause");
   await until(
     () =>
@@ -106,7 +94,7 @@ test("restart_card reconnects the worker of a paused card whose process is gone,
     "the worker to be lost",
   );
 
-  await promptMate("reconnect the worker");
+  promptMate("reconnect the worker");
   const result = await until(
     () =>
       Promise.resolve(
@@ -136,7 +124,7 @@ test("restart_card reconnects the worker of a paused card whose process is gone,
     false,
   );
 
-  await promptMate("send the wake-up");
+  promptMate("send the wake-up");
   await until(
     () =>
       Promise.resolve(

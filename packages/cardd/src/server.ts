@@ -12,7 +12,8 @@ import {
   type ServerMessage,
 } from "@fleet/protocol";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
-import { MISSED_HEARTBEATS, runCheck, type JobLossGrace } from "./check.ts";
+import { runCheck } from "./check.ts";
+import { goneJobs, MISSED_HEARTBEATS, type JobLossGrace } from "./job-loss.ts";
 import type { Timings } from "./timing.ts";
 import { acknowledge, confirm, markRead, toPush } from "./deliveries.ts";
 import { adoptMaintenance, pendingFor } from "./maintenance.ts";
@@ -136,6 +137,23 @@ class Hub {
 
   private lastTick = Date.now();
   private readonly jobLossGrace: JobLossGrace = { until: 0 };
+  private probingJobs = false;
+
+  private probeJobs(now: number): void {
+    if (this.probingJobs) return;
+    this.probingJobs = true;
+    goneJobs(this.db, this.hosts, now, this.timing, this.jobLossGrace)
+      .then((notify) => {
+        for (const recipient of notify) this.flush(recipient, false);
+        if (notify.length > 0) this.web.changed();
+      })
+      .catch((error: unknown) => {
+        console.warn(`Could not look for gone job wrappers: ${reason(error)}`);
+      })
+      .finally(() => {
+        this.probingJobs = false;
+      });
+  }
 
   check(): void {
     const now = Date.now();
@@ -153,6 +171,7 @@ class Hub {
       ...startup,
       ...transaction(this.db, () => runCheck(this.db, now, this.timing, this.jobLossGrace)),
     ]);
+    this.probeJobs(now);
     const checked = performance.now();
     for (const recipient of notify) this.flush(recipient, false);
     if (notify.size > 0) this.web.changed();
@@ -308,7 +327,7 @@ class Hub {
     this.bySession.set(session.id, socket);
     const reporters = transaction(this.db, () => {
       setSessionState(this.db, session.id, message.running === true ? "running" : "idle");
-      adoptProcess(this.db, session.id, message.process);
+      adoptProcess(this.db, session, message.process);
       const told = adoptMaintenance(
         this.db,
         session.id,

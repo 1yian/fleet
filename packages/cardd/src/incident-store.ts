@@ -89,6 +89,11 @@ export function generationOf(db: DatabaseSync, actor: string): number {
   );
 }
 
+export function processOf(db: DatabaseSync, actor: string): string | null {
+  const process = db.prepare("SELECT process FROM sessions WHERE id = ?").get(actor)?.["process"];
+  return typeof process === "string" ? process : null;
+}
+
 export function roleOf(db: DatabaseSync, actor: string): "mate" | "worker" {
   return db.prepare("SELECT role FROM sessions WHERE id = ?").get(actor)?.["role"] === "mate"
     ? "mate"

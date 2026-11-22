@@ -25,7 +25,8 @@ import {
 import { keepingRefusals } from "./incident-escalation.ts";
 import { markStopping } from "./incident-lanes.ts";
 import { clearFailure, noteControl, reportFailure } from "./incidents.ts";
-import { restartCard } from "./restarts.ts";
+import { processOf } from "./incident-store.ts";
+import { restartCard, restartFailed, restartNotice } from "./restarts.ts";
 import {
   hold,
   holdOf,
@@ -215,7 +216,7 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
     return { value: args, notify: [] };
   },
   projects: (db) => ({ value: listProjects(db), notify: [] }),
-  comment,
+  comment: (db, session, raw) => comment(db, session, raw),
   "lane.plan": (db, session, _raw, timing) => ({
     value: loadPlan(db, session.lane, timing.wall()),
     notify: [],
@@ -255,7 +256,11 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
     const { card: id } = check(OPS["attempt.resume"].args, raw);
     const card = ownCard(db, session, id);
     requireOpen(db, card);
-    return { value: resumeAttempt(db, card), notify: [] };
+    const attempt = resumeAttempt(db, card);
+    return {
+      value: { ...attempt, process: processOf(db, attempt.session) },
+      notify: [],
+    };
   },
   "branch.name": (db, session, raw) => {
     const args = check(OPS["branch.name"].args, raw);
@@ -294,6 +299,10 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
   }),
   "card.restart": (db, session, raw, timing) =>
     restartCard(db, session, check(OPS["card.restart"].args, raw), timing),
+  "card.restart.failed": (db, session, raw) =>
+    restartFailed(db, session, check(OPS["card.restart.failed"].args, raw)),
+  "card.restart.notice": (db, session, raw) =>
+    restartNotice(db, session, check(OPS["card.restart.notice"].args, raw)),
   report: (db, session, raw, _timing, note, _closeCheck, emptyBranch) => {
     const { status, ...fieldsFromRequest } = check(OPS.report.args, raw);
     if (session.card === null) throw new Error("only a worker on a card can report");

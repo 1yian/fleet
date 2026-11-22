@@ -1,9 +1,9 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { idlePark } from "@fleet/protocol";
 import { quietSql } from "./attempts.ts";
-import { jobStateSql, launchedJobSql, loseSilentJobs, startedAtSql } from "./jobs.ts";
-import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
-import { IN_FLIGHT_DELIVERY } from "./delivery-states.ts";
+import { jobStateSql, launchedJobSql, startedAtSql } from "./jobs.ts";
+import { lostJobs, type JobLossGrace } from "./job-loss.ts";
+import { chaseIntake, dueBatches, hasInFlightDelivery, remind } from "./deliveries.ts";
 import { escalationText, told, UNRECOVERABLE, unrecoverable } from "./incident-escalation.ts";
 import { liveStateSql } from "./incident-lifecycle.ts";
 import { incidentFrom, LIVE_INCIDENT, roleOf } from "./incident-store.ts";
@@ -14,7 +14,7 @@ import { describe, labelOf, nextStep } from "./incident-text.ts";
 import { remaining } from "./incident-kinds.ts";
 import { replyNudges } from "./replies.ts";
 import { finishedOpen, idleNow, resting, type Finish } from "./status.ts";
-import { addEntry, getCard, loadOpenCards, mainLane, workerOf, type Loaded } from "./store.ts";
+import { loadOpenCards, mainLane, workerOf, type Loaded } from "./store.ts";
 import { type Timings } from "./timing.ts";
 import { actingLane, bundleMatches, minutesSince } from "./bundle.ts";
 import { firedSchedules } from "./schedules.ts";
@@ -86,7 +86,7 @@ const WORKER_RULES: readonly {
 
 const IDLE_WORKERS = (
   ids: readonly number[],
-): string => `SELECT w.card AS card, w.lane AS lane, w.seen AS seen,
+): string => `SELECT w.card AS card, w.lane AS lane, w.seen AS seen, w.session AS session,
     coalesce((SELECT max(created_at) FROM entries WHERE card = w.card AND author LIKE 'worker:%'), 0) AS spoke,
     (SELECT max(created_at) FROM entries WHERE card = w.card AND author = 'check'
       AND json_extract(fields, '$.condition') = 'worker-idle-nudge') AS nudged,
@@ -96,8 +96,7 @@ const IDLE_WORKERS = (
         WHERE card = w.card AND author LIKE 'worker:%'), 0)) AS ignored
   FROM (${workerCards(ids)}) w
   WHERE ${quietSql("w.state", "w.attemptId")}
-    AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}
-    AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session AND d.state IN (${IN_FLIGHT_DELIVERY}))`;
+    AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}`;
 
 const NUDGE_TEXT =
   "you went idle without reporting. If the work is done or you are stuck, call report now with the right status. If you are still working, carry on and report when you reach a handoff.";
@@ -145,9 +144,10 @@ function idleMatches(db: DatabaseSync, ids: readonly number[], now: number, t: T
     const seen = Number(row["seen"]);
     const nudged = typeof row["nudged"] === "number" ? row["nudged"] : 0;
     const ignored = typeof row["ignored"] === "number" ? row["ignored"] : undefined;
-    const settled = now - seen >= t.idleNudge;
+    if (now - seen < t.idleNudge || hasInFlightDelivery(db, String(row["session"]), card))
+      return [];
     const nudge: Match[] =
-      settled && (ignored === undefined || nudged < seen)
+      ignored === undefined || nudged < seen
         ? [
             {
               card,
@@ -160,8 +160,7 @@ function idleMatches(db: DatabaseSync, ids: readonly number[], now: number, t: T
             },
           ]
         : [];
-    const tier =
-      ignored === undefined || !settled ? 0 : repeatTier(now - ignored, t.idleTell, t.repeat);
+    const tier = ignored === undefined ? 0 : repeatTier(now - ignored, t.idleTell, t.repeat);
     const text = "worker idle without a handoff, and it did not act on a nudge";
     return [
       ...nudge,
@@ -254,50 +253,6 @@ function finishedCards(open: readonly Loaded[], t: Timings): Match[] {
     const finish = finishedOpen(entries);
     if (hold !== undefined || finish === undefined) return [];
     return finishedMatches({ ...own, since: standing.since }, finish, t.wall(), t);
-  });
-}
-
-export const MISSED_HEARTBEATS = 3;
-
-export interface JobLossGrace {
-  firstCheckAt?: number;
-  until: number;
-}
-
-function jobLossHeld(grace: JobLossGrace, now: number, heartbeat: number): boolean {
-  const started = grace.firstCheckAt;
-  if (started === undefined) return true;
-  return now - started < MISSED_HEARTBEATS * heartbeat || now < grace.until;
-}
-
-function lostJobs(db: DatabaseSync, now: number, t: Timings, grace: JobLossGrace): string[] {
-  if (jobLossHeld(grace, now, t.heartbeat)) return [];
-  return loseSilentJobs(db, now - MISSED_HEARTBEATS * t.heartbeat).flatMap((job) => {
-    const card = getCard(db, job.card);
-    const body = `job lost: job ${String(job.id)} (${job.label}) stopped reporting. It is not run again.`;
-    addEntry(
-      db,
-      {
-        card: card.id,
-        author: "check",
-        kind: "finding",
-        body,
-        fields: { condition: "job-lost", job: job.id },
-      },
-      [card.lane],
-    );
-    const worker = workerOf(db, card.id);
-    const heard = worker === undefined ? [] : [worker];
-    if (worker !== undefined) {
-      const fields = { job: job.id, label: job.label, lost: true };
-      const note = "no heartbeat arrived. It is not run again.";
-      addEntry(
-        db,
-        { card: card.id, author: `job:${String(job.id)}`, kind: "job-result", body: note, fields },
-        heard,
-      );
-    }
-    return worker === undefined ? [card.lane] : [card.lane, worker];
   });
 }
 
@@ -462,6 +417,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLo
       })
       .map(({ card }) => card.id),
   );
+  const incidentNotices = reconcileIncidents(db, now, t);
   const checks = [
     ...withIncidents(db, workerMatches(db, open, now, t), now, t),
     ...finishedCards(open, t),
@@ -485,7 +441,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLo
     ...scheduledWakes(db, t.wall()),
     ...firedSchedules(db, t.wall()),
     ...dueBatches(db, { now: t.wall(), window: t.batch }),
-    ...reconcileIncidents(db, now, t),
+    ...incidentNotices,
     ...lostMates(db, now, t),
     ...expireMaintenance(db, now, t),
     ...replyNudges(db, open, now, t),

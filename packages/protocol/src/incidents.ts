@@ -42,6 +42,33 @@ export const INCIDENT_OPS = {
     args: Type.Object({ lane: Type.String({ minLength: 1 }) }),
     result: Type.Object({ stopping: Type.Boolean() }),
   },
+  "card.restart.failed": {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      key: Key,
+      request: Type.Integer({
+        description:
+          "The worker restart request id that card.restart returned for this key; a request whose worker connected in a newer generation is not refundable",
+      }),
+    }),
+    result: Type.Object({ recorded: Type.Boolean() }),
+  },
+  "card.restart.notice": {
+    roles: ["mate"],
+    args: Type.Object({
+      card: Type.Integer(),
+      request: Type.Integer({
+        description: "The request id that card.restart returned for the restart being carried out",
+      }),
+    }),
+    result: Type.Object({
+      posted: Type.Boolean({
+        description:
+          "False if already queued, refunded, durably superseded, or the card is not working; a refundable successor defers delivery",
+      }),
+    }),
+  },
   "card.restart": {
     roles: ["mate"],
     args: Type.Object({
@@ -81,6 +108,12 @@ export const INCIDENT_OPS = {
       generation: Type.Integer(),
       replaced: Type.Boolean(),
       repeat: Type.Boolean(),
+      request: Type.Optional(
+        Type.Integer({
+          description:
+            "The id of an ordinary worker restart request, absent for repeats, incident recoveries, and lane restarts",
+        }),
+      ),
       reconnect: Type.Optional(
         Type.Boolean({
           description:

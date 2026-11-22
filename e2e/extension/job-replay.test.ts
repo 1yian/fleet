@@ -164,13 +164,13 @@ async function reachOutcomes(rep: Replay): Promise<{ first: Pi; heldId: number }
   const first = worker();
   const wrapper = await wrapperOf(1, slow.ready);
   await settled(1);
-  process.kill(wrapper, "SIGSTOP");
+  jl.probe.silence(wrapper);
   const lost = await untilAsync(
     async () => (await view()).find((entry) => entry.fields["lost"] === true),
     "the detector to record the loss",
   );
   await settleEarlier(rep, lost.id);
-  process.kill(wrapper, "SIGCONT");
+  jl.probe.resume(wrapper);
   const revived = await untilAsync(
     async () => (await view()).find((entry) => entry.fields["revived"] === true),
     "the heartbeat to record the revival",
@@ -298,7 +298,7 @@ test("a failed exact read keeps a known wait through a genuine loss, and the rec
   await settled(1);
   await until(() => (activities.at(-1) === "waiting" ? true : undefined), "the initial wait");
   failExact = true;
-  process.kill(wrapper, "SIGSTOP");
+  jl.probe.silence(wrapper);
   const lost = await untilAsync(
     async () =>
       (await cardView()).entries.find(

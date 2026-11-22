@@ -48,7 +48,7 @@ test("a job whose wrapper died is lost once: the mate and the worker are told", 
         (turn) =>
           turn.role === "user" &&
           turn.text.startsWith(
-            "[fleet] c-1 users-see-one-scrollbar job 1 (first) lost: no heartbeat arrived",
+            "[fleet] c-1 users-see-one-scrollbar job 1 (first) lost: its wrapper process is gone",
           ),
       ),
     );
@@ -69,6 +69,38 @@ test("a job whose wrapper died is lost once: the mate and the worker are told", 
   }
 });
 
+test("a live job that goes silent is not lost: the detector finds its wrapper alive and the job finishes", async () => {
+  const quiet = commandAwaitingGo(5);
+  h.onModel(() => ({ tool: "run_long", args: { label: "quiet", command: quiet.command } }));
+  h.onModel(() => ({ text: "waiting for the job" }));
+  for (let i = 0; i < 3; i++) h.onModel(() => ({ text: "noted" }));
+  worker();
+  const wrapper = await wrapperOf(1, quiet.ready);
+  process.kill(wrapper, "SIGSTOP");
+  try {
+    await until(
+      () => (jl.probe.count("live") >= 3 ? true : undefined),
+      "the detector to find the silent wrapper alive three times",
+    );
+    assert.equal(jl.jobState(1), "running");
+    assert.deepEqual(findings(), []);
+  } finally {
+    process.kill(wrapper, "SIGCONT");
+    writeFileSync(quiet.go, "");
+  }
+  const after = await until(
+    () => h.calls.find((turns) => lastUser(turns)?.includes("exited 0") === true),
+    "the result",
+  );
+  assert.equal(lastUser(after), "[fleet] c-1 users-see-one-scrollbar job 1 (quiet) exited 0: late");
+  assert.equal(jl.jobState(1), "finished");
+  assert.deepEqual(findings(), []);
+  assert.equal(
+    h.calls.some((turns) => turns.some((turn) => turn.text.includes("lost:"))),
+    false,
+  );
+});
+
 test("a result that arrives after the job was marked lost is still delivered once", async () => {
   const slow = commandAwaitingGo(3);
   h.onModel(() => ({ tool: "run_long", args: { label: "late", command: slow.command } }));
@@ -78,7 +110,7 @@ test("a result that arrives after the job was marked lost is still delivered onc
   h.onModel(() => ({ tool: "report", args: { status: "done", text: "the job ended after all" } }));
   worker();
   const wrapper = await wrapperOf(1, slow.ready);
-  process.kill(wrapper, "SIGSTOP");
+  jl.probe.silence(wrapper);
   try {
     await until(() => (findings().length > 0 ? true : undefined), "the finding");
     assert.ok(
@@ -86,7 +118,7 @@ test("a result that arrives after the job was marked lost is still delivered onc
         (turn) =>
           turn.role === "user" &&
           turn.text.startsWith(
-            "[fleet] c-1 users-see-one-scrollbar job 1 (late) lost: no heartbeat arrived",
+            "[fleet] c-1 users-see-one-scrollbar job 1 (late) lost: its wrapper process is gone",
           ),
       ),
     );
@@ -96,7 +128,7 @@ test("a result that arrives after the job was marked lost is still delivered onc
     );
     writeFileSync(slow.go, "");
   } finally {
-    process.kill(wrapper, "SIGCONT");
+    jl.probe.resume(wrapper);
   }
 
   const after = await until(
@@ -156,13 +188,13 @@ test("replayed lost and revival notices never change the tracked wait: only the 
 
   worker();
   const wrapper = await wrapperOf(1, slow.ready);
-  process.kill(wrapper, "SIGSTOP");
+  jl.probe.silence(wrapper);
   const lostCall = await callWith((text) => text.includes("lost:"));
   await fleet.main.waitForEntry(
     (entry) => entry.fields["condition"] === "runtime-failure",
     "the failed lost notice",
   );
-  process.kill(wrapper, "SIGCONT");
+  jl.probe.resume(wrapper);
   const revival = await callWith((text) => text.includes("is running again"), lostCall);
   await handled(revival);
   const replayedLost = await callWith(
@@ -174,13 +206,13 @@ test("replayed lost and revival notices never change the tracked wait: only the 
   assert.equal(stopped(), false);
 
   failing.revival = true;
-  process.kill(wrapper, "SIGSTOP");
+  jl.probe.silence(wrapper);
   const secondLost = await callWith(
     (text) => text.includes("lost:") && !text.includes(again),
     replayedLost + 1,
   );
   await handled(secondLost);
-  process.kill(wrapper, "SIGCONT");
+  jl.probe.resume(wrapper);
   const failedRevival = await callWith((text) => text.includes("is running again"), secondLost);
   await handled(failedRevival);
   writeFileSync(slow.go, "");

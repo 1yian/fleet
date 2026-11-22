@@ -13,7 +13,8 @@ import {
 } from "@fleet/protocol";
 import Type from "typebox";
 import { yoloFor } from "./authority.ts";
-import { standingFrom, type Standing } from "./status.ts";
+import { retireNoticeDeliveries } from "./delivery-states.ts";
+import { acceptsRestartNotice, affectsStanding, standingFrom, type Standing } from "./status.ts";
 import { listProjects } from "./projects.ts";
 
 export interface Session {
@@ -35,15 +36,8 @@ const CardRowSchema = Type.Omit(CardSchema, ["status", "updatedAt"]);
 const CARD_JSON = `json_object('id', id, 'name', CASE name WHEN '' THEN 'c-' || id ELSE name END, 'title', title, 'lane', lane, 'project', coalesce(project, historical_project),
   'kind', kind, 'revision', revision, 'pr', pr, 'delivery', delivery, 'intent', intent, 'spec', spec,
   'createdAt', created_at)`;
-const STREAM_KINDS: ReadonlySet<string> = new Set([
-  "comment",
-  "report",
-  "hold",
-  "release",
-  "answer",
-  "cleanup",
-  "review-feedback",
-]);
+const RESTART_NOTICE_ENTRIES = `SELECT id, card FROM entries WHERE card = ? AND kind = 'comment'
+  AND json_type(fields, '$.restartNotice') = 'integer'`;
 export const ENTRY_JSON = `json_object('id', e.id, 'card', e.card, 'author', e.author, 'kind', e.kind,
   'body', e.body, 'fields', json(e.fields), 'createdAt', e.created_at)`;
 const SESSION_JSON = `json_object('id', s.id, 'role', s.role, 'lane', s.lane, 'card', a.card,
@@ -293,10 +287,10 @@ function loaded(db: DatabaseSync, row: unknown, now: number): Loaded {
   return { card, entries, standing };
 }
 
-export function loadCard(db: DatabaseSync, id: number): Loaded {
+export function loadCard(db: DatabaseSync, id: number, now = Date.now()): Loaded {
   const [row] = json(db, `SELECT ${CARD_JSON} AS j FROM cards WHERE id = ?`, id);
   if (row === undefined) throw new Error(`no card c-${String(id)}`);
-  return loaded(db, row, Date.now());
+  return loaded(db, row, now);
 }
 
 export function loadCards(db: DatabaseSync): Loaded[] {
@@ -401,8 +395,14 @@ export function addEntry(
       "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .run(entry.card, entry.author, entry.kind, entry.body, JSON.stringify(entry.fields), now);
-  if (STREAM_KINDS.has(entry.kind))
+  if (affectsStanding(entry.kind)) {
     db.prepare("UPDATE cards SET revision = revision + 1 WHERE id = ?").run(entry.card);
+    if (
+      db.prepare(`${RESTART_NOTICE_ENTRIES} LIMIT 1`).get(entry.card) !== undefined &&
+      !acceptsRestartNotice(loadCard(db, entry.card, now), now)
+    )
+      db.prepare(retireNoticeDeliveries(RESTART_NOTICE_ENTRIES)).run(now, entry.card);
+  }
   const deliver = db.prepare(
     "INSERT INTO deliveries (session, entry, state, updated_at) VALUES (?, ?, 'pending', ?)",
   );

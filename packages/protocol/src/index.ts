@@ -19,6 +19,7 @@ import { DatedWaitSchema, HOLD_WAIT_ARGS, RemainingStepSchema } from "./waits.ts
 export * from "./address.ts";
 export * from "./approval.ts";
 export { laidOut } from "./question.ts";
+export { CAPTAIN, howToReply } from "./reply.ts";
 export * from "./branch.ts";
 export * from "./health.ts";
 export * from "./http.ts";
@@ -57,7 +58,6 @@ export type Delivery = Static<typeof Delivery>;
 
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
-export const CAPTAIN = "captain";
 const ReplyId = Type.String({ pattern: "^r-[0-9]+$" });
 const ReplyTo = Type.Optional(
   Type.String({
@@ -113,13 +113,6 @@ export const OwedReplySchema = Type.Object({
   resentAt: Nullable(Type.Integer()),
 });
 export type OwedReply = Static<typeof OwedReplySchema>;
-
-export function howToReply(to: "worker" | "mate", card: number, id: string, from = ""): string {
-  const on = `card=${String(card)}`;
-  if (to === "worker") return `answer with report(status, text, replyTo="${id}")`;
-  const how = `comment(${on}, text, replyTo="${id}") or hold(${on}, question, replyTo="${id}")`;
-  return from === CAPTAIN ? `answer the captain on the board with ${how}` : `answer with ${how}`;
-}
 
 export const LIVE_STATES = ["starting", "idle", "running", "waiting", "exited", "lost"] as const;
 
@@ -356,7 +349,10 @@ export const OPS = {
   "attempt.resume": {
     roles: ["mate"],
     args: Type.Object({ card: Type.Integer() }),
-    result: AttemptPlan,
+    result: Type.Object({
+      ...AttemptPlan.properties,
+      process: Nullable(Type.String()),
+    }),
   },
   "branch.name": {
     roles: ["worker"],

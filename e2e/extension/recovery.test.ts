@@ -9,6 +9,9 @@ import { CardViewSchema, check, HttpOutcomeSchema, type Entry } from "@fleet/pro
 import {
   lastUser,
   mateConnected,
+  holdRepeat,
+  repeatFinished,
+  RESTART_REPEATED,
   startDispatchLab,
   stopDispatchLab,
   toolResults,
@@ -138,7 +141,10 @@ test("a worker with a stale module is replaced on its own conversation and work,
     results.at(-2) ?? "",
     /^Started c-1-a1 again on local, on its own session and branch c-1-a1\. The recovery check reaches it/,
   );
-  assert.match(results.at(-1) ?? "", /already runs a new process|left it alone|already runs on/);
+  assert.equal(
+    results.at(-1),
+    "This restart key was already recorded. No new launch was attempted.",
+  );
 
   const after = await workerGroupOf(lab, "c-1-a1");
   assert.ok(
@@ -160,16 +166,14 @@ test("a worker with a stale module is replaced on its own conversation and work,
 });
 
 function assertRecoveredConversation(h: Harness, incident: number): void {
-  const fresh = h.callsOf("worker").findLast((turns) => cardFor(turns) === 1) ?? [];
+  const checkText = `recovery check ${String(incident)} from main: this is a health check, not new work`;
+  const fresh = h
+    .callsOf("worker")
+    .find((turns) => cardFor(turns) === 1 && lastUser(turns)?.includes(checkText));
+  assert.ok(fresh, "the replacement did not receive its recovery check");
   assert.ok(
     fresh.some((turn) => turn.text.includes("fix the scrollbar")),
     "the old conversation is gone",
-  );
-  assert.match(
-    lastUser(fresh) ?? "",
-    new RegExp(
-      `recovery check ${String(incident)} from main: this is a health check, not new work`,
-    ),
   );
   for (const [index, turns] of h.callsOf("worker").entries())
     if (cardFor(turns) === 1) assert.equal(h.modelsOf("worker")[index], "openai-codex/gpt-fixture");
@@ -191,7 +195,10 @@ function branchOfTree(tree: string): string {
   }).trim();
 }
 
-async function verifyDuplicate(incident: { incident: number; generation: number }): Promise<void> {
+async function verifyDuplicate(
+  incident: { incident: number; generation: number },
+  replaced = true,
+): Promise<void> {
   const duplicate = await parts.cardd.post(parts.mainToken, "card.restart", {
     card: 1,
     ...incident,
@@ -210,7 +217,7 @@ async function verifyDuplicate(incident: { incident: number; generation: number 
       host: "local",
       card: 1,
       generation: incident.generation,
-      replaced: true,
+      replaced,
       repeat: true,
     },
   });
@@ -369,14 +376,15 @@ test("a replacement requested again with the same key while it is still starting
   parts = await startDispatchLab({
     cardd: { CARDD_TIMING_SCALE: "0.02" },
     workerArgs: ["-e", HOLD],
+    mateRoute: holdRepeat("same"),
   });
   const { h, lab, clone, mate, cardd } = parts;
   const tree = `${clone}.worktrees/c-1-a1`;
   const gate = gateOf(join(h.dir, "worker-args"));
   let failed = false;
   let incident = { incident: 0, generation: 0 };
-  let starting: number | undefined;
-  let phase: "first" | "again" | "done" = "first";
+  let original: number | undefined;
+  let phase: "first" | "done" = "first";
   const replace = (): { tool: string; args: Record<string, string | number> } => ({
     tool: "restart_card",
     args: { card: 1, ...incident, mode: "replace", key: "same" },
@@ -386,14 +394,10 @@ test("a replacement requested again with the same key while it is still starting
       if (turns.at(-1)?.role !== "user" || !lastUser(turns)?.includes("runtime failure"))
         return { text: "noted" };
       incident = incidentIn(turns);
+      original = await readyWorkerGroup(lab, "c-1-a1");
       execFileSync("sh", ["-c", 'mkfifo "$0"', gate]);
-      phase = "again";
-      return replace();
-    }
-    if (phase === "again") {
       phase = "done";
-      starting = await readyWorkerGroup(lab, "c-1-a1");
-      return replace();
+      return { ...replace(), alongside: [replace()] };
     }
     return { text: "noted" };
   });
@@ -410,24 +414,34 @@ test("a replacement requested again with the same key while it is still starting
     }, "worker");
   await mateConnected(h);
   mate.prompt("ship it");
-
-  const results = await mateResults(h, 4);
-  assert.match(results.at(-2) ?? "", /^Started c-1-a1 again on local/);
-  assert.match(
-    results.at(-1) ?? "",
-    /already runs or is starting on local, so this repeated request left it alone/,
+  const starting = await waitFor(
+    () => workerGroupOf(lab, "c-1-a1"),
+    (group) => group !== undefined && original !== undefined && group !== original,
+    WORKER_WAIT_MS,
   );
-  const sessions = (await cardd.post(parts.mainToken, "card", { card: 1 })).status;
-  assert.equal(sessions, 200);
-  assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
   const release = await open(gate, "w");
-  await release.close();
+  try {
+    await repeatFinished(parts);
+    assert.equal(toolResults(h.callsOf("mate").at(-1) ?? []).length, 2);
+    await verifyDuplicate(incident, false);
+    assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
+  } finally {
+    await release.close();
+  }
+
+  const results = (await mateResults(h, 4)).slice(-2);
+  assert.equal(results.filter((text) => text === RESTART_REPEATED).length, 1);
+  assert.match(
+    results.find((text) => text !== RESTART_REPEATED) ?? "",
+    /^Started c-1-a1 again on local/,
+  );
+  assert.equal((await cardd.post(parts.mainToken, "card", { card: 1 })).status, 200);
+  assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
   await waitFor(
     () => entriesOf(1),
     (view) => view.some((entry) => entry.body.includes("recovered (replace)")),
     WORKER_WAIT_MS,
   );
-
   assert.equal(await workerGroupOf(lab, "c-1-a1"), starting);
   assert.deepEqual(await workersOf(lab), ["c-1-a1"]);
   assert.deepEqual(await boardNames(), [[1, "task-1"]]);
@@ -462,7 +476,6 @@ test("a stale import on the nudge turn is one incident, replaced on the same car
     }, "worker");
   await mateConnected(h);
   mate.prompt("ship it");
-
   const entries = await waitFor(
     () => entriesOf(1),
     (view) => view.some((entry) => entry.body.includes("recovered (replace)")),

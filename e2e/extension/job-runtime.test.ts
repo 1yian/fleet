@@ -272,7 +272,7 @@ test("closing the job tab still reaches the worker: the result, or a lost job", 
     assert.ok(
       [
         "[fleet] c-1 users-see-one-scrollbar job 1 (tab) exited 130: started\ndying\ninterrupted",
-        "[fleet] c-1 users-see-one-scrollbar job 1 (tab) lost: no heartbeat arrived. It is not run again.",
+        "[fleet] c-1 users-see-one-scrollbar job 1 (tab) lost: its wrapper process is gone. It is not run again.",
       ].includes(woken),
       woken,
     );

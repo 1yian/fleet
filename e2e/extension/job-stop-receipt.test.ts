@@ -88,10 +88,10 @@ test("a generic stop receipt for a lost job keeps the pending dispatch reconcila
   proxy.callFault("job.running", { error: "injected exact read failure" });
   const wrapper = Number(jl.wrapperPid());
   const lossFrom = proxy.activities.length;
-  process.kill(wrapper, "SIGSTOP");
+  jl.probe.silence(wrapper);
   const resume = (): void => {
     try {
-      process.kill(wrapper, "SIGCONT");
+      jl.probe.resume(wrapper);
     } catch {
       return;
     }
@@ -257,10 +257,10 @@ async function silenceRegisteredGate(
   );
   proxy.callFault("job.running", { error: "injected exact read failure" });
   const wrapper = Number(jl.wrapperPid());
-  process.kill(wrapper, "SIGSTOP");
+  jl.probe.silence(wrapper);
   const resume = (): void => {
     try {
-      process.kill(wrapper, "SIGCONT");
+      jl.probe.resume(wrapper);
     } catch {
       return;
     }
