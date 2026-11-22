@@ -3,8 +3,7 @@ import { NEVER, type BridgeStatus } from "./health.ts";
 const FILE_STALE_MS = 15_000;
 const POLL_STALE_MS = 15_000;
 const HEARTBEAT_GRACE_MS = 5_000;
-const MINUTE_MS = 60_000;
-const HOUR_MS = 3_600_000;
+const NOT_CURRENT = "NOT CURRENT, last known values only";
 
 type Outcomes = BridgeStatus["poll"];
 
@@ -13,16 +12,13 @@ function timeOf(stamp: string): number | undefined {
   return Number.isNaN(time) ? undefined : time;
 }
 
-function ago(milliseconds: number): string {
-  if (milliseconds < MINUTE_MS)
-    return `${String(Math.max(0, Math.round(milliseconds / 1000)))}s ago`;
-  if (milliseconds < HOUR_MS) return `${String(Math.round(milliseconds / MINUTE_MS))}m ago`;
-  return `${String(Math.round(milliseconds / HOUR_MS))}h ago`;
+function within(stamp: string, at: number, limit: number): boolean {
+  const time = timeOf(stamp);
+  return time !== undefined && time <= at && at - time <= limit;
 }
 
-function shown(stamp: string, at: number): string {
-  const time = timeOf(stamp);
-  return time === undefined ? NEVER : `${stamp} (${ago(at - time)})`;
+function shown(stamp: string): string {
+  return timeOf(stamp) === undefined ? NEVER : stamp;
 }
 
 function failedLast(outcomes: Outcomes): boolean {
@@ -32,10 +28,9 @@ function failedLast(outcomes: Outcomes): boolean {
 }
 
 function pollVerdict(poll: Outcomes, at: number): string {
-  const ok = timeOf(poll.okAt);
   if (failedLast(poll)) return "FAILING";
-  if (ok === undefined) return "UNKNOWN, no poll has succeeded yet";
-  return at - ok > POLL_STALE_MS ? "STALE, no recent success" : "ok";
+  if (timeOf(poll.okAt) === undefined) return "UNKNOWN, no poll has succeeded yet";
+  return within(poll.okAt, at, POLL_STALE_MS) ? "ok" : "STALE, no recent success";
 }
 
 function eventVerdict(outcomes: Outcomes): string {
@@ -49,47 +44,53 @@ function presenceVerdict(presence: BridgeStatus["presence"], at: number): string
       ? "UNKNOWN, not connected yet"
       : "DISCONNECTED, reconnecting";
   const ack = timeOf(presence.ackAt);
-  if (ack === undefined) return "UNKNOWN, no heartbeat acknowledged yet";
-  return at - ack > presence.heartbeatMs * 2 + HEARTBEAT_GRACE_MS
-    ? "STALE, heartbeat acknowledgements stopped"
-    : "ok";
+  if (ack === undefined || ack <= (timeOf(presence.lostAt) ?? -Infinity))
+    return "UNKNOWN, no heartbeat acknowledged on this connection yet";
+  return within(presence.ackAt, at, presence.heartbeatMs * 2 + HEARTBEAT_GRACE_MS)
+    ? "ok"
+    : "STALE, heartbeat acknowledgements stopped";
 }
 
-function speechLine(speech: BridgeStatus["speech"], at: number): string {
+function speechLine(speech: BridgeStatus["speech"]): string {
   if (speech.result === NEVER) return `speech (${speech.engine}): never used`;
-  return `speech (${speech.engine}): last result ${speech.result}, ${shown(speech.at, at)}`;
+  return `speech (${speech.engine}): last result ${speech.result}, ${shown(speech.at)}`;
+}
+
+function isLive(status: BridgeStatus, at: number): boolean {
+  return within(status.writtenAt, at, FILE_STALE_MS) && status.state !== "stopped";
 }
 
 function headline(status: BridgeStatus, at: number): string {
-  const written = timeOf(status.writtenAt);
-  if (written === undefined || at - written > FILE_STALE_MS)
-    return `STALE: status last written ${shown(status.writtenAt, at)}, so the bridge is stopped or stuck. Values below are from then.`;
+  if (!within(status.writtenAt, at, FILE_STALE_MS))
+    return `STALE: status last written ${shown(status.writtenAt)}, so the bridge is stopped or stuck, or the clock moved. Values below are history, not current.`;
   if (status.state === "wrong-guild")
     return "off: BRIDGE_CHANNEL_ID is not in BRIDGE_GUILD_ID, so nothing is polled or posted";
   if (status.state === "starting") return "starting: not polling yet";
-  if (status.state === "stopped") return "stopped";
-  return `running since ${shown(status.startedAt, at)}`;
+  if (status.state === "stopped") return "stopped. Values below are history, not current.";
+  return `running since ${shown(status.startedAt)}`;
 }
 
 export function bridgeReport(status: BridgeStatus | undefined, at: number): string {
   if (status === undefined)
     return "discord bridge: UNKNOWN, no readable status file (the bridge has not started, or the file is damaged)";
   const { poll, injection, post, presence } = status;
+  const live = isLive(status, at);
+  const verdict = (current: string): string => (live ? current : NOT_CURRENT);
   return [
     `discord bridge: ${headline(status, at)}`,
-    `polling Discord: ${pollVerdict(poll, at)}`,
-    `  last success: ${shown(poll.okAt, at)}`,
-    `  last error: ${shown(poll.failedAt, at)}`,
-    `injection into this session: ${eventVerdict(injection)}`,
-    `  last success: ${shown(injection.okAt, at)}`,
-    `  last error: ${shown(injection.failedAt, at)}`,
-    `posting to Discord: ${eventVerdict(post)}`,
-    `  last success: ${shown(post.okAt, at)}`,
-    `  last error: ${shown(post.failedAt, at)}`,
-    `presence (the bot shown online, not needed for delivery): ${presenceVerdict(presence, at)}`,
-    `  connected: ${presence.connected ? "yes" : "no"}`,
-    `  last READY: ${shown(presence.readyAt, at)}`,
-    `  last heartbeat ack: ${shown(presence.ackAt, at)}`,
-    speechLine(status.speech, at),
+    `polling Discord: ${verdict(pollVerdict(poll, at))}`,
+    `  last success: ${shown(poll.okAt)}`,
+    `  last error: ${shown(poll.failedAt)}`,
+    `injection into this session: ${verdict(eventVerdict(injection))}`,
+    `  last success: ${shown(injection.okAt)}`,
+    `  last error: ${shown(injection.failedAt)}`,
+    `posting to Discord: ${verdict(eventVerdict(post))}`,
+    `  last success: ${shown(post.okAt)}`,
+    `  last error: ${shown(post.failedAt)}`,
+    `presence (the bot shown online, not needed for delivery): ${verdict(presenceVerdict(presence, at))}`,
+    `  connected${live ? "" : " when last written"}: ${presence.connected ? "yes" : "no"}`,
+    `  last READY: ${shown(presence.readyAt)}`,
+    `  last heartbeat ack: ${shown(presence.ackAt)}`,
+    speechLine(status.speech),
   ].join("\n");
 }

@@ -116,19 +116,27 @@ export class Discord {
     return isRecord(body) && typeof body["guild_id"] === "string" ? body["guild_id"] : undefined;
   }
 
+  private polled<T>(read: T | undefined): T | undefined {
+    if (read === undefined) this.health.failed("poll");
+    else this.health.succeeded("poll");
+    return read;
+  }
+
   async newestId(): Promise<string | undefined> {
     const body = await this.get(`/channels/${this.channel}/messages?limit=1`);
-    if (!Array.isArray(body)) return undefined;
+    if (!Array.isArray(body)) return this.polled(undefined);
     const newest: unknown = body[0];
-    if (newest === undefined) return EMPTY_CHANNEL;
-    return isRecord(newest) && typeof newest["id"] === "string" ? newest["id"] : undefined;
+    if (newest === undefined) return this.polled(EMPTY_CHANNEL);
+    return this.polled(
+      isRecord(newest) && typeof newest["id"] === "string" ? newest["id"] : undefined,
+    );
   }
 
   async messagesAfter(cursor: string): Promise<readonly unknown[] | undefined> {
     const body = await this.get(
       `/channels/${this.channel}/messages?after=${cursor}&limit=${String(POLL_LIMIT)}`,
     );
-    return Array.isArray(body) ? body.map((item: unknown) => item) : undefined;
+    return this.polled(Array.isArray(body) ? body.map((item: unknown) => item) : undefined);
   }
 
   async say(text: string): Promise<void> {
