@@ -229,3 +229,41 @@ test("a tab round trip does not reuse the cached frame for the returning tab", a
     .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[0] ?? ""}"]`)
     .waitFor();
 });
+
+test("a late frame for the old tab does not satisfy the tab confirmation that returns to it", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  endpoint.holdFrame();
+  endpoint.switchTab(1);
+  await page
+    .locator('nav[aria-label="Remote tabs"] button[aria-current="true"]', { hasText: "Workshop" })
+    .waitFor();
+  endpoint.showFrame(0);
+  endpoint.switchTab(0);
+  await page
+    .locator('nav[aria-label="Remote tabs"] button[aria-current="true"]', { hasText: "Garden" })
+    .waitFor();
+  assert.equal(await page.locator(".browser-surface").count(), 0);
+  assert.equal(await page.getByText("You’re in control").count(), 0);
+  endpoint.releaseFrame();
+  await page
+    .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[0] ?? ""}"]`)
+    .waitFor();
+});
+
+test("a tab change that never delivers a trusted frame refreshes the stream once", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  const opens = endpoint.streamOpens;
+  endpoint.holdFrame();
+  endpoint.switchTab(1);
+  await until(() => endpoint.streamOpens > opens);
+  assert.equal(await page.locator(".browser-surface").count(), 0);
+  endpoint.releaseFrame();
+  await page
+    .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
+    .waitFor();
+  assert.equal(endpoint.streamOpens, opens + 1);
+});
