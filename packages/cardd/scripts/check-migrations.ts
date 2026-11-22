@@ -33,22 +33,27 @@ function changedMigrations(base: string): string[] {
     ["diff", "--name-status", "--diff-filter=MDRT", `${base}...HEAD`, "--", MIGRATIONS_DIR],
     { encoding: "utf8" },
   );
-  const heldNames = readMigrations().map((migration) => migration.name);
+  const baseNames = execFileSync("git", ["ls-tree", "--name-only", base, `${MIGRATIONS_DIR}/`], {
+    encoding: "utf8",
+  })
+    .split("\n")
+    .map((path) => path.slice(path.lastIndexOf("/") + 1));
   return out
     .split("\n")
     .filter((line) => line.trim() !== "")
-    .filter((line) => !repairsDuplicateNumber(line, heldNames));
+    .filter((line) => !repairsDuplicateNumber(line, baseNames));
 }
 
-function repairsDuplicateNumber(line: string, heldNames: string[]): boolean {
+function repairsDuplicateNumber(line: string, baseNames: string[]): boolean {
   const [status, from, to] = line.split("\t");
   if (status !== "R100" || from === undefined || to === undefined) return false;
-  const fromName = from.slice(from.lastIndexOf("/") + 1);
-  const toName = to.slice(to.lastIndexOf("/") + 1);
-  const fromNumber = /^(\d{3})-/.exec(fromName)?.[1];
-  const toNumber = /^(\d{3})-/.exec(toName)?.[1];
-  if (fromNumber === undefined || toNumber === undefined || toNumber <= fromNumber) return false;
-  return heldNames.some((name) => name !== toName && name.startsWith(`${fromNumber}-`));
+  const fromMatch = /^(\d{3})-(.+)$/.exec(from.slice(from.lastIndexOf("/") + 1));
+  const toMatch = /^(\d{3})-(.+)$/.exec(to.slice(to.lastIndexOf("/") + 1));
+  if (fromMatch === null || toMatch === null) return false;
+  const [, fromNumber, fromRest] = fromMatch;
+  const [, toNumber, toRest] = toMatch;
+  if (fromRest !== toRest || (toNumber ?? "") <= (fromNumber ?? "")) return false;
+  return baseNames.filter((name) => name.startsWith(`${fromNumber ?? ""}-`)).length >= 2;
 }
 
 const schema = freshSchema();
