@@ -73,7 +73,8 @@ class Viewer {
   private recovering = false;
   private latest: BrowserFrame | undefined;
   private authority = 0;
-  private queuedAuthority = 0;
+  private frames = 0;
+  private queuedStamp = "";
   private confirmedKey: string | undefined;
   private epoch = 0;
   private issuedTake = false;
@@ -155,9 +156,14 @@ class Viewer {
     const was = this.matched();
     this.latest = frame;
     this.frame(frame);
-    if (was || !this.matched()) return;
+    const now = this.matched();
+    if (was && !now) {
+      this.frames += 1;
+      this.events = [];
+    }
+    if (was === now) return;
     this.set(this.current);
-    this.resume();
+    if (now) this.resume();
   }
 
   private resume(): void {
@@ -266,7 +272,7 @@ class Viewer {
     if (state === undefined || !this.canCommand(pending, state)) return;
     this.set({ state, pending });
     const ticket = ++this.ticket;
-    const authority = this.authority;
+    const stamp = this.stamp();
     await this.settle();
     if (this.ticket !== ticket) return;
     if (this.quarantined) {
@@ -274,7 +280,7 @@ class Viewer {
       this.reopen(AMBIGUOUS);
       return;
     }
-    if (this.authority !== authority || !this.matched()) {
+    if (this.stamp() !== stamp || !this.matched()) {
       this.invalidateCommand();
       this.set({ state: this.current.state, notice: CHANGED });
       return;
@@ -354,14 +360,18 @@ class Viewer {
     });
   }
 
+  private stamp(): string {
+    return `${String(this.authority)}.${String(this.frames)}`;
+  }
+
   private enqueue(events: BrowserInput[]): void {
-    if (this.events.length === 0) this.queuedAuthority = this.authority;
+    if (this.events.length === 0) this.queuedStamp = this.stamp();
     this.events.push(...events);
   }
 
   private deliverable(): boolean {
     return (
-      this.queuedAuthority === this.authority &&
+      this.queuedStamp === this.stamp() &&
       !this.mutating &&
       this.matched() &&
       this.current.state?.viewer.controlling === true

@@ -148,6 +148,14 @@ export class BrowserEndpoint {
     return this.viewers.size;
   }
 
+  showFrame(index: number): void {
+    for (const response of this.viewers.values())
+      event(response, "frame", {
+        jpeg: this.jpeg[index],
+        meta: { targetId: TABS[index]?.id, deviceWidth: 480, deviceHeight: 300 },
+      });
+  }
+
   grantOnTake(): void {
     this.granting = true;
   }
