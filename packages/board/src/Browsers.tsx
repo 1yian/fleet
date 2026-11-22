@@ -172,7 +172,7 @@ function LaneBrowser({ lane }: { readonly lane: string }) {
         <button
           className="browser-action"
           type="button"
-          disabled={pending !== undefined || fenced === true || (!owns && !canTake)}
+          disabled={pending !== undefined || halted === true || (owns ? fenced === true : !canTake)}
           onClick={() => {
             command(owns ? "done" : "take");
           }}
@@ -206,7 +206,7 @@ function LaneBrowser({ lane }: { readonly lane: string }) {
         {state === undefined ? null : (
           <BrowserTabs
             state={state}
-            busy={pending !== undefined || fenced === true}
+            busy={pending !== undefined || (owns && fenced === true)}
             select={(tab) => {
               command({ tab });
             }}
