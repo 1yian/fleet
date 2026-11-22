@@ -217,6 +217,11 @@ class Viewer {
     const ticket = ++this.ticket;
     await this.settle();
     if (this.ticket !== ticket) return;
+    if (this.quarantined && pending !== "done") {
+      this.invalidateCommand();
+      this.reopen(AMBIGUOUS);
+      return;
+    }
     if (pending === "take") this.issuedTake = true;
     const epoch = this.epoch;
     const code = await this.mutate(pending);
@@ -237,6 +242,12 @@ class Viewer {
     if (this.ticket !== ticket) return;
     this.invalidateCommand();
     this.reopen(commandError(pending));
+  }
+
+  private fence(notice: string): void {
+    this.quarantined = true;
+    this.discard();
+    this.set({ ...this.current, notice });
   }
 
   private resolve(pending: Pending, ticket: number, epoch: number, code: number): void {
@@ -297,6 +308,7 @@ class Viewer {
     const ticket = this.ticket;
     this.inflight = this.post("input", { events: this.events.splice(0, 40) }).then((code) => {
       this.sending = false;
+      if (code !== 204 && code !== 409) this.fence(AMBIGUOUS);
       if (code === 409 && this.ticket === ticket && this.canDrive()) {
         this.discard();
         const state = this.current.state;

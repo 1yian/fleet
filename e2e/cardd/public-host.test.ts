@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, afterEach, before, beforeEach, test } from "node:test";
@@ -141,11 +143,27 @@ test("a token from the owner opens the page, the data, /live, and an action thro
 });
 
 test("the lane browser relay stays off the public host even for the owner", async (t) => {
+  const reached: string[] = [];
+  const upstream = createServer((request, response) => {
+    reached.push(`${request.method ?? ""} ${request.url ?? ""}`);
+    response.writeHead(503).end();
+  });
+  await new Promise<void>((resolve) => {
+    upstream.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(() => {
+    upstream.closeAllConnections();
+    upstream.close();
+  });
+  const address = upstream.address();
+  assert.ok(address && typeof address !== "string");
+  const token = join(tempDir("no-browser-token-"), "token");
+  writeFileSync(token, "upstream-token", { mode: 0o600 });
   const isolated = await Cardd.start(
     {
       ...site.env,
-      CARDD_BROWSER_ORIGIN: "http://127.0.0.1:1",
-      CARDD_BROWSER_TOKEN_FILE: join(tempDir("no-browser-token-"), "token"),
+      CARDD_BROWSER_ORIGIN: `http://127.0.0.1:${String(address.port)}`,
+      CARDD_BROWSER_TOKEN_FILE: token,
     },
     [...site.flags, "--board", BOARD],
   );
@@ -158,19 +176,25 @@ test("the lane browser relay stays off the public host even for the owner", asyn
     JSON.parse((await exchange(url, "/api/board", "GET", headers)).body),
   );
   assert.equal(board.browsers, undefined);
-  assert.equal((await exchange(url, "/api/browser/events", "GET", headers)).status, 403);
-  assert.equal(
-    (
-      await exchange(
-        url,
-        "/api/browser/lanes/main/command?viewer=lab",
-        "POST",
-        { ...headers, ...JSON_BODY },
-        { t: "control", on: true },
-      )
-    ).status,
-    403,
-  );
+  const lane = "/api/browser/lanes/main";
+  const own = { ...JSON_BODY, origin: `http://${url.host}` };
+  const attempts: [string, string, Record<string, string>, unknown][] = [
+    ["GET", "/api/browser/events", {}, undefined],
+    ["POST", `${lane}/command?viewer=lab`, own, { t: "control", on: true }],
+  ];
+  for (const [method, path, sent, body] of attempts)
+    assert.equal((await exchange(url, path, method, sent, body)).status, 502, path);
+  assert.deepEqual(reached, ["GET /v1/events", "POST /v1/lanes/main/command?viewer=lab"]);
+  const owner = { ...headers, ...JSON_BODY };
+  const refusals: [string, string, unknown][] = [
+    ["GET", "/api/browser/events", undefined],
+    ["GET", `${lane}/stream?viewer=lab`, undefined],
+    ["POST", `${lane}/command?viewer=lab`, { t: "control", on: true }],
+    ["POST", `${lane}/input?viewer=lab`, { events: [] }],
+  ];
+  for (const [method, path, body] of refusals)
+    assert.equal((await exchange(url, path, method, owner, body)).status, 403, path);
+  assert.equal(reached.length, 2);
 });
 
 test("a request for the public host without a valid token gets no board, page, data, action, or socket", async () => {
