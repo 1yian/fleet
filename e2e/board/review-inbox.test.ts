@@ -34,7 +34,7 @@ async function reviewSource(t: TestContext) {
   const spare = join(dir, "spare.html");
   writeFileSync(spare, "<!doctype html><h1>Spare</h1>");
   await post(origin, "/api/sessions", { file: spare });
-  return { origin, key };
+  return { origin, key, file };
 }
 
 async function labFor(t: TestContext, key: string, upstream: string, title: string) {
@@ -321,4 +321,92 @@ test("a mapped link with no stock session is never taken over", async (t) => {
     [],
   );
   assert.equal(await status(main, card), "needs-you");
+});
+
+const verdictOf = (prompt: string) => ({
+  prompts: [{ uid: "1", tag: "verdict", prompt, selector: "#v" }],
+  endSession: false,
+});
+
+test("a verdict queued before a bind or between rounds never crosses to a new review key", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const { cardd, main, card, token, bind } = await labFor(t, key, origin.origin, "Boundary");
+  const worker = await cardd.connect(token);
+  await post(origin, `/api/${key}/prompts`, verdictOf("Before any bind"));
+  await bind(worker, "review-one");
+  await worker.waitForEntry((entry) => entry.fields["fleetReview"] === true, "review-one notice");
+  await post(origin, `/api/${key}/prompts`, verdictOf("Round one verdict"));
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Round one verdict",
+    "the round one verdict",
+  );
+  const view = async () => check(OPS.card.result, await main.call("card", { card: card.id }));
+  const hold = (await view()).hold;
+  assert.ok(hold);
+  assert.equal(
+    await cardd.act(card.id, {
+      kind: "answer",
+      hold: hold.entry,
+      choice: "Continue",
+      written: true,
+    }),
+    200,
+  );
+  await post(origin, `/api/${key}/prompts`, verdictOf("Late for round one"));
+  await bind(worker, "review-two");
+  await worker.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true && entry.body === "review-two",
+    "review-two notice",
+  );
+  await post(origin, `/api/${key}/prompts`, verdictOf("Round two verdict"));
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Round two verdict",
+    "the round two verdict",
+  );
+  const receipts = (await view()).entries.filter((entry) => entry.kind === "review-feedback");
+  assert.deepEqual(
+    receipts.map((entry) => [entry.body, entry.fields["reviewKeys"]]),
+    [
+      ["Round one verdict", ["review-one"]],
+      ["Round two verdict", ["review-two"]],
+    ],
+  );
+});
+
+test("repeated End requests are not new session ends until the session is observed open again", async (t) => {
+  const { origin, key, file } = await reviewSource(t);
+  const { cardd, main, card, token, bind } = await labFor(t, key, origin.origin, "Repeat end");
+  const worker = await cardd.connect(token);
+  await bind(worker, "review-repeat");
+  await worker.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the notice");
+  await post(origin, `/api/${key}/prompts`, { prompts: [], endSession: true });
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "",
+    "the first session end",
+  );
+  await post(origin, `/api/${key}/end`, {});
+  await post(origin, `/api/${key}/end`, {});
+  await post(origin, "/api/sessions", { file, reopen: true });
+  await post(origin, `/api/${key}/prompts`, verdictOf("Open again"));
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Open again",
+    "the verdict after reopening",
+  );
+  await post(origin, `/api/${key}/prompts`, {
+    prompts: [{ uid: "1", tag: "verdict", prompt: "Final", selector: "#v" }],
+    endSession: true,
+  });
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Final",
+    "the final verdict",
+  );
+  const { entries } = check(OPS.card.result, await main.call("card", { card: card.id }));
+  const receipts = entries
+    .filter((entry) => entry.kind === "review-feedback")
+    .map((entry) => [entry.body, entry.fields["sessionEnded"]]);
+  assert.deepEqual(receipts, [
+    ["", true],
+    ["Open again", false],
+    ["Final", true],
+  ]);
 });

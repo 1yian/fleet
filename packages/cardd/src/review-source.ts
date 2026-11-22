@@ -17,8 +17,6 @@ const Chat = Type.Object({
       role: Type.Union([Type.Literal("agent"), Type.Literal("user")]),
       text: Type.String(),
       at: Type.String(),
-      delivered_at: Type.Optional(Type.String()),
-      receipt: Type.Optional(Type.String()),
       kind: Type.Optional(Type.String()),
       prompt_id: Type.Optional(Type.String()),
       anchor: Type.Optional(Type.Unknown()),
@@ -52,18 +50,8 @@ interface Submission {
 function submissions(chat: ChatState): Submission[] {
   const batches: Submission[] = [];
   const occurrences = new Map<string, number>();
-  for (const {
-    role,
-    text,
-    at,
-    delivered_at,
-    receipt,
-    kind,
-    prompt_id,
-    anchor,
-    attachments,
-  } of chat.chat) {
-    if (role !== "user" || delivered_at !== undefined || receipt === "none") continue;
+  for (const { role, text, at, kind, prompt_id, anchor, attachments } of chat.chat) {
+    if (role !== "user") continue;
     const fingerprint = createHash("sha256")
       .update(JSON.stringify([at, kind, prompt_id, text, anchor, attachments]))
       .digest("hex");
@@ -76,6 +64,9 @@ function submissions(chat: ChatState): Submission[] {
   }
   return batches;
 }
+
+const promptIds = (chat: ChatState | undefined): string[] =>
+  chat === undefined ? [] : submissions(chat).flatMap(({ prompts }) => prompts.map(({ id }) => id));
 
 function seenPrompts(entries: readonly Entry[], session: string): ReadonlySet<string> {
   return new Set(
@@ -102,6 +93,23 @@ function recordedNotice(entries: readonly Entry[], { round, worker }: Binding): 
       fields["round"] === round &&
       fields["worker"] === worker,
   );
+}
+
+function baselineOf(
+  entries: readonly Entry[],
+  { round }: Binding,
+): ReadonlySet<string> | undefined {
+  const baseline = entries.find(
+    ({ author, kind, fields }) =>
+      author === "fleet" &&
+      kind === "note" &&
+      fields["fleetReview"] === true &&
+      fields["round"] === round &&
+      Array.isArray(fields["baseline"]),
+  )?.fields["baseline"];
+  return Array.isArray(baseline)
+    ? new Set(baseline.filter((id) => typeof id === "string"))
+    : undefined;
 }
 
 function addReceipt(
@@ -136,12 +144,16 @@ function appendPrompts(
   binding: Binding,
   entries: readonly Entry[],
   { chat, ended, replay }: Moment,
+  baseline: ReadonlySet<string>,
 ): { added: boolean; told: boolean } {
   const batches = chat === undefined ? [] : submissions(chat);
   const seen = seenPrompts(entries, binding.session);
   const last = batches.at(-1);
   const pending = batches
-    .map((batch) => ({ batch, fresh: batch.prompts.filter(({ id }) => !seen.has(id)) }))
+    .map((batch) => ({
+      batch,
+      fresh: batch.prompts.filter(({ id }) => !seen.has(id) && !baseline.has(id)),
+    }))
     .filter(({ fresh }) => fresh.length > 0);
   for (const { batch, fresh } of pending) {
     addReceipt(
@@ -161,8 +173,9 @@ function appendFeedback(
   binding: Binding,
   entries: readonly Entry[],
   moment: Moment,
+  baseline: ReadonlySet<string>,
 ): boolean {
-  const { added, told } = appendPrompts(db, binding, entries, moment);
+  const { added, told } = appendPrompts(db, binding, entries, moment, baseline);
   if (!moment.ended || told) return added;
   addReceipt(db, binding, "", [], true);
   return true;
@@ -194,6 +207,8 @@ function listen(
   let fenced = false;
   let ready = false;
   let ending = false;
+  let open = true;
+  let known = new Set<string>();
   const waiting: Moment[] = [];
   const deliver = (moment: Moment) => {
     if (!ready) {
@@ -215,6 +230,7 @@ function listen(
   socket.on("pong", () => {
     if (!fenced) {
       fenced = true;
+      known = new Set(promptIds(initial));
       deliver({ chat: initial, ended: false, replay: true });
       void mapped(source).then((present) => {
         if (!present) {
@@ -226,15 +242,20 @@ function listen(
       });
     } else if (ending) {
       ending = false;
-      deliver({ chat: undefined, ended: true, replay: false });
+      if (open) {
+        open = false;
+        deliver({ chat: undefined, ended: true, replay: false });
+      }
     }
   });
   socket.on("message", (raw: Buffer) => {
     try {
       const message = check(Event, JSON.parse(raw.toString("utf8")));
-      if (message.type === "ended" && fenced) {
-        ending = true;
-        socket.ping();
+      if (message.type === "ended") {
+        if (fenced) {
+          ending = true;
+          socket.ping();
+        } else open = false;
       }
       if (message.type !== "chat-sync") return;
       const chat = check(Chat, message.data);
@@ -244,8 +265,15 @@ function listen(
         if (initial === undefined) socket.ping();
         initial = chat;
       } else {
-        deliver({ chat, ended: ending, replay: false });
-        ending = false;
+        const ids = promptIds(chat);
+        const submitted = ids.some((id) => !known.has(id));
+        known = new Set(ids);
+        const ended = ending && submitted;
+        if (submitted) {
+          open = !ended;
+          ending = false;
+        }
+        deliver({ chat, ended, replay: false });
       }
     } catch (error) {
       console.warn(`Lavish source feedback for c-${String(binding.card)} could not be read`, error);
@@ -339,6 +367,7 @@ export class SourceReviews {
       const hold = factsFrom(entries).hold;
       if (hold?.entry !== binding.round || !reviewDecision(entries, hold)) return false;
       const notice = !recordedNotice(entries, binding);
+      const baseline = baselineOf(entries, binding) ?? new Set(promptIds(moment.chat));
       if (notice)
         addEntry(
           this.db,
@@ -347,11 +376,16 @@ export class SourceReviews {
             author: "fleet",
             kind: "note",
             body: hold.question,
-            fields: { fleetReview: true, round: binding.round, worker: binding.worker },
+            fields: {
+              fleetReview: true,
+              round: binding.round,
+              worker: binding.worker,
+              baseline: [...baseline],
+            },
           },
           [binding.worker],
         );
-      return appendFeedback(this.db, binding, entries, moment) || notice;
+      return appendFeedback(this.db, binding, entries, moment, baseline) || notice;
     });
     if (changed) this.notify(binding.worker);
   }
