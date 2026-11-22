@@ -134,9 +134,9 @@ function BrowserTabs({
 
 function LaneBrowser({ lane }: { readonly lane: string }) {
   const { frame, status, command, input } = useBrowserViewer(lane);
-  const { state, pending, notice, offline } = status;
+  const { state, pending, notice, offline, fenced } = status;
   const owns = state?.viewer.controlling === true;
-  const driving = owns && pending === undefined;
+  const driving = owns && pending === undefined && fenced !== true;
   const canTake =
     state?.snapshot.status === "ready" &&
     state.activeTab !== null &&
@@ -160,7 +160,7 @@ function LaneBrowser({ lane }: { readonly lane: string }) {
         <button
           className="browser-action"
           type="button"
-          disabled={pending !== undefined || (!owns && !canTake)}
+          disabled={pending !== undefined || (!owns && (!canTake || fenced === true))}
           onClick={() => {
             command(owns ? "done" : "take");
           }}
@@ -194,7 +194,7 @@ function LaneBrowser({ lane }: { readonly lane: string }) {
         {state === undefined ? null : (
           <BrowserTabs
             state={state}
-            busy={pending !== undefined}
+            busy={pending !== undefined || fenced === true}
             select={(tab) => {
               command({ tab });
             }}
