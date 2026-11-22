@@ -139,6 +139,7 @@ test("an omitted current title cannot authorize a legacy start, hold, or close",
 });
 
 test("a pane disappearing between list and process info leaves the lane unread", async () => {
+  useSteadyPi();
   assert.deepEqual(maintain(), action("ops", "started"));
   const home = `${here.root}.worktrees/lane-ops`;
   const starts = join(home, "state", "starts");
@@ -216,6 +217,7 @@ test("an old supervisor's command still gets array success and nonzero operation
 });
 
 test("maintenance returns a completed start alongside a later lifecycle failure", async () => {
+  useSteadyPi();
   const home = addLane("zz");
   const lock = new DatabaseSync(join(home, "state", "lifecycle.db"));
   try {
@@ -237,6 +239,7 @@ const hangingSweep = (panes: string[]) =>
   maintenanceOutcomes(fleet(typedMaintenance, "hanging-panes", panes.join(","), "60000"));
 
 test("an early hanging observation does not starve a later healthy lane", async () => {
+  useSteadyPi();
   const pane = await idlePane("ops", `${here.root}.worktrees/lane-ops`);
   addLane("zz");
   assert.deepEqual(hangingSweep([pane]), [...action("ops", "unread"), ...action("zz", "started")]);
@@ -248,6 +251,7 @@ test("an early hanging observation does not starve a later healthy lane", async 
 });
 
 test("maintenance returns an accepted start before the caller times out on two hanging reads", async () => {
+  useSteadyPi();
   const panes = [];
   for (const lane of ["za", "zb"]) panes.push(await idlePane(lane, addLane(lane)));
   assert.deepEqual(hangingSweep(panes), [
@@ -316,6 +320,7 @@ test("automatic sweeps rotate past repeated hangs and reap their probes", async 
 });
 
 test("an explicit stop accepts a complete workspace close reply without a type field", async () => {
+  useSteadyPi();
   assert.deepEqual(maintain(), action("ops", "started"));
   assert.equal(fleet(["stop", "ops"], "close-without-type").trim(), "ops: stopped");
   assert.equal(await workspace("ops"), undefined);
@@ -347,6 +352,7 @@ test("refused and failed pane runs are not recorded or retried", () => {
 });
 
 test("an incomplete run acknowledgement neither records a start nor lifts a hold", () => {
+  useSteadyPi();
   const home = `${here.root}.worktrees/lane-ops`;
   const starts = join(home, "state", "starts");
   const stopped = join(home, "state", "stopped");

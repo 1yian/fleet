@@ -154,6 +154,7 @@ test("explicit legacy operations cannot mistake absent cwd for a different home"
 });
 
 test("home matching needs the mate's cwd, not the cwd of an unrelated split", async () => {
+  useSteadyPi();
   const home = `${here.root}.worktrees/lane-ops`;
   const created = await lab.run([
     "workspace",

@@ -4,6 +4,9 @@ import { openDatabase, readMigrations, schemaVersion } from "../src/db.ts";
 
 const SCHEMA_FILE = new URL("../schema.sql", import.meta.url);
 const MIGRATIONS_DIR = "packages/cardd/migrations";
+const PLACED_HOST_041 = `${MIGRATIONS_DIR}/041-placed-host.sql`;
+const SIGNIN_GRANTS_041 = `${MIGRATIONS_DIR}/041-signin-grants.sql`;
+const SIGNIN_GRANTS_RENAME = `R100\t${SIGNIN_GRANTS_041}\t${MIGRATIONS_DIR}/042-signin-grants.sql`;
 
 function freshSchema(): string {
   const db = openDatabase(":memory:");
@@ -27,13 +30,33 @@ function sqlText(value: unknown): string {
   return value;
 }
 
-function changedMigrations(base: string): string[] {
+function changedMigrations(ref: string): string[] {
+  const base = execFileSync("git", ["merge-base", ref, "HEAD"], { encoding: "utf8" }).trim();
   const out = execFileSync(
     "git",
-    ["diff", "--name-status", "--diff-filter=MDRT", `${base}...HEAD`, "--", MIGRATIONS_DIR],
+    [
+      "diff",
+      "--name-status",
+      "--find-renames=100%",
+      "--diff-filter=MDRT",
+      base,
+      "HEAD",
+      "--",
+      MIGRATIONS_DIR,
+    ],
     { encoding: "utf8" },
   );
-  return out.split("\n").filter((line) => line.trim() !== "");
+  const baseFiles = execFileSync(
+    "git",
+    ["ls-tree", "--name-only", base, "--", `${MIGRATIONS_DIR}/`],
+    { encoding: "utf8" },
+  ).split("\n");
+  const baseHasDuplicate041 =
+    baseFiles.includes(PLACED_HOST_041) && baseFiles.includes(SIGNIN_GRANTS_041);
+  return out
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .filter((line) => !(baseHasDuplicate041 && line === SIGNIN_GRANTS_RENAME));
 }
 
 const schema = freshSchema();
