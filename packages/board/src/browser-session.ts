@@ -42,6 +42,7 @@ class Viewer {
   private trusted = false;
   private freshTimer = 0;
   private attempted = "";
+  private deadline: { stamp: string; at: number } | undefined;
   private authority = 0;
   private frames = 0;
   private queuedStamp = "";
@@ -141,11 +142,12 @@ class Viewer {
   }
 
   private resume(): void {
-    if (this.closed || !this.recovering || !this.matched()) return;
+    if (this.closed || this.mutating || !this.recovering || !this.matched()) return;
     const epoch = this.epoch;
     const frames = this.frames;
     void this.settle().then(() => {
-      if (this.epoch !== epoch || this.frames !== frames || !this.matched()) return;
+      if (this.epoch !== epoch || this.frames !== frames || this.mutating) return;
+      if (!this.matched()) return;
       this.recovering = false;
       this.set(this.current);
     });
@@ -247,20 +249,30 @@ class Viewer {
     );
   }
 
+  private freshStamp(): string {
+    return `${String(this.epoch)}.${String(this.authority)}`;
+  }
+
   private wantFrame(): void {
     const state = this.current.state;
-    if (this.closed || state === undefined || this.matched()) return;
+    if (this.closed || this.quarantined || state === undefined || this.matched()) return;
     if (!state.viewer.controlling || state.activeTab === null) return;
-    const stamp = `${String(this.epoch)}.${String(this.authority)}`;
+    const stamp = this.freshStamp();
     if (this.attempted === stamp) return;
+    if (this.deadline?.stamp !== stamp) this.deadline = { stamp, at: Date.now() + FRESH_FRAME_MS };
     clearTimeout(this.freshTimer);
-    this.freshTimer = window.setTimeout(() => {
-      const tab = this.current.state?.activeTab;
-      const same = stamp === `${String(this.epoch)}.${String(this.authority)}`;
-      if (tab === undefined || tab === null || !same || this.matched()) return;
-      this.attempted = stamp;
-      void this.command({ tab }, true);
-    }, FRESH_FRAME_MS);
+    this.freshTimer = window.setTimeout(
+      () => {
+        this.requestFrame(stamp);
+      },
+      Math.max(0, this.deadline.at - Date.now()),
+    );
+  }
+
+  private requestFrame(stamp: string): void {
+    const tab = this.current.state?.activeTab;
+    if (tab === undefined || tab === null || stamp !== this.freshStamp()) return;
+    if (this.attempted !== stamp && !this.matched()) void this.command({ tab }, true);
   }
 
   async command(pending: Pending, fresh = false): Promise<void> {
@@ -284,17 +296,20 @@ class Viewer {
     }
     if (pending === "take") this.issuedTake = true;
     const epoch = this.epoch;
-    const code = await this.mutate(pending);
+    const code = await this.mutate(pending, fresh);
     this.resolve(pending, ticket, epoch, code);
   }
 
-  private async mutate(pending: Pending): Promise<number> {
+  private async mutate(pending: Pending, fresh: boolean): Promise<number> {
+    if (fresh) this.attempted = this.freshStamp();
     this.mutating = true;
     const posting = this.post("command", commandFor(pending));
     this.mutation = posting;
     const code = await posting;
     this.mutating = false;
     if (code !== 204 && code !== 409) this.quarantined = true;
+    this.resume();
+    this.wantFrame();
     return code;
   }
 

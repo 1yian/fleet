@@ -40,6 +40,8 @@ export class BrowserEndpoint {
   readonly commands: unknown[] = [];
   private gate: Promise<void> | undefined;
   private open: (() => void) | undefined;
+  private replyGate: Promise<void> | undefined;
+  private replyOpen: (() => void) | undefined;
   activeInputsAtTab = -1;
   readonly server = createServer((request, response) => {
     void this.answer(request, response).catch(() => {
@@ -108,6 +110,17 @@ export class BrowserEndpoint {
   release(): void {
     this.open?.();
     this.gate = undefined;
+  }
+
+  holdReply(): void {
+    this.replyGate = new Promise<void>((resolve) => {
+      this.replyOpen = resolve;
+    });
+  }
+
+  releaseReply(): void {
+    this.replyOpen?.();
+    this.replyGate = undefined;
   }
 
   releaseAndHold(): void {
@@ -250,6 +263,7 @@ export class BrowserEndpoint {
       this.arrivals += 1;
       await this.gate;
       this.command(viewer, body);
+      await this.replyGate;
       if (this.failing) {
         this.failing = false;
         response.writeHead(500).end();
@@ -287,7 +301,7 @@ export class BrowserEndpoint {
       this.asking = false;
       this.holder = undefined;
     }
-    if (command.t !== "control") this.publish();
+    if (command.t !== "control" || this.granting) this.publish();
   }
 
   private control(on: boolean, viewer: string): void {

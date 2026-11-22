@@ -387,3 +387,54 @@ test("an acknowledged activation does not promote an earlier frame to input auth
     .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
     .waitFor();
 });
+
+test("the fresh-frame attempt is spent only when a request is actually sent", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
+  endpoint.sendFrameBeforeState();
+  endpoint.grantOnTake();
+  await page.goto(`${base}#/browser/garden`);
+  await page.getByText("Watching · Read only").waitFor();
+  await page.locator(".browser-surface:not(.driving)").waitFor();
+  endpoint.holdFrame();
+  endpoint.holdReply();
+  await page.getByRole("button", { name: "Take control" }).click();
+  await until(() => endpoint.controlled);
+  await new Promise((resolve) => setTimeout(resolve, 3500));
+  assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
+  assert.equal(await page.locator(".browser-surface.driving").count(), 0);
+  endpoint.releaseReply();
+  await until(() => endpoint.commands.length === 2);
+  assert.deepEqual(endpoint.commands[1], { t: "tab", action: "activate", id: "one" });
+  endpoint.releaseFrame();
+  await page
+    .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[0] ?? ""}"]`)
+    .waitFor();
+});
+
+test("a held key is released before input resumes when the fresh frame beats the acknowledgement", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  await page.keyboard.down("Shift");
+  await until(() => endpoint.order.includes("key:rawKeyDown:Shift") && endpoint.activeInputs === 0);
+  await nextFrames(page);
+  endpoint.sendFrameBeforeState();
+  const opens = endpoint.streamOpens;
+  const arrived = endpoint.arrivals;
+  endpoint.holdReply();
+  endpoint.startOutage();
+  await page.getByText("Browser connection interrupted").waitFor();
+  endpoint.endOutage();
+  await until(() => endpoint.streamOpens > opens);
+  await until(() => endpoint.arrivals === arrived + 1);
+  await page.locator(".browser-surface").waitFor();
+  await nextFrames(page);
+  assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
+  assert.equal(await page.locator(".browser-surface.driving").count(), 0);
+  endpoint.releaseReply();
+  await page
+    .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[0] ?? ""}"]`)
+    .waitFor();
+  assert.equal(endpoint.order.filter((entry) => entry === "key:keyUp:Shift").length, 1);
+  await page.keyboard.up("Shift");
+});
