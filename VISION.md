@@ -13,7 +13,7 @@ Fleet is judged by that calm: fewer interruptions that matter, not more updates 
 ## Authority starts with the captain
 
 The captain is the default authority. A mate settles what it has authority to settle and passes up what it does not.
-Wider authority is opt-in and never silent. Today the only built-in standing permission is a project's `yolo` flag, which lets its mate merge a green PR without asking.
+Wider authority is opt-in and never silent. Today the only built-in standing permission is a project's `yolo` flag, which lets its mate merge a green PR without asking. Destructive, irreversible, and security-sensitive merges still need the captain's word.
 
 An answer in chat and an answer on the board settle the same question.
 A new comment on the card does not invalidate the answer.
@@ -81,6 +81,6 @@ These are goals. They are not current behavior.
 These settings apply today. They sit outside the vision and may change without it.
 
 - Routine updates to a mate are batched. A batch goes out within five minutes by default, or sooner when an urgent message arrives.
-- A review link stays on the private network (the tailnet). A public link is made only when the captain asks for one. A Cloudflare tunnel (`cloudflared`) runs only then, with the Cloudflare Access setup that the [setup guide](docs/setup.md) describes.
+- Review links are private by default. A public link is made only when the captain asks for one, and `cloudflared` is used only then.
 - A recovery limit counts only the restarts that actually ran.
 - A fix for a false status is tested where a session or the captain sees that status.
