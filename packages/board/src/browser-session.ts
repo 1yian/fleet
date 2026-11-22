@@ -19,7 +19,6 @@ type Status = {
   readonly halted?: boolean | undefined;
 };
 
-const FRAME_WAIT_MS = 3000;
 const LOST = "Control ended. You’re watching again.";
 const CHANGED = "The remote browser changed before your request went through. Try again.";
 const AMBIGUOUS =
@@ -41,7 +40,6 @@ class Viewer {
   private latest: BrowserFrame | undefined;
   private trusted = false;
   private stated = false;
-  private frameTimer = 0;
   private authority = 0;
   private frames = 0;
   private queuedStamp = "";
@@ -71,7 +69,6 @@ class Viewer {
     this.stream = openStream(this.url("stream"), {
       failed: () => {
         this.epoch += 1;
-        clearTimeout(this.frameTimer);
         this.stated = false;
         this.latest = undefined;
         this.frame(undefined);
@@ -117,7 +114,9 @@ class Viewer {
 
   private matched(): boolean {
     const state = this.current.state;
-    return state !== undefined && this.trusted && this.latest?.meta.targetId === state.activeTab;
+    if (state === undefined) return false;
+    if (state.activeTab === null) return true;
+    return this.trusted && this.latest?.meta.targetId === state.activeTab;
   }
 
   private blocked(): boolean {
@@ -130,7 +129,6 @@ class Viewer {
     this.trusted = !this.stated || this.current.state?.activeTab === frame.meta.targetId;
     this.frame(frame);
     const now = this.matched();
-    if (now) clearTimeout(this.frameTimer);
     if (was && !now) {
       this.frames += 1;
       this.events = [];
@@ -152,16 +150,8 @@ class Viewer {
     });
   }
 
-  private awaitFrame(): void {
-    clearTimeout(this.frameTimer);
-    this.frameTimer = window.setTimeout(() => {
-      if (!this.closed && !this.matched()) this.reopen(this.current.notice);
-    }, FRAME_WAIT_MS);
-  }
-
   private reopen(notice: string | undefined): void {
     this.epoch += 1;
-    clearTimeout(this.frameTimer);
     this.stated = false;
     this.latest = undefined;
     this.frame(undefined);
@@ -218,7 +208,6 @@ class Viewer {
       this.latest = undefined;
       this.frame(undefined);
     }
-    if (moved) this.awaitFrame();
     const key = `${String(owns)}:${state.activeTab ?? ""}`;
     if (key !== this.confirmedKey) {
       this.confirmedKey = key;
@@ -431,7 +420,6 @@ class Viewer {
   close(): void {
     this.closed = true;
     this.invalidateCommand();
-    clearTimeout(this.frameTimer);
     cancelAnimationFrame(this.scheduled);
     void this.teardown();
   }
