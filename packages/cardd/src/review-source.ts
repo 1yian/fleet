@@ -394,14 +394,17 @@ export class SourceReviews {
   }
 
   private owns(card: number): boolean {
-    const held = this.held(card, Infinity);
+    const found = this.held(card, Infinity);
+    const confirmed =
+      found !== undefined && epochNotices(found.entries, found, this.origins).length > 0;
+    const held = confirmed || this.held(card, Date.now()) !== undefined ? found : undefined;
     this.release(card, held);
     if (held === undefined) return false;
     const href = held.source.href;
     if (!this.claims.has(href)) {
-      const found = this.claimant(href);
-      if (found === "conflict") return false;
-      this.claims.set(href, found ?? { card, requests: JSON.stringify(held.requests) });
+      const claimant = this.claimant(href);
+      if (claimant === "conflict") return false;
+      this.claims.set(href, claimant ?? { card, requests: JSON.stringify(held.requests) });
     }
     return this.claims.get(href)?.card === card;
   }

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { check, OPS } from "@fleet/protocol";
 import { ageDated, begin, newCard } from "../support/fleet.ts";
 import { Lavish } from "../support/lavish.ts";
-import { labFor, post, reviewSource, verdictOf } from "../support/review-source-lab.ts";
+import { labFor, post, reviewSource, verdictOf, viaEdge } from "../support/review-source-lab.ts";
 import { tempDir } from "../support/run-root.ts";
 
 test("a verdict queued before a bind or between rounds never crosses to a new review key", async (t) => {
@@ -100,6 +100,33 @@ test("a session taken over already ended and reopened is never reported as still
       .filter((entry) => entry.kind === "review-feedback")
       .map((entry) => [entry.body, entry.fields["sessionEnded"]]),
     [["Final after reopening", null]],
+  );
+});
+
+test("a deferred hold that never took over does not keep the source from another card", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const { edge, upstream } = await viaEdge(t, origin);
+  const probe = edge.hold("/layout-warnings");
+  const { cardd, main, card, token, review, bind } = await labFor(t, key, upstream, "Never took");
+  const first = await cardd.connect(token);
+  await bind(first, "review-never");
+  await probe.arrived;
+  const hold = check(OPS.card.result, await main.call("card", { card: card.id })).hold;
+  assert.ok(hold);
+  const later = { kind: "hold", hold: hold.entry, said: "in 3 hours", zone: "UTC" } as const;
+  assert.equal(await cardd.act(card.id, later), 200);
+  probe.release();
+  const other = await newCard(main, "Takes over", "scout");
+  const second = await cardd.connect(await begin(main, other));
+  await second.call("report", { status: "needs-decision", key: "review-other", text: review });
+  await main.call("hold", { card: other.id, to: "captain", question: "other", review });
+  await second.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true,
+    "the other card taking over while the first never had",
+  );
+  assert.deepEqual(
+    first.entries.filter(({ entry }) => entry.body === "never"),
+    [],
   );
 });
 
