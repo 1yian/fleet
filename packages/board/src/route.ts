@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 const ADDRESS = /^#\/c-(\d+)$/;
 
@@ -18,6 +18,14 @@ export function useBrowserRoute(
   return !enabled || match === null ? undefined : { lane: match[1] };
 }
 
+function entry(): { readonly opened: boolean; readonly scroll: number } {
+  const state: unknown = history.state;
+  const opened =
+    typeof state === "object" && state !== null && Reflect.get(state, "opened") === true;
+  const scroll = typeof state === "object" && state !== null ? Reflect.get(state, "scroll") : 0;
+  return { opened, scroll: typeof scroll === "number" ? scroll : 0 };
+}
+
 export function useCardRoute(): {
   readonly card: number | undefined;
   readonly workers: boolean;
@@ -28,16 +36,14 @@ export function useCardRoute(): {
   const workers = address === "#/workers";
   const card = ADDRESS.exec(address)?.[1];
   const id = card === undefined ? undefined : Number(card);
-  const origin = useRef<{ from: string; to: string; scroll: number } | undefined>(undefined);
-
   const open = useCallback((next: number) => {
-    const to = `#/c-${String(next)}`;
-    origin.current = { from: location.hash, to, scroll: window.scrollY };
-    location.hash = to;
+    history.replaceState({ opened: entry().opened, scroll: window.scrollY }, "");
+    history.pushState({ opened: true }, "", `#/c-${String(next)}`);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
   }, []);
   const close = useCallback(() => {
     if (!ADDRESS.test(location.hash)) return;
-    if (origin.current?.to === location.hash) {
+    if (entry().opened) {
       history.back();
       return;
     }
@@ -46,9 +52,7 @@ export function useCardRoute(): {
   }, []);
 
   useEffect(() => {
-    const previous = origin.current;
-    window.scrollTo(0, previous?.from === address ? previous.scroll : 0);
-    if (previous?.to !== address && previous?.from !== address) origin.current = undefined;
+    window.scrollTo(0, entry().scroll);
   }, [address]);
 
   return { card: id, workers, open, close };
