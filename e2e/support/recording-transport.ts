@@ -11,6 +11,7 @@ const run = spawnSync("/bin/sh", ["-c", command], {
   encoding: "utf8",
   env: { ...process.env, ...(path === undefined ? {} : { PATH: path }) },
 });
+appendFileSync(`${log}.done`, `${JSON.stringify(command)}\n`);
 process.stdout.write(run.stdout);
 process.stderr.write(run.stderr);
 process.exit(run.status ?? 255);

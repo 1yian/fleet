@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -76,6 +83,11 @@ async function until<T>(
 }
 
 const callsTo = (log: string): string[] => readFileSync(log, "utf8").split("\n").filter(Boolean);
+
+const refreshesDone = (log: string): number =>
+  existsSync(`${log}.done`)
+    ? callsTo(`${log}.done`).filter((call) => call.includes("refresh_clone")).length
+    : 0;
 
 async function piOf(lab: HerdrLab, label: string): Promise<number | undefined> {
   const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);
@@ -186,7 +198,7 @@ async function start(options: { cardd?: boolean; olderCardd?: boolean } = {}): P
   await until(
     () =>
       callsTo(vmLog).some((call) => call.includes("'cost'")) &&
-      [p620Log, vmLog].every((log) => callsTo(log).some((call) => call.includes("refresh_clone")))
+      [p620Log, vmLog].every((log) => refreshesDone(log) > 0)
         ? true
         : undefined,
     "main's first supervision pass and clone refresh to finish on every host",
@@ -253,6 +265,7 @@ test("/updatefleet with a host list updates only those hosts: the excluded host 
   const excluded = callsTo(f.vmLog).length;
   const fresh = landOnRemote(f.remote, "fleet-fix");
   const supervised = scratchCalls(f.p620Log);
+  const refreshed = refreshesDone(f.p620Log);
 
   await f.lab.submit(f.pane, "/updatefleet local p620");
   const after = await until(async () => {
@@ -266,7 +279,9 @@ test("/updatefleet with a host list updates only those hosts: the excluded host 
 
   await until(
     () =>
-      scratchCalls(f.p620Log) > supervised && tip(f.selectedClone.root) === fresh
+      scratchCalls(f.p620Log) > supervised &&
+      refreshesDone(f.p620Log) > refreshed &&
+      tip(f.selectedClone.root) === fresh
         ? true
         : undefined,
     "the relaunched main's first supervision pass and clone refresh to finish on p620",
