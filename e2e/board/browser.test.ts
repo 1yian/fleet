@@ -264,6 +264,7 @@ test("leaving the board right after Take control does not leave the viewer holdi
   const { endpoint, page, base } = await launch(t);
   await page.goto(`${base}#/browser/garden`);
   await page.getByText("Watching · Read only").waitFor();
+  endpoint.grantOnTake();
   endpoint.hold();
   await page.getByRole("button", { name: "Take control" }).click();
   await until(() => endpoint.arrivals === 1);
@@ -276,6 +277,8 @@ test("leaving the board right after Take control does not leave the viewer holdi
     { t: "control", on: true },
     { t: "control", on: false },
   ]);
+  assert.equal(endpoint.granted, 1);
+  assert.equal(endpoint.controlled, false);
 });
 
 test("an unconfirmed change leaves the viewer watching until the page is reloaded", async (t) => {
