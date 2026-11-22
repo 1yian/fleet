@@ -48,6 +48,12 @@ export async function nextFrames(page: Page): Promise<void> {
   );
 }
 
+export async function clickAndSettle(page: Page, endpoint: BrowserEndpoint): Promise<void> {
+  await screenClick(page);
+  await until(() => endpoint.order.includes("key:keyUp:x") && endpoint.activeInputs === 0);
+  await nextFrames(page);
+}
+
 export async function screenClick(page: Page): Promise<void> {
   const rect = await page.getByRole("img", { name: "Live browser screen" }).boundingBox();
   assert.ok(rect);
