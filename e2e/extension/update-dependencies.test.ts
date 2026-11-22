@@ -53,6 +53,12 @@ const piCalls = (): string[] =>
 
 const target = (): string => join(home, ".local", "bin", "no-mistakes");
 
+function dependenciesOf(report: Record<string, unknown>): string[] {
+  const found = report["dependencies"];
+  assert.ok(Array.isArray(found));
+  return found.map(String);
+}
+
 function update(env: Record<string, string> = {}): Record<string, unknown> {
   return parseRecord(
     here.fleet(["update"], {
@@ -81,7 +87,7 @@ test("fleet update brings Pi, only pi-tiers, and the no-mistakes fork to their l
   );
   assert.equal(update(routeFork(fork))["state"], "updated");
   assert.deepEqual(
-    (update(routeFork(fork))["dependencies"] as string[]).at(-1),
+    dependenciesOf(update(routeFork(fork))).at(-1),
     `no-mistakes: fork-${commit} is the latest`,
   );
 });
@@ -92,7 +98,7 @@ test("fleet update reports a pinned pi-tiers and a Pi that another manager owns 
   const refusal = "Pi was installed by Nix: update it with nix profile upgrade pi";
   const report = update({ FAKE_PI_SELF_UPDATE_REFUSAL: refusal });
   assert.equal(report["state"], "updated");
-  const dependencies = report["dependencies"] as string[];
+  const dependencies = dependenciesOf(report);
   assert.deepEqual(dependencies.slice(0, 2), [
     `Pi: not updated: ${refusal}`,
     `pi-tiers: pinned at ${pinned}, so it was not updated: Pi never moves a pinned ref. Reinstall it with pi install ${PI_TIERS} to follow the default branch`,
@@ -106,7 +112,7 @@ test("fleet update never installs a fork build below the minimum, and says so", 
   const report = update(routeFork(fork));
   assert.equal(report["state"], "updated");
   assert.equal(
-    (report["dependencies"] as string[]).at(-1),
+    dependenciesOf(report).at(-1),
     `no-mistakes: not updated: the latest build of 1yian/no-mistakes, fork-${commit} (2026-11-01T06:00:00Z) is too old, was staged and not installed: the existing no-mistakes is unchanged`,
   );
   assert.equal(existsSync(target()), false);
