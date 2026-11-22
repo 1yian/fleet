@@ -6,6 +6,7 @@ const LABELS: Readonly<Record<string, string>> = {
   "vendor-quota": "model quota",
   auth: "model auth",
   transient: "model unavailable",
+  withheld: "unclassified failure",
 };
 
 export const failureLabel = (classification: string | undefined, compaction: boolean): string =>

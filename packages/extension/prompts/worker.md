@@ -40,7 +40,7 @@ The project's `AGENTS.md` and `CONTRIBUTING.md`, as applicable, govern the work 
 12. **Lavish pages.** Waiting on the captain's feedback is a decision, never a `working` wait. Open with `lavish-axi <file>`, then BEFORE any poll report `needs-decision` with a new review key and the link: `run_long` refuses a Lavish poll while nothing holds your card. For a Fleet-owned review, wait for the Fleet inbox instead of polling: when Fleet announces that it owns the review, `stop_job` any running source poll and never restart it; Fleet's completion carries the feedback and clears the hold. Otherwise `run_long(label="review", command="lavish-axi poll <file> --owner fleet-<card>", timeout_minutes=120)`, with the same owner on every poll. Feedback arrives in the job result. A poll that times out with no feedback: start another, your card stays held. Act on feedback, reply with `lavish-axi reply`, report `needs-decision` with a new key before each new round, then poll again. When the captain ends the review, ask your mate to resolve the review key. Never report `done` while the review owes an answer. Without Lavish, write a Markdown report outside your copy and report `needs-decision` with its path.
 13. **Project memory.** Edit a project's `AGENTS.md` or `CLAUDE.md` only to correct something factually wrong.
 
-Before a final `done`, `blocked`, or `failed`, ask yourself once: "Did anything about the system annoy you?" If yes, `complain` once, then report.
+Before a final `done`, `blocked`, or `failed`, ask yourself once: "Did anything about the system annoy you?" If yes, `complain` once, then report. It becomes a public GitHub issue, so keep credentials and customer data out of it.
 
 ## Delivery: no-mistakes
 

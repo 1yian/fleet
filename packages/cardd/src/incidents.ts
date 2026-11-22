@@ -1,10 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { OpArgs } from "@fleet/protocol";
 import {
-  classify,
+  diagnoseFailure,
   eligibleAt,
   remaining,
-  sanitize,
+  type FailureSignals,
   type Mode,
   type Phase,
 } from "./incident-kinds.ts";
@@ -24,11 +24,12 @@ import {
   roleOf,
   type Incident,
 } from "./incident-store.ts";
+import { cardOfActor } from "./incident-card.ts";
 import { describe, labelOf, nextStep, stamp, tell } from "./incident-text.ts";
 import { QUEUED_DELIVERY, TAKEN_DELIVERY } from "./delivery-states.ts";
 import { transitionStop } from "./lane-stop.ts";
 import { retireSupersededNotices } from "./restart-requests.ts";
-import { addCard, addEntry, laneCardOf, parentOf, type Session } from "./store.ts";
+import { addEntry, parentOf, type Session } from "./store.ts";
 import type { Timings } from "./timing.ts";
 
 interface Recovery {
@@ -49,30 +50,22 @@ interface Done {
   readonly notify: readonly string[];
 }
 
-function cardOfActor(db: DatabaseSync, session: Session, error: string): number {
-  if (session.card !== null) return session.card;
-  const lane = laneCardOf(db, session.lane);
-  if (lane !== undefined) return lane;
-  return addCard(db, {
-    lane: session.lane,
-    title: `${session.lane} runtime failure`,
-    name: `${session.lane}-runtime-failure`,
-    kind: "captain",
-    intent: `${session.lane} hit a runtime failure: ${error}`,
-  }).id;
-}
-
 export function openIncident(
   db: DatabaseSync,
   actor: { id: string; role: "mate" | "worker"; lane: string; card: number },
-  seen: { phase: Phase; error: string; source: string; resumeAt?: number },
+  seen: {
+    phase: Phase;
+    error: string;
+    source: string;
+    resumeAt?: number;
+    signals?: FailureSignals;
+  },
   now: number,
   t: Timings,
   silent = false,
 ): { inc: Incident; notify: string[] } {
-  const kind =
-    seen.phase === "turn" || seen.phase === "compaction" ? classify(seen.error) : "unknown";
-  const eligible = eligibleAt(kind, seen.error, 0, now, t, seen.resumeAt);
+  const kind = seen.signals?.kind ?? "unknown";
+  const eligible = eligibleAt(kind, seen.signals?.retryAfter, 0, now, t, seen.resumeAt);
   const parent = actor.role === "worker" ? actor.lane : parentOf(db, actor.lane);
   const intent = intentOf(db, actor.card, actor.role);
   const generation = generationOf(db, actor.id);
@@ -111,12 +104,13 @@ function failRecovery(
   inc: Incident,
   role: "mate" | "worker",
   error: string,
+  signals: FailureSignals,
   t: Timings,
   resumeAt?: number,
 ): string[] {
   const kind =
-    inc.phase === "turn" || inc.phase === "compaction" ? classify(error) : inc.classification;
-  const eligible = eligibleAt(kind, error, inc.retries, t.wall(), t, resumeAt);
+    inc.phase === "turn" || inc.phase === "compaction" ? signals.kind : inc.classification;
+  const eligible = eligibleAt(kind, signals.retryAfter, inc.retries, t.wall(), t, resumeAt);
   const next = { ...inc, classification: kind, eligibleAt: eligible };
   const recoverable = remaining(next).length > 0;
   applyIncident(
@@ -144,20 +138,20 @@ export function reportFailure(
   args: OpArgs<"incident.report">,
   t: Timings,
 ): Done {
-  const error = sanitize(args.error);
   const live = liveIncident(db, session.id);
   const now = t.wall();
-  if (live?.state === "recovering") {
-    return {
-      value: { incident: live.id, opened: false, classification: live.classification },
-      notify: failRecovery(db, live, session.role, error, t, args.resumeAt),
-    };
-  }
-  if (live !== undefined) {
+  if (live !== undefined && live.state !== "recovering") {
     applyIncident(db, live, { type: "repeated" }, Date.now());
     return {
       value: { incident: live.id, opened: false, classification: live.classification },
       notify: [],
+    };
+  }
+  const { error, signals } = diagnoseFailure(args.error);
+  if (live !== undefined) {
+    return {
+      value: { incident: live.id, opened: false, classification: live.classification },
+      notify: failRecovery(db, live, session.role, error, signals, t, args.resumeAt),
     };
   }
   const card = cardOfActor(db, session, error);
@@ -168,6 +162,7 @@ export function reportFailure(
     {
       phase: args.phase ?? "turn",
       error,
+      signals,
       source:
         args.phase === "compaction"
           ? "the session's compaction error"
@@ -440,6 +435,7 @@ export function reconcileIncidents(db: DatabaseSync, now: number, t: Timings): s
           inc,
           role,
           "no real response and action within the verification window",
+          { kind: inc.classification, retryAfter: undefined },
           t,
         ),
       );
