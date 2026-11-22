@@ -58,6 +58,11 @@ function mouseInput(
   };
 }
 
+function legacyKeyCode(event: KeyboardEvent<HTMLDivElement>): number {
+  const code: unknown = Reflect.get(event.nativeEvent, "keyCode");
+  return typeof code === "number" ? code : 0;
+}
+
 function keyInput(event: KeyboardEvent<HTMLDivElement>, down: boolean): BrowserInput {
   const printable =
     Array.from(event.key).length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
@@ -66,7 +71,7 @@ function keyInput(event: KeyboardEvent<HTMLDivElement>, down: boolean): BrowserI
     type: down ? (printable ? "keyDown" : "rawKeyDown") : "keyUp",
     key: event.key,
     code: event.code,
-    keyCode: event.keyCode,
+    keyCode: legacyKeyCode(event),
     ...(down && printable ? { text: event.key } : {}),
     modifiers: modifiers(event),
   };
@@ -212,9 +217,9 @@ export function BrowserSurface({ frame, driving, input }: Props) {
     <div
       ref={surface}
       className={driving ? "browser-surface driving" : "browser-surface"}
-      role={driving ? "application" : undefined}
+      role="button"
       aria-label={driving ? "Browser controls" : undefined}
-      tabIndex={driving ? 0 : undefined}
+      tabIndex={driving ? 0 : -1}
       onPointerDown={(event) => {
         if (!driving) return;
         event.currentTarget.focus();

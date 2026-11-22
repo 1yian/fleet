@@ -14,16 +14,16 @@ import {
   LOST,
   commandError,
   commandFor,
+  lostControl,
+  lostNotice,
+  looseCommand,
+  settles,
   type BrowserInput,
   type Pending,
   type Status,
 } from "./browser-commands.ts";
 
 const FRESH_FRAME_MS = 3000;
-
-function looseCommand(pending: Pending, fresh: boolean): boolean {
-  return fresh || pending === "take";
-}
 
 class Viewer {
   private readonly suffix: string;
@@ -167,6 +167,13 @@ class Viewer {
     this.remote.clear();
   }
 
+  private dropStale(state: BrowserState, reset: boolean): void {
+    if (reset) this.events = [];
+    if (this.latest === undefined || this.latest.meta.targetId === state.activeTab) return;
+    this.latest = undefined;
+    this.frame(undefined);
+  }
+
   private track(event: BrowserInput): void {
     if (event.t === "key") {
       const id = `key:${event.code}`;
@@ -192,33 +199,28 @@ class Viewer {
     this.ticket += 1;
   }
 
+  private retarget(state: BrowserState): void {
+    const key = `${String(state.viewer.controlling)}:${state.activeTab ?? ""}`;
+    if (key === this.confirmedKey) return;
+    this.confirmedKey = key;
+    this.authority += 1;
+    this.events = [];
+    this.remote.clear();
+  }
+
   private confirm(state: BrowserState): void {
     const { state: previous, pending, notice } = this.current;
     const owns = state.viewer.controlling;
-    const lost = previous?.viewer.controlling === true && !owns;
-    const completed =
-      lost ||
-      (pending === "take" && owns) ||
-      (pending === "done" && !owns) ||
-      (typeof pending === "object" && pending.tab === state.activeTab);
+    const lost = lostControl(previous, state);
+    const completed = lost || settles(pending, state);
     if (completed) this.invalidateCommand();
     if (!owns && pending !== "take") this.issuedTake = false;
-    if (lost || previous?.activeTab !== state.activeTab) this.events = [];
-    if (this.latest !== undefined && this.latest.meta.targetId !== state.activeTab) {
-      this.latest = undefined;
-      this.frame(undefined);
-    }
-    const key = `${String(owns)}:${state.activeTab ?? ""}`;
-    if (key !== this.confirmedKey) {
-      this.confirmedKey = key;
-      this.authority += 1;
-      this.events = [];
-      this.remote.clear();
-    }
+    this.dropStale(state, lost || previous?.activeTab !== state.activeTab);
+    this.retarget(state);
     this.set({
       state,
       pending: completed ? undefined : pending,
-      notice: lost ? (pending === "done" ? "Control returned to the agent." : LOST) : notice,
+      notice: lost ? lostNotice(pending) : notice,
     });
     this.resume();
     this.wantFrame();
