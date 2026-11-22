@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -221,4 +221,25 @@ test("analytics reconciles readable ledger usage and successful closes in the re
   refuse();
   await page.getByRole("link", { name: "Board", exact: true }).click();
   await page.getByRole("alert").getByText("the card changed since you looked").waitFor();
+
+  appendFileSync(
+    join(mainHome, "ledger", "profiles", "main", "usage.jsonl"),
+    `\n${usage("at-cutoff", "04T13:00", 7_000, 7_000, 0, 7_000)}`,
+  );
+  writeFileSync(clock, "2026-05-04T13:00:00Z");
+  await page.evaluate(() => {
+    location.hash = "/analytics";
+  });
+  await page.reload();
+  await hourly.getByRole("button").first().waitFor();
+  const buttons = hourly.getByRole("button");
+  assert.equal(await buttons.count(), 24);
+  assert.match(
+    (await buttons.first().getAttribute("aria-label")) ?? "",
+    /^May 3, 13:00 to 14:00 UTC: 0 tokens/,
+  );
+  assert.equal(
+    await buttons.last().getAttribute("aria-label"),
+    "May 4, 12:00 to 13:00 UTC: No usage records",
+  );
 });

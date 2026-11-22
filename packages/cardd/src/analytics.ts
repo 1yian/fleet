@@ -73,7 +73,7 @@ async function usageIn(file: string, from: number, to: number): Promise<Map<numb
       const entry = parse(line);
       const date = entry?.["date"];
       const at = typeof date === "string" ? Date.parse(date) : NaN;
-      if (!(at >= from && at <= to)) continue;
+      if (!(at >= from && at < to)) continue;
       const tokens = usageOf(entry);
       if (tokens === undefined) continue;
       const id = entry?.["id"];
@@ -141,7 +141,7 @@ export async function analytics(db: DatabaseSync, to: number): Promise<Analytics
     lanes.push({ lane: names.join(" / "), tokens });
   }
   const hours: Analytics["hours"] = [];
-  for (let at = bucket(from, HOUR); at <= to; at += HOUR)
+  for (let at = bucket(from, HOUR); at < to; at += HOUR)
     hours.push({ at, tokens: hourly.get(at) ?? null });
   return { from, to, hours, lanes, closures };
 }

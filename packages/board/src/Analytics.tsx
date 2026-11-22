@@ -13,6 +13,13 @@ const time = new Intl.DateTimeFormat("en", {
   minute: "2-digit",
   hourCycle: "h23",
 });
+const seconds = new Intl.DateTimeFormat("en", {
+  timeZone: "UTC",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
 const HOUR = 3_600_000;
 const HIGHLIGHTS = [
   ["input", "Input"],
@@ -54,7 +61,8 @@ function spanLabel(at: number, from: number, to: number): string {
   const start = Math.max(at, from);
   const end = Math.min(at + HOUR, to);
   const partial = end < at + HOUR || start > at;
-  return `${date.format(at)}, ${time.format(start)} to ${time.format(end)} UTC${partial ? " (partial)" : ""}`;
+  const format = time.format(start) === time.format(end) ? seconds : time;
+  return `${date.format(at)}, ${format.format(start)} to ${format.format(end)} UTC${partial ? " (partial)" : ""}`;
 }
 
 function hourLabels(hours: Data["hours"]) {
