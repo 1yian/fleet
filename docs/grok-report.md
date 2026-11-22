@@ -10,6 +10,6 @@ The [Grok Bot routine webhook](https://docs.x.ai/grok-bot/skills-routines-and-au
 
 ## Transport
 
-The connector is off unless cardd starts with `CARDD_GROK_REPORT_TOKEN` set. Use a dedicated `grok.`-prefixed token followed by at least 32 random URL-safe characters. Never use a Fleet session token. The route on cardd's private listener is `/grok-report/mcp`. It uses stateless MCP Streamable HTTP. A future HTTPS edge must forward only this exact route to an allowed private cardd authority, not expose the board, `/call` or `/session`.
+The connector is off unless cardd starts with `CARDD_GROK_REPORT_TOKEN` set. Use a dedicated `grok.`-prefixed token followed by at least 32 random URL-safe characters. Never use a Fleet session token. The route on cardd's private listener is `/grok-report/mcp`. It uses stateless MCP Streamable HTTP and accepts only POST of one JSON-RPC message up to 128 KiB: GET, DELETE, batches, malformed JSON and larger bodies are refused. A future HTTPS edge must forward only this exact route to an allowed private cardd authority, not expose the board, `/call` or `/session`.
 
 [Grok Bot custom connectors](https://docs.x.ai/grok-bot/computer-and-apps#connect-an-app) document Remote HTTPS and configurable HTTP headers. Configure `Authorization: Bearer <adapter token>` in the connector, not in routine instructions or chat. Test account policy and unattended tool approval separately before relying on a real routine. No deployment or account connection is part of this prototype.

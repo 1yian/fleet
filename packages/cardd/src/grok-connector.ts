@@ -53,21 +53,48 @@ function toolReceipt(result: { receipt: string; entry?: number }) {
   };
 }
 
+class ReportRefusal extends Error {
+  readonly status: number;
+  readonly code: number;
+
+  constructor(status: number, code: number, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function refuse(response: ServerResponse, status: number, code: number, message: string): void {
+  response
+    .writeHead(status, { "content-type": "application/json" })
+    .end(JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null }));
+}
+
 function readReportBody(request: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    const tooLarge = new ReportRefusal(
+      413,
+      -32000,
+      `Payload Too Large: Request body must not exceed ${String(BODY_LIMIT)} bytes`,
+    );
     const chunks: Buffer[] = [];
     let bytes = 0;
     request.on("data", (chunk: Buffer) => {
       bytes += chunk.length;
-      if (bytes > BODY_LIMIT) reject(new Error("report request too large"));
+      if (bytes > BODY_LIMIT) reject(tooLarge);
       else chunks.push(chunk);
     });
     request.on("end", () => {
+      let message: unknown;
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      } catch (error) {
-        reject(error instanceof Error ? error : new Error("invalid JSON"));
+        message = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        reject(new ReportRefusal(400, -32700, "Parse error: Invalid JSON"));
+        return;
       }
+      if (Array.isArray(message))
+        reject(new ReportRefusal(400, -32600, "Invalid Request: Batches are not supported"));
+      else resolve(message);
     });
     request.on("error", reject);
   });
@@ -87,11 +114,17 @@ export function grokReportEndpoint(db: DatabaseSync, notify: (recipient: string)
       response.writeHead(401, { "www-authenticate": "Bearer" }).end();
       return;
     }
+    if (request.method !== "POST") {
+      response.setHeader("allow", "POST");
+      refuse(response, 405, -32000, "Method not allowed.");
+      return;
+    }
     let body: unknown;
     try {
-      if (request.method === "POST") body = await readReportBody(request);
-    } catch {
-      response.writeHead(400).end();
+      body = await readReportBody(request);
+    } catch (error) {
+      if (error instanceof ReportRefusal) refuse(response, error.status, error.code, error.message);
+      else response.destroy();
       return;
     }
     const server = reportServer(db, notify);

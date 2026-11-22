@@ -161,6 +161,66 @@ test("the Grok connector discovers just one tool and records a correlated result
   );
 });
 
+test("the connector refuses a standalone stream, batches, bad JSON and oversized bodies without recording", async () => {
+  const started = await startFleet({ CARDD_GROK_REPORT_TOKEN: TOKEN });
+  fleet = started;
+  const card = await newCard(started.main, "Refuse unsupported requests");
+  const assignment = await assign(started, card);
+  const url = started.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/grok-report/mcp");
+  const post = (body: string) =>
+    fetch(url, {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        "mcp-protocol-version": VERSION,
+        authorization: `Bearer ${TOKEN}`,
+      },
+      body,
+    });
+  const call = (text: string) => ({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "fleet_report_result",
+      arguments: { ...assignment, text, sources: ["https://example.test/one"] },
+    },
+  });
+  for (const method of ["GET", "DELETE"]) {
+    const refused = await fetch(url, {
+      method,
+      headers: { accept: "text/event-stream", authorization: `Bearer ${TOKEN}` },
+    });
+    assert.equal(refused.status, 405);
+    assert.equal(refused.headers.get("allow"), "POST");
+    assert.partialDeepStrictEqual(await refused.json(), { jsonrpc: "2.0", error: { code: -32000 } });
+  }
+  const batch = await post(JSON.stringify([call("first"), call("second")]));
+  assert.equal(batch.status, 400);
+  assert.partialDeepStrictEqual(await batch.json(), { jsonrpc: "2.0", error: { code: -32600 } });
+  const malformed = await post("{not json");
+  assert.equal(malformed.status, 400);
+  assert.partialDeepStrictEqual(await malformed.json(), {
+    jsonrpc: "2.0",
+    error: { code: -32700 },
+  });
+  const large = await post(JSON.stringify(call("x".repeat(200 * 1024))));
+  assert.equal(large.status, 413);
+  assert.partialDeepStrictEqual(await large.json(), { jsonrpc: "2.0", error: { code: -32000 } });
+  assert.deepEqual(
+    (await view(started, card)).entries.filter((entry) => entry.author === "grok-bot"),
+    [],
+  );
+  const single = await post(JSON.stringify(call("only")));
+  assert.equal(single.status, 200);
+  const pushed = await started.main.waitForEntry(
+    (entry) => entry.author === "grok-bot" && entry.card === card.id,
+    "the single result",
+  );
+  assert.equal(pushed.body, "only");
+});
+
 test("a second mate's Grok result stays out of the board, summaries and other lanes", async () => {
   const started = await startFleet({ CARDD_GROK_REPORT_TOKEN: TOKEN });
   fleet = started;

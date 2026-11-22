@@ -117,7 +117,6 @@ class Hub {
     );
     this.db = db;
     this.grokReport = grokReportEndpoint(db, (recipient) => {
-      this.web.changed();
       this.flush(recipient, false);
     });
     this.timing = timing;
