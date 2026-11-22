@@ -15,6 +15,7 @@ import {
   typedMaintenance,
   workspace,
   untilRunning,
+  useSteadyPi,
 } from "../support/lane-observation-lab.ts";
 
 const ops = (): string => `${here.root}.worktrees/lane-ops`;
@@ -209,6 +210,7 @@ test("a confirmed start followed by a failed final discovery blocks recovery", (
 });
 
 test("a confirmed lane whose workspace closes while a later lane is read blocks recovery but keeps both outcomes", async () => {
+  useSteadyPi();
   assert.deepEqual(maintain(), action("ops", "started"));
   await untilRunning("ops");
   const id = (await workspace("ops"))?.["workspace_id"];

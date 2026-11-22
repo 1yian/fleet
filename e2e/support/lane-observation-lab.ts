@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach } from "node:test";
@@ -345,7 +345,6 @@ beforeEach(async () => {
   bin = join(here.parent, "bin");
   mkdirSync(bin);
   writeFileSync(join(bin, "herdr"), HERDR_SHIM, { mode: 0o755 });
-  useSteadyPi();
   lab = await HerdrLab.start({
     ...h.piEnv("mate"),
     PATH: `${bin}:${NODE_BIN}:${process.env["PATH"] ?? ""}`,
@@ -370,16 +369,14 @@ function addLane(lane: string): string {
   });
 }
 
-function useSteadyPi(): void {
+export function useSteadyPi(): void {
   writeFileSync(
     join(bin, "pi"),
     '#!/usr/bin/env node\nprocess.title = "pi";\nprocess.stdin.resume();\n',
-    { mode: 0o755 },
+    {
+      mode: 0o755,
+    },
   );
-}
-
-export function useRealPi(): void {
-  rmSync(join(bin, "pi"));
 }
 
 const faultLog = () => join(bin, "observations");

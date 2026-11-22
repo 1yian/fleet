@@ -17,6 +17,7 @@ import {
   action,
   idlePane,
   untilRunning,
+  useSteadyPi,
 } from "../support/lane-observation-lab.ts";
 
 test("root discovery fails in the typed reply but keeps the legacy nonzero exit", async () => {
@@ -57,6 +58,7 @@ test("local maintenance never starts from a failed, blank, partial, or timed-out
 });
 
 test("missing nested pane or process fields neither start nor hold a lane", () => {
+  useSteadyPi();
   assert.deepEqual(maintain(), action("ops", "started"));
   const home = `${here.root}.worktrees/lane-ops`;
   const startsFile = join(home, "state", "starts");
@@ -76,6 +78,7 @@ test("missing nested pane or process fields neither start nor hold a lane", () =
 });
 
 test("a workspace omitted once neither restarts nor crash-holds a running mate", () => {
+  useSteadyPi();
   assert.deepEqual(maintain(), action("ops", "started"));
   const home = `${here.root}.worktrees/lane-ops`;
   const startsFile = join(home, "state", "starts");
