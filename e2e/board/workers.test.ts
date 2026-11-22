@@ -231,3 +231,36 @@ test("a board read that never answers is abandoned and the next change is shown"
     .getByText("Running", { exact: true })
     .waitFor({ timeout: 20_000 });
 });
+
+test("a board response that stalls after its headers and a partial body is abandoned", async (context) => {
+  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
+  context.after(() => cardd.stop());
+  const page = await openBoardPage(context, browser);
+  await page.addInitScript(() => {
+    const original = window.fetch.bind(window);
+    let stalled = false;
+    window.fetch = (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (stalled || !url.endsWith("/api/board")) return original(input, init);
+      stalled = true;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"cards":['));
+          init?.signal?.addEventListener("abort", () => {
+            controller.error(init.signal?.reason);
+          });
+        },
+      });
+      return Promise.resolve(
+        new Response(stream, { status: 200, headers: { "content-type": "application/json" } }),
+      );
+    };
+  });
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
+
+  const task = await newCard(main, "Refresh the partner logos");
+  await cardd.connect(await begin(main, task), [], true, true);
+  await row(page, "Working", task)
+    .getByText("Running", { exact: true })
+    .waitFor({ timeout: 20_000 });
+});
