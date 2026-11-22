@@ -26,6 +26,10 @@ function entry(): { readonly opened: boolean; readonly scroll: number } {
   return { opened, scroll: typeof scroll === "number" ? scroll : 0 };
 }
 
+export function rememberScroll(): void {
+  history.replaceState({ opened: entry().opened, scroll: window.scrollY }, "");
+}
+
 export function useCardRoute(): {
   readonly card: number | undefined;
   readonly workers: boolean;
@@ -37,7 +41,7 @@ export function useCardRoute(): {
   const card = ADDRESS.exec(address)?.[1];
   const id = card === undefined ? undefined : Number(card);
   const open = useCallback((next: number) => {
-    history.replaceState({ opened: entry().opened, scroll: window.scrollY }, "");
+    rememberScroll();
     history.pushState({ opened: true }, "", `#/c-${String(next)}`);
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   }, []);
