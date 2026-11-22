@@ -50,7 +50,7 @@ beforeEach(async () => {
   lab = await HerdrLab.start({
     ...h.piEnv("mate"),
     PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
-    FLEET_SUPERVISE_MS: "300",
+    FLEET_SUPERVISE_MS: "100",
   });
 });
 afterEach(async (t) => {

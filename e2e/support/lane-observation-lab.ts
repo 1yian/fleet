@@ -397,10 +397,14 @@ function fleetEnv(fault = "", pane = "", probeTimeout = "20000"): NodeJS.Process
 }
 
 function fleet(args: readonly string[], fault = "", pane = "", probeTimeout?: string): string {
+  return fleetWithEnv(args, fleetEnv(fault, pane, probeTimeout));
+}
+
+export function fleetWithEnv(args: readonly string[], env: NodeJS.ProcessEnv): string {
   return execFileSync(process.execPath, [here.launch, ...args], {
     encoding: "utf8",
     timeout: 90_000,
-    env: fleetEnv(fault, pane, probeTimeout),
+    env,
   });
 }
 

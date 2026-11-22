@@ -10,7 +10,6 @@ import {
   startDispatchLab,
   stopDispatchLab,
   toolResults,
-  WORKER_WAIT_MS,
   worktreesOf,
 } from "../support/dispatch-lab.ts";
 import { until } from "../support/live-fleet.ts";
@@ -65,8 +64,8 @@ const slowPs = () => stallingTool("ps", () => "exec sleep 3600");
 
 const slowZstd = () => stallingTool("zstd", (slow) => `while [ -e '${slow}' ]; do sleep 0.1; done`);
 
-const SCAN_CAP_MS = 90_000;
-const STALL_WAIT_MS = SCAN_CAP_MS + WORKER_WAIT_MS;
+const SCAN_CAP_MS = 25_000;
+const STALL_WAIT_MS = 150_000;
 
 async function closeOnLoadedHost(
   limits: Record<string, string>,
@@ -148,13 +147,13 @@ test("close on a host where ps stalls stops at the scan limit, leaves the card o
 
 test("close that runs past its overall limit stops at the step in flight and leaves the card open", async () => {
   await closeOnLoadedHost(
-    { FLEET_CLOSE_DEADLINE_MS: "15000" },
-    "ran past close's overall limit of 15 s",
+    { FLEET_CLOSE_DEADLINE_MS: "8000" },
+    "ran past close's overall limit of 8 s",
     false,
   );
 });
 
-const ARCHIVE_DEADLINE_MS = 45_000;
+const ARCHIVE_DEADLINE_MS = 20_000;
 
 const inArchive = (archive: string, member: string): string =>
   execFileSync("sh", ["-c", `zstd -dc '${archive}' | tar -xOf - '${member}'`], {

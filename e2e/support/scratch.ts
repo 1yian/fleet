@@ -132,6 +132,7 @@ export async function startMain(
   h: Harness,
   restart = false,
   args: readonly string[] = mateArgs(h),
+  env: Record<string, string> = {},
 ): Promise<string> {
   const listed = records((await lab.run(["workspace", "list"]))["workspaces"]);
   const existing = listed.find((each) => each["label"] === "1stmate");
@@ -155,6 +156,10 @@ export async function startMain(
   const command = [...(restart ? ["--continue"] : []), ...args, ...probe]
     .map((arg) => `'${arg}'`)
     .join(" ");
-  await lab.submit(pane, `cd '${scratch.root}' && pi ${command}`);
+  const assignments = Object.entries(env).map(
+    ([name, value]) => `'${`${name}=${value}`.replaceAll("'", "'\\''")}'`,
+  );
+  const pi = assignments.length === 0 ? "pi" : `env ${assignments.join(" ")} pi`;
+  await lab.submit(pane, `cd '${scratch.root}' && ${pi} ${command}`);
   return pane;
 }

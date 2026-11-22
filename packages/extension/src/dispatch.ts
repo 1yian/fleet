@@ -79,6 +79,11 @@ async function claimOwned(
 }
 
 const SHELL_WAIT_MS = 20_000;
+const restartShellWait = Number(process.env["FLEET_RESTART_SHELL_WAIT_MS"]);
+const RESTART_SHELL_WAIT_MS =
+  Number.isSafeInteger(restartShellWait) && restartShellWait > 0
+    ? Math.min(restartShellWait, SHELL_WAIT_MS)
+    : SHELL_WAIT_MS;
 
 const HERDR_READY_WAIT_MS = 4000;
 
@@ -117,7 +122,7 @@ class StartUnconfirmed extends Error {
 async function launchReplacement(host: string, pane: string, args: string[]): Promise<void> {
   let idle: boolean;
   try {
-    idle = await until(() => shellIdle(host, pane), SHELL_WAIT_MS);
+    idle = await until(() => shellIdle(host, pane), RESTART_SHELL_WAIT_MS);
   } catch (error) {
     throw new DidNotStart(error);
   }
