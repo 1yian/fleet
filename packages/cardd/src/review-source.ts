@@ -5,7 +5,7 @@ import Type, { type Static } from "typebox";
 import { WebSocket } from "ws";
 import { reviewDecision, reviewPreview } from "./review-completion.ts";
 import { lavishRequest } from "./review-session.ts";
-import { factsFrom } from "./status.ts";
+import { factsFrom, type Hold } from "./status.ts";
 import { addEntry, cardEntries, transaction, workerOf } from "./store.ts";
 
 const AUTHOR = "lavish";
@@ -87,21 +87,50 @@ function seenPrompts(entries: readonly Entry[], { source }: Binding): ReadonlySe
   );
 }
 
-function noticeFor(entries: readonly Entry[], { requests, source }: Binding): Entry[] {
-  return entries.filter(
-    ({ author, kind, fields }) =>
-      author === "fleet" &&
-      kind === "note" &&
-      fields["fleetReview"] === true &&
-      fields["upstream"] === source.href &&
-      JSON.stringify(fields["requests"]) === JSON.stringify(requests),
+const HOLD_KINDS: ReadonlySet<string> = new Set(["hold", "answer", "release", "report", "cleanup"]);
+
+interface Identity {
+  readonly source: URL;
+  readonly requests: readonly number[];
+}
+
+function bound(
+  hold: Hold | undefined,
+  { source, requests }: Identity,
+  origins: ReadonlyMap<string, string>,
+): boolean {
+  return (
+    hold !== undefined &&
+    reviewPreview(hold, origins, Infinity)?.href === source.href &&
+    JSON.stringify(hold.reviewRequests ?? []) === JSON.stringify(requests)
   );
 }
 
-function baselineOf(entries: readonly Entry[], binding: Binding): ReadonlySet<string> | undefined {
-  const baseline = noticeFor(entries, binding).find(({ fields }) =>
-    Array.isArray(fields["baseline"]),
-  )?.fields["baseline"];
+function epochNotices(
+  entries: readonly Entry[],
+  identity: Identity,
+  origins: ReadonlyMap<string, string>,
+): Entry[] {
+  let start = 0;
+  entries.forEach(({ id, kind }, at) => {
+    if (HOLD_KINDS.has(kind) && !bound(factsFrom(entries.slice(0, at + 1)).hold, identity, origins))
+      start = id;
+  });
+  return entries.filter(
+    ({ id, author, kind, fields }) =>
+      id > start &&
+      author === "fleet" &&
+      kind === "note" &&
+      fields["fleetReview"] === true &&
+      fields["upstream"] === identity.source.href &&
+      JSON.stringify(fields["requests"]) === JSON.stringify(identity.requests),
+  );
+}
+
+function baselineOf(notices: readonly Entry[]): ReadonlySet<string> | undefined {
+  const baseline = notices.find(({ fields }) => Array.isArray(fields["baseline"]))?.fields[
+    "baseline"
+  ];
   return Array.isArray(baseline)
     ? new Set(baseline.filter((id) => typeof id === "string"))
     : undefined;
@@ -307,7 +336,7 @@ export class SourceReviews {
     }
     const source = reviewPreview(hold, this.origins, now);
     if (source === undefined || !reviewDecision(entries, hold)) return undefined;
-    return { hold, source, session: hold.review, requests: hold.reviewRequests ?? [] };
+    return { hold, source, entries, session: hold.review, requests: hold.reviewRequests ?? [] };
   }
 
   private binding(card: number): Binding | undefined {
@@ -328,6 +357,15 @@ export class SourceReviews {
     };
   }
 
+  private claimant(href: string): { card: number; requests: string } | undefined {
+    for (const card of [...this.candidates]) {
+      const held = this.held(card, Infinity);
+      if (held?.source.href === href && epochNotices(held.entries, held, this.origins).length > 0)
+        return { card, requests: JSON.stringify(held.requests) };
+    }
+    return undefined;
+  }
+
   private owns(card: number): boolean {
     const held = this.held(card, Infinity);
     for (const [href, claim] of this.claims)
@@ -339,10 +377,13 @@ export class SourceReviews {
       )
         this.claims.delete(href);
     if (held === undefined) return false;
-    const claim = this.claims.get(held.source.href);
-    if (claim === undefined)
-      this.claims.set(held.source.href, { card, requests: JSON.stringify(held.requests) });
-    return (claim?.card ?? card) === card;
+    const href = held.source.href;
+    if (!this.claims.has(href))
+      this.claims.set(
+        href,
+        this.claimant(href) ?? { card, requests: JSON.stringify(held.requests) },
+      );
+    return this.claims.get(href)?.card === card;
   }
 
   private refreshCard(card: number): void {
@@ -370,10 +411,9 @@ export class SourceReviews {
       const binding = this.binding(listening.card);
       if (binding === undefined || !same(binding, listening)) return false;
       const entries = cardEntries(this.db, binding.card);
-      const notice = !noticeFor(entries, binding).some(
-        ({ fields }) => fields["worker"] === binding.worker,
-      );
-      const baseline = baselineOf(entries, binding) ?? new Set(promptIds(moment.chat));
+      const epoch = epochNotices(entries, binding, this.origins);
+      const notice = !epoch.some(({ fields }) => fields["worker"] === binding.worker);
+      const baseline = baselineOf(epoch) ?? new Set(promptIds(moment.chat));
       if (notice)
         addEntry(
           this.db,

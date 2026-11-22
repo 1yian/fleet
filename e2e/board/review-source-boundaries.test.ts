@@ -171,6 +171,89 @@ test("a deferred card keeps its source and gets its own verdict when it returns"
   );
 });
 
+test("a restart restores the card that already took over before a competing card is considered", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const lab = await labFor(t, key, origin.origin, "Older");
+  const { cardd, main, card, token, review, bind } = lab;
+  const older = await cardd.connect(token);
+  await bind(older, "review-older");
+  await older.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the older notice");
+  const olderHold = check(OPS.card.result, await main.call("card", { card: card.id })).hold;
+  assert.ok(olderHold);
+  assert.equal(
+    await cardd.act(card.id, {
+      kind: "answer",
+      hold: olderHold.entry,
+      choice: "Done",
+      written: true,
+    }),
+    200,
+  );
+  const current = await newCard(main, "Current owner", "scout");
+  const currentToken = await begin(main, current);
+  const owner = await cardd.connect(currentToken);
+  await owner.call("report", { status: "needs-decision", key: "review-owner", text: review });
+  await main.call("hold", { card: current.id, to: "captain", question: "owner", review });
+  await owner.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the owner notice");
+  await bind(older, "review-competing");
+  await owner.close();
+  await older.close();
+  await cardd.stop();
+  await cardd.restart();
+  const ownerAgain = await cardd.connect(currentToken);
+  const olderAgain = await cardd.connect(token);
+  await post(origin, `/api/${key}/prompts`, verdictOf("Meant for the current owner"));
+  await ownerAgain.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Meant for the current owner",
+    "the verdict on the restored owner",
+  );
+  assert.deepEqual(
+    olderAgain.entries.filter(
+      ({ entry }) => entry.body === "review-competing" || entry.kind === "review-feedback",
+    ),
+    [],
+  );
+});
+
+test("binding a card again after a board-only decision starts from a fresh baseline", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const { cardd, main, card, token, review, bind } = await labFor(t, key, origin.origin, "Again");
+  const first = await cardd.connect(token);
+  await bind(first, "review-again");
+  await first.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the first notice");
+  await main.call("hold", { card: card.id, to: "captain", question: "board only", review: false });
+  const other = await newCard(main, "In between", "scout");
+  const between = await cardd.connect(await begin(main, other));
+  await between.call("report", { status: "needs-decision", key: "review-between", text: review });
+  await main.call("hold", { card: other.id, to: "captain", question: "between", review });
+  await between.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the other notice");
+  await post(origin, `/api/${key}/prompts`, verdictOf("Meant for the other card"));
+  await between.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Meant for the other card",
+    "the verdict on the other card",
+  );
+  const otherHold = check(OPS.card.result, await main.call("card", { card: other.id })).hold;
+  assert.ok(otherHold);
+  assert.equal(
+    await cardd.act(other.id, {
+      kind: "answer",
+      hold: otherHold.entry,
+      choice: "Done",
+      written: true,
+    }),
+    200,
+  );
+  await main.call("hold", { card: card.id, to: "captain", question: "rebound", review });
+  await first.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true && entry.body === "rebound",
+    "a new takeover after binding again",
+  );
+  assert.deepEqual(
+    first.entries.filter(({ entry }) => entry.kind === "review-feedback"),
+    [],
+  );
+});
+
 test("a replacement upstream behind the same link starts from its own baseline", async (t) => {
   const { origin, key, file } = await reviewSource(t);
   const { cardd, token, reported, bind } = await labFor(t, key, origin.origin, "Remap");

@@ -114,7 +114,7 @@ export function format(entry: Entry, name: string, again = false): string {
 
 function formatReview(entry: Entry, card: string): string | undefined {
   if (entry.kind === "note" && entry.fields["fleetReview"] === true)
-    return `[fleet] ${card} now has a Fleet-owned review inbox. If you are the worker, stop any poll of the source session and wait for feedback in the Fleet inbox instead. Feedback from the source page is informational and never clears the hold: after the captain's final verdict, ask your mate to resolve the review key, even if the source session is still open.\n${entry.body}`;
+    return `[fleet] ${card} now has a Fleet-owned review inbox. If you are the worker, stop any poll of the source session and wait for feedback in the Fleet inbox instead. Only feedback the captain sends after this notice is relayed; anything sent to the source page before it is not forwarded. Feedback from the source page is informational and never clears the hold: after the captain's final verdict, ask your mate to resolve the review key, even if the source session is still open.\n${entry.body}`;
   if (entry.kind !== "review-feedback") return undefined;
   const source = field(entry, "source");
   if (source === "lavish-source") return formatSourceReview(entry, card);
