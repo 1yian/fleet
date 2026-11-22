@@ -339,7 +339,7 @@ export function boardAction(
   }
   if (action.kind === "comment") return { notify: commentOnBoard(db, card, action.text) };
   if (action.kind === "signin-grant") {
-    const { grant, text } = createGrant(db, card, action, now);
+    const { grant, text } = createGrant(db, card, action);
     return { notify: commentOnBoard(db, card, text, true), grant };
   }
   const { notify, until, zone } = deferOnBoard(
