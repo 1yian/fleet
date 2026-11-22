@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
+import { parseRecord } from "../support/json.ts";
 import { git } from "../support/remote.ts";
 import { tempDir } from "../support/run-root.ts";
 import { configureMain, Scratch } from "../support/scratch.ts";
@@ -101,8 +102,8 @@ const reminders = async (): Promise<readonly { id: number; to: string; at: strin
   (await cardd.board()).schedules;
 const setReminder = (updateReminder: boolean | undefined): void => {
   const file = join(scratch.root, "config", "lane.json");
-  const lane: unknown = JSON.parse(readFileSync(file, "utf8"));
-  writeFileSync(file, JSON.stringify(Object.assign({}, lane, { updateReminder })));
+  const lane = parseRecord(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify({ ...lane, updateReminder }));
 };
 
 test("a fresh install without Go names the missing no-mistakes and the fix, and still sets up the rest", () => {
