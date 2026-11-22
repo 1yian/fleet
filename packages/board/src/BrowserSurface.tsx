@@ -72,9 +72,20 @@ function keyInput(event: KeyboardEvent<HTMLDivElement>, down: boolean): BrowserI
   };
 }
 
+interface Press {
+  readonly input: MouseInput;
+  readonly x: number;
+  readonly y: number;
+  dragged: boolean;
+}
+
+function travelled(press: Press, event: { clientX: number; clientY: number }): boolean {
+  return Math.hypot(event.clientX - press.x, event.clientY - press.y) > MULTI_CLICK_PX;
+}
+
 class Gestures {
   private last = Gestures.idle();
-  private readonly pressed = new Map<number, MouseInput>();
+  private readonly pressed = new Map<number, Press>();
   private readonly held = new Map<string, BrowserInput>();
 
   private static idle() {
@@ -94,27 +105,39 @@ class Gestures {
       event.timeStamp - last.at < MULTI_CLICK_MS &&
       Math.hypot(event.clientX - last.x, event.clientY - last.y) <= MULTI_CLICK_PX;
     const press = mouseInput(event, frame, "mousePressed", repeated ? last.count + 1 : 1);
-    this.pressed.set(event.button, press);
+    this.pressed.set(event.button, {
+      input: press,
+      x: event.clientX,
+      y: event.clientY,
+      dragged: false,
+    });
     return press;
+  }
+
+  move(event: PointerEvent<HTMLDivElement>): void {
+    for (const press of this.pressed.values()) if (travelled(press, event)) press.dragged = true;
   }
 
   release(event: PointerEvent<HTMLDivElement>, frame: BrowserFrame): MouseInput | undefined {
     const press = this.pressed.get(event.button);
     if (press === undefined) return undefined;
     this.pressed.delete(event.button);
-    this.last = {
-      count: press.clickCount,
-      at: event.timeStamp,
-      x: event.clientX,
-      y: event.clientY,
-      button: event.button,
-    };
-    return mouseInput(event, frame, "mouseReleased", press.clickCount);
+    this.last =
+      press.dragged || travelled(press, event)
+        ? Gestures.idle()
+        : {
+            count: press.input.clickCount,
+            at: event.timeStamp,
+            x: event.clientX,
+            y: event.clientY,
+            button: event.button,
+          };
+    return mouseInput(event, frame, "mouseReleased", press.input.clickCount);
   }
 
   releasePointer(): MouseInput[] {
-    const releases = [...this.pressed.values()].map((press): MouseInput => ({
-      ...press,
+    const releases = [...this.pressed.values()].map(({ input }): MouseInput => ({
+      ...input,
       type: "mouseReleased",
       buttons: 0,
     }));
@@ -198,7 +221,9 @@ export function BrowserSurface({ frame, driving, input }: Props) {
         input(target, gestures.press(event, frame));
       }}
       onPointerMove={(event) => {
-        if (driving) input(target, mouseInput(event, frame, "mouseMoved", 0));
+        if (!driving) return;
+        gestures.move(event);
+        input(target, mouseInput(event, frame, "mouseMoved", 0));
       }}
       onPointerUp={(event) => {
         const release = driving ? gestures.release(event, frame) : undefined;
