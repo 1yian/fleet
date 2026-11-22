@@ -33,6 +33,13 @@ function pollVerdict(poll: Outcomes, at: number): string {
   return within(poll.okAt, at, POLL_STALE_MS) ? "ok" : "STALE, no recent success";
 }
 
+function startupVerdict(poll: Outcomes): string {
+  if (failedLast(poll)) return "not started, the startup read FAILED";
+  return timeOf(poll.okAt) === undefined
+    ? "UNKNOWN, not started, no startup read has succeeded yet"
+    : "not started, the startup read succeeded";
+}
+
 function eventVerdict(outcomes: Outcomes): string {
   if (failedLast(outcomes)) return "FAILING, the last attempt failed";
   return timeOf(outcomes.okAt) === undefined ? "never happened" : "last attempt succeeded";
@@ -78,7 +85,7 @@ export function bridgeReport(status: BridgeStatus | undefined, at: number): stri
   const verdict = (current: string): string => (live ? current : NOT_CURRENT);
   return [
     `discord bridge: ${headline(status, at)}`,
-    `polling Discord: ${verdict(pollVerdict(poll, at))}`,
+    `polling Discord: ${verdict(status.state === "starting" ? startupVerdict(poll) : pollVerdict(poll, at))}`,
     `  last success: ${shown(poll.okAt)}`,
     `  last error: ${shown(poll.failedAt)}`,
     `injection into this session: ${verdict(eventVerdict(injection))}`,

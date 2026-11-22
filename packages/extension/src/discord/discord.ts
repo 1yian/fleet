@@ -136,7 +136,8 @@ export class Discord {
     const body = await this.get(
       `/channels/${this.channel}/messages?after=${cursor}&limit=${String(POLL_LIMIT)}`,
     );
-    return this.polled(Array.isArray(body) ? body.map((item: unknown) => item) : undefined);
+    const page: readonly unknown[] | undefined = Array.isArray(body) ? body : undefined;
+    return this.polled(page);
   }
 
   async say(text: string): Promise<void> {

@@ -27,6 +27,8 @@ export interface GatewaySession {
   identified: boolean;
   open: boolean;
   muted: boolean;
+  held: boolean;
+  release: () => void;
   status: string | undefined;
   heartbeats: number;
   closeCode: number | undefined;
@@ -39,6 +41,7 @@ interface Stored {
 
 const FIRST_ID = 1_100_000_000_000_000_000n;
 const HEARTBEAT_MS = 300;
+const HELD_HEARTBEAT_MS = 1_500;
 
 function readBytes(request: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -172,6 +175,15 @@ export class FakeDiscord {
     for (const session of this.gateways) session.muted = true;
   }
 
+  holdAcks(): void {
+    this.holding = true;
+  }
+
+  releaseAcks(): void {
+    this.holding = false;
+    for (const session of this.gateways) session.release();
+  }
+
   dropGateways(): void {
     for (const socket of this.connections) socket.terminate();
   }
@@ -281,10 +293,17 @@ export class FakeDiscord {
       identified: false,
       open: true,
       muted: false,
+      held: this.holding,
+      release: () => {
+        if (!session.held) return;
+        session.held = false;
+        if (owed && !session.muted) tell({ op: 11 });
+      },
       status: undefined,
       heartbeats: 0,
       closeCode: undefined,
     };
+    let owed = false;
     this.gateways.push(session);
     this.connections.add(socket);
     const tell = (frame: Record<string, unknown>): void => {
@@ -294,7 +313,8 @@ export class FakeDiscord {
       const frame = parseRecord(rawText(raw));
       if (frame["op"] === 1) {
         session.heartbeats++;
-        if (!session.muted) tell({ op: 11 });
+        if (session.held) owed = true;
+        else if (!session.muted) tell({ op: 11 });
       } else if (frame["op"] === 2) this.identify(socket, session, frame["d"], tell);
     });
     socket.on("close", (code: number) => {
@@ -302,7 +322,7 @@ export class FakeDiscord {
       session.closeCode = code;
       this.connections.delete(socket);
     });
-    tell({ op: 10, d: { heartbeat_interval: HEARTBEAT_MS } });
+    tell({ op: 10, d: { heartbeat_interval: session.held ? HELD_HEARTBEAT_MS : HEARTBEAT_MS } });
   }
 
   private identify(

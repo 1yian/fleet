@@ -110,6 +110,12 @@ test("a reload hands the bot to one new connection, however often main reloads",
   assert.equal(discord.botStatus, "online");
 });
 
+async function acknowledgedOnce(): Promise<void> {
+  await waitForStatus(home(), "a heartbeat acknowledgement", (status) =>
+    isStamp(status("presence.ackAt")),
+  );
+}
+
 async function assertRejoined(pi: Pi): Promise<void> {
   const read = await waitForStatus(
     home(),
@@ -120,13 +126,32 @@ async function assertRejoined(pi: Pi): Promise<void> {
       stampAt(status("presence.readyAt")) >= stampAt(status("presence.lostAt")),
   );
   assert.equal(read("state"), "running");
-  assert.match(await askBridge(pi), /presence .*: (ok|UNKNOWN, no heartbeat acknowledged yet)\n/);
+  assert.ok(
+    stampAt(read("presence.ackAt")) < stampAt(read("presence.readyAt")),
+    "the earlier acknowledgement was lost at READY",
+  );
+  const held = await askBridge(pi);
+  assert.match(
+    held,
+    /presence .*: UNKNOWN, no heartbeat acknowledged on this connection yet\n {2}connected: yes\n/,
+  );
+  assert.ok(held.includes(`last heartbeat ack: ${String(read("presence.ackAt"))}\n`), held);
+
+  discord.releaseAcks();
+  await waitForStatus(
+    home(),
+    "an acknowledgement on the new connection",
+    (status) => stampAt(status("presence.ackAt")) > stampAt(status("presence.readyAt")),
+  );
+  assert.match(await askBridge(pi), /presence .*: ok\n {2}connected: yes\n/);
 }
 
 test("after the gateway drops the connection the bot identifies as online again", async () => {
   const pi = startMain(bridge());
   await waitForConnections(1);
+  await acknowledgedOnce();
 
+  discord.holdAcks();
   discord.dropGateways();
   await waitForConnections(2);
   await assertRejoined(pi);
@@ -139,7 +164,9 @@ test("after the gateway drops the connection the bot identifies as online again"
 test("a gateway that stops answering heartbeats is replaced by a fresh connection", async () => {
   const pi = startMain(bridge());
   await waitForConnections(1);
+  await acknowledgedOnce();
 
+  discord.holdAcks();
   discord.muteGateways();
   await waitForConnections(2);
   await assertRejoined(pi);
