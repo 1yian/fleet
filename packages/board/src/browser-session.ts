@@ -61,6 +61,9 @@ class Viewer {
   private ticket = 0;
   private confirmationTimer = 0;
   private events: BrowserInput[] = [];
+  private readonly held = new Map<string, BrowserInput>();
+  private mutation: Promise<number> = Promise.resolve(0);
+  private issuedTake = false;
   private scheduled = 0;
   private sending = false;
   private inflight: Promise<void> = Promise.resolve();
@@ -78,7 +81,7 @@ class Viewer {
     this.stop = openStream(this.url("stream"), {
       failed: () => {
         this.invalidateCommand();
-        this.events = [];
+        this.discard();
         this.set({ offline: true });
       },
       wire: (source) => {
@@ -105,6 +108,31 @@ class Viewer {
     this.show(status);
   }
 
+  private discard(): void {
+    this.events = [];
+    this.held.clear();
+  }
+
+  private track(event: BrowserInput): void {
+    if (event.t === "key") {
+      const id = `key:${event.code}`;
+      if (event.type === "keyUp") this.held.delete(id);
+      else
+        this.held.set(id, {
+          t: "key",
+          type: "keyUp",
+          key: event.key,
+          code: event.code,
+          keyCode: event.keyCode,
+          modifiers: 0,
+        });
+    } else if (event.t === "mouse" && event.type !== "mouseMoved") {
+      const id = `mouse:${event.button}`;
+      if (event.type === "mouseReleased") this.held.delete(id);
+      else this.held.set(id, { ...event, type: "mouseReleased", buttons: 0 });
+    }
+  }
+
   private invalidateCommand(): void {
     clearTimeout(this.confirmationTimer);
     this.ticket += 1;
@@ -120,7 +148,8 @@ class Viewer {
       (pending === "done" && !owns) ||
       (typeof pending === "object" && pending.tab === state.activeTab);
     if (completed) this.invalidateCommand();
-    if (lost || previous?.activeTab !== state.activeTab) this.events = [];
+    if (!owns && pending !== "take") this.issuedTake = false;
+    if (lost || previous?.activeTab !== state.activeTab) this.discard();
     this.set({
       state,
       pending: completed ? undefined : pending,
@@ -153,7 +182,6 @@ class Viewer {
       state.viewer.controlling !== (pending !== "take")
     )
       return;
-    this.events = [];
     this.set({ state, pending });
     const ticket = ++this.ticket;
     const unconfirmed = (): void => {
@@ -161,9 +189,12 @@ class Viewer {
       this.invalidateCommand();
       this.set({ state: this.current.state, notice: commandError(pending) });
     };
-    await this.inflight;
+    await this.settle();
     if (this.ticket !== ticket) return;
-    const code = await this.post("command", commandFor(pending));
+    if (pending === "take") this.issuedTake = true;
+    const posting = this.post("command", commandFor(pending));
+    this.mutation = posting;
+    const code = await posting;
     if (this.ticket !== ticket) return;
     if (code === 204) this.confirmationTimer = window.setTimeout(unconfirmed, 5000);
     else unconfirmed();
@@ -188,6 +219,7 @@ class Viewer {
     )
       this.events.pop();
     this.events.push(event);
+    this.track(event);
     this.schedule();
   }
 
@@ -200,13 +232,16 @@ class Viewer {
   }
 
   private flush(): void {
-    if (!this.canDrive() || this.events.length === 0) return;
+    if (!this.sending && this.events.length > 0) this.send();
+  }
+
+  private send(): void {
     this.sending = true;
     const ticket = this.ticket;
     this.inflight = this.post("input", { events: this.events.splice(0, 40) }).then((code) => {
       this.sending = false;
       if (code === 409 && this.ticket === ticket && this.canDrive()) {
-        this.events = [];
+        this.discard();
         const state = this.current.state;
         if (state !== undefined)
           this.set({ state: { ...state, viewer: { controlling: false } }, notice: LOST });
@@ -215,14 +250,27 @@ class Viewer {
     });
   }
 
+  private async settle(): Promise<void> {
+    this.events.push(...this.held.values());
+    this.held.clear();
+    while (this.events.length > 0 || this.sending) {
+      if (!this.sending) this.send();
+      await this.inflight;
+    }
+  }
+
   close(): void {
     this.closed = true;
     this.invalidateCommand();
-    this.events = [];
     cancelAnimationFrame(this.scheduled);
-    if (this.current.state?.viewer.controlling) {
-      void this.post("command", { t: "control", on: false }).finally(this.stop);
-    } else this.stop();
+    void this.teardown(this.current.state?.viewer.controlling === true);
+  }
+
+  private async teardown(controlling: boolean): Promise<void> {
+    await this.settle();
+    await this.mutation;
+    if (controlling || this.issuedTake) await this.post("command", { t: "control", on: false });
+    this.stop();
   }
 }
 
