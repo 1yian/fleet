@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { after, before, test } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
@@ -183,4 +184,31 @@ test("a card opened from Active Workers returns there after back and forward his
   await page.keyboard.press("Escape");
   await page.getByRole("heading", { name: "Active Workers" }).waitFor();
   await row(page, "Working", task).waitFor();
+});
+
+test("a slow board read still publishes while live changes keep arriving", async (context) => {
+  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
+  context.after(() => cardd.stop());
+  const page = await openBoardPage(context, browser);
+  await page.route("**/api/board", async (route) => {
+    await delay(1500);
+    await route.continue();
+  });
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
+  await page.getByText("No workers are working now.").waitFor();
+
+  const noisy = await newCard(main, "Keep the changelog current");
+  const added = await newCard(main, "Translate the pricing page");
+  const chatter = await cardd.connect(await begin(main, noisy), [], true, true);
+  const churn = setInterval(() => {
+    chatter.send({ t: "activity", state: "idle" });
+    chatter.send({ t: "activity", state: "running" });
+  }, 300);
+  context.after(() => {
+    clearInterval(churn);
+  });
+  await cardd.connect(await begin(main, added), [], true, true);
+  await row(page, "Working", added)
+    .getByText("Running", { exact: true })
+    .waitFor({ timeout: 10_000 });
 });
