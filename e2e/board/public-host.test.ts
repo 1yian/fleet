@@ -56,7 +56,7 @@ test("the owner opens the board through the public link, sees it change live, an
   const sockets: string[] = [];
   let navigations = 0;
   page.on("websocket", (socket) => sockets.push(socket.url()));
-  page.on("framenavigated", () => (navigations += 1));
+  page.on("load", () => (navigations += 1));
 
   const response = await page.goto(link);
   assert.equal(response?.status(), 200);
