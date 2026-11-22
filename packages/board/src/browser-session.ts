@@ -39,6 +39,7 @@ class Viewer {
   private recovering = false;
   private latest: BrowserFrame | undefined;
   private trusted = false;
+  private activation: { tab: string; epoch: number; authority: number } | undefined;
   private stated = false;
   private authority = 0;
   private frames = 0;
@@ -123,14 +124,21 @@ class Viewer {
     return this.mutating || this.quarantined || this.recovering || !this.matched();
   }
 
+  private trusts(frame: BrowserFrame): boolean {
+    const { activation } = this;
+    return (
+      !this.stated ||
+      this.current.state?.activeTab === frame.meta.targetId ||
+      (activation?.tab === frame.meta.targetId &&
+        activation.epoch === this.epoch &&
+        activation.authority === this.authority)
+    );
+  }
+
   private accept(frame: BrowserFrame): void {
     const was = this.matched();
     this.latest = frame;
-    const { state, pending } = this.current;
-    this.trusted =
-      !this.stated ||
-      state?.activeTab === frame.meta.targetId ||
-      (typeof pending === "object" && pending.tab === frame.meta.targetId);
+    this.trusted = this.trusts(frame);
     this.frame(frame);
     const now = this.matched();
     if (was && !now) {
@@ -208,9 +216,11 @@ class Viewer {
     if (lost || previous?.activeTab !== state.activeTab) this.events = [];
     const moved = this.stated && previous?.activeTab !== state.activeTab;
     this.stated = true;
+    const kept = this.trusted;
+    if (moved) this.activation = undefined;
     if (
       this.latest !== undefined &&
-      ((moved && !this.trusted) || this.latest.meta.targetId !== state.activeTab)
+      ((moved && !kept) || this.latest.meta.targetId !== state.activeTab)
     ) {
       this.latest = undefined;
       this.frame(undefined);
@@ -281,6 +291,10 @@ class Viewer {
 
   private async mutate(pending: Pending): Promise<number> {
     this.mutating = true;
+    this.activation =
+      typeof pending === "object"
+        ? { tab: pending.tab, epoch: this.epoch, authority: this.authority }
+        : undefined;
     const posting = this.post("command", commandFor(pending));
     this.mutation = posting;
     const code = await posting;
