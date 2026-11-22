@@ -14,26 +14,33 @@ const TICK_MS = 30_000;
 
 function useBoard(changes: number, tick: number, setNotice: (notice: string | undefined) => void) {
   const [board, setBoard] = useState<Board | undefined>();
-  const loads = useRef(0);
+  const reading = useRef(false);
+  const queued = useRef(false);
   const loadFailed = useRef(false);
   const [available, setAvailable] = useState(false);
   const refresh = useCallback(() => {
-    const load = ++loads.current;
-    loadBoard().then(
-      (loaded) => {
-        if (load !== loads.current) return;
-        setBoard(loaded);
-        setAvailable(true);
-        if (loadFailed.current) setNotice(undefined);
-        loadFailed.current = false;
-      },
-      (error: unknown) => {
-        if (load !== loads.current) return;
-        loadFailed.current = true;
-        setAvailable(false);
-        setNotice(unreachable(error));
-      },
-    );
+    if (reading.current) {
+      queued.current = true;
+      return;
+    }
+    reading.current = true;
+    void (async () => {
+      do {
+        queued.current = false;
+        try {
+          const loaded = await loadBoard();
+          setBoard(loaded);
+          setAvailable(true);
+          if (loadFailed.current) setNotice(undefined);
+          loadFailed.current = false;
+        } catch (error) {
+          loadFailed.current = true;
+          setAvailable(false);
+          setNotice(unreachable(error));
+        }
+      } while (queued.current);
+      reading.current = false;
+    })();
   }, [setNotice]);
   useEffect(() => {
     refresh();
