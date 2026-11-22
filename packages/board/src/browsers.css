@@ -1,0 +1,184 @@
+.browser-board-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.browser-link,
+.browser-request,
+.browser-action,
+.browser-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+.browser-request,
+.browser-handoff {
+  background: var(--needs-bg);
+  border-color: var(--needs-line);
+  color: var(--needs-ink);
+  overflow-wrap: anywhere;
+}
+.browser-request span {
+  font-weight: 400;
+}
+.browser-link:hover,
+.browser-request:hover,
+.browser-back:hover {
+  text-decoration: underline;
+}
+.board.browser-page {
+  max-width: 1220px;
+}
+.browser-page h1 {
+  margin: 8px 0 2px;
+  font-size: clamp(24px, 4vw, 32px);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.browser-back {
+  color: var(--muted);
+  font-size: 14px;
+  text-decoration: none;
+}
+.browser-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 16px;
+}
+.browser-action {
+  flex: none;
+  min-height: 42px;
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+}
+.browser-action:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+.browser-handoff,
+.browser-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+.browser-handoff {
+  border-color: var(--needs-line);
+}
+.browser-lanes {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  gap: 10px;
+  padding: 0;
+  margin: 18px 0 0;
+}
+.browser-panel {
+  display: block;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.browser-lane {
+  display: grid;
+  gap: 4px;
+  color: var(--ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.browser-lane:hover {
+  border-color: var(--muted);
+}
+.browser-needed {
+  color: var(--needs-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.browser-stage {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.browser-tabs {
+  padding: 7px;
+  border-bottom: 1px solid var(--line);
+}
+.browser-tabs nav {
+  display: flex;
+  overflow: auto;
+  gap: 6px;
+}
+.browser-tabs button {
+  display: block;
+  cursor: pointer;
+  flex: 0 0 auto;
+  max-width: min(70vw, 320px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--ink-2);
+  background: transparent;
+}
+.browser-tabs button:hover {
+  background: #fff;
+  color: var(--ink);
+}
+.browser-tabs button[aria-current] {
+  background: #fff;
+  border-color: #9aaac5;
+  color: #183765;
+}
+.browser-tabs p,
+.browser-hint {
+  margin: 6px 4px 0;
+  font-size: 13px;
+}
+.browser-surface {
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
+}
+.browser-surface.driving {
+  touch-action: none;
+}
+.browser-surface:focus-visible {
+  outline: 3px solid var(--running);
+  outline-offset: -3px;
+}
+.browser-surface img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(76dvh, max(280px, calc(100dvh - 305px)));
+  margin-inline: auto;
+  user-select: none;
+  pointer-events: none;
+}
+.browser-placeholder {
+  display: grid;
+  place-items: center;
+  min-height: min(50dvh, 360px);
+  padding: 12px;
+  color: var(--muted);
+  margin: 0;
+}
