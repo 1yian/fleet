@@ -28,10 +28,10 @@ export interface Timings {
   readonly wall: () => number;
 }
 
-export function timings(scale: number, wall: () => number = Date.now): Timings {
+export function timings(scale: number, wall: () => number = Date.now, every?: number): Timings {
   const at = (minutes: number): number => Math.max(1, Math.round(minutes * MINUTE * scale));
   return {
-    every: at(0.25),
+    every: every ?? at(0.25),
     neverConnected: at(2),
     notConnected: at(2),
     stall: at(5),

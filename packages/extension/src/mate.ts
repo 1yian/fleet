@@ -1,13 +1,21 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CardName, DELIVERIES, NextSchema, OPS, type Card, type Schedule } from "@fleet/protocol";
+import {
+  CardName,
+  DELIVERIES,
+  NextSchema,
+  OPS,
+  PERSONAL_PROJECT,
+  type Card,
+  type Schedule,
+} from "@fleet/protocol";
 import Type, { type Static } from "typebox";
 import { close } from "./closing.ts";
 import type { Complaints } from "./complaints.ts";
 import { dispatch, type Launch } from "./dispatch.ts";
-import { isLocal } from "./host.ts";
 import { isRecord } from "./lane-config.ts";
 import type { LaneStates } from "./lanes.ts";
 import type { Link } from "./link.ts";
+import { dispatchHost } from "./personal.ts";
 import { boardText, cardText, errorText, EXTRA_COLUMNS, SELECTIONS } from "./views.ts";
 
 const line = (card: Card): string => `c-${String(card.id)} [${card.status}] ${card.title}`;
@@ -17,7 +25,10 @@ const DispatchParams = Type.Object({
   title: Type.String({ minLength: 1 }),
   name: CardName,
   kind: Type.Enum(["ship", "scout"]),
-  project: Type.String({ minLength: 1 }),
+  project: Type.String({
+    minLength: 1,
+    description: `A registered project's name, or "${PERSONAL_PROJECT}" for work that fits none of them. If it is not registered, main's first dispatch creates it on the selected host`,
+  }),
   intent: Type.String({ minLength: 1 }),
   host: Type.String({
     minLength: 1,
@@ -38,7 +49,7 @@ const DispatchParams = Type.Object({
   delivery: Type.Optional(
     Type.Enum(DELIVERIES, {
       description:
-        "Use ops for an approved operation with no product changes or PR: the worker hands back a report path as evidence, and the card stays open because closing an ops card is not available yet. Otherwise override only when the captain asked for another mode; the ship card keeps its project default",
+        "Use ops for an approved operation with no product changes or PR: the worker hands back a report path as evidence, and close(card, summary) then ends the card as Done. Otherwise override only when the captain asked for another mode; the ship card keeps its project default",
     }),
   ),
 });
@@ -266,7 +277,7 @@ export function registerMate(
     name: "close",
     label: "Close",
     description:
-      "Ends a card: stops the worker, archives anything unlanded, removes the worktree, and closes the card. close checks for itself that the work landed: a merged PR, or the worker's done with nothing left off the base branch, as for an operation or a report. A local-only card whose landing is authorized (yolo, or the captain's word) lands here: close fast-forwards the clone's local base branch to the worker's branch, never pushes, and refuses a branch that is not a fast-forward. Then the card is Done. If the attempt has commits not on the base branch or uncommitted files, close does not close the card: it lists them and warns, and close(card, summary, confirm=true) then ends it as Done and archives that work first (use it when the work landed elsewhere). close(card, summary=<why>, landed=false) ends work that did not land as Dropped. An ops card (Delivery: ops) cannot be closed yet: close refuses it, in either mode and with or without confirm=true, before it stops or removes anything. Leave it open. A scout card (a report: a plan or an investigation) closes Done only when the close says what happens next, with next set to exactly one of build=<a ship card that carries the build, open or Done>, decision=<an open card whose hold waits on the captain, so the decision is on his list>, drop=<why nothing is built>, or delivered={evidence, disposition} for findings actually read or relayed that complete the request with no authorized build or unresolved decision remaining. Do not invent a disposition: if a build or decision remains, name its card instead. A follow-up card may be in your lane, a lane below yours, or the lane above yours; a second mate can name main's card without gaining access to its thread. Ask main to close a scout whose follow-up is in a sibling lane. Build directly when the captain already asked for the thing built, put a build-or-drop decision to him when he asked only for a plan (card_new for it, then hold it: as a second mate your hold waits on main, which escalates it to the captain), and drop when the findings make it moot. close checks that the named card exists and, for a decision, that its hold waits on the captain, and the thread shows what was named. It refuses while the card has a hold. Main relays the summary to the captain.",
+      "Ends a card: stops the worker, archives anything unlanded, removes the worktree, and closes the card. close checks for itself that the work landed: a merged PR, or the worker's done with nothing left off the base branch, as for an operation or a report. A local-only card whose landing is authorized (yolo, or the captain's word) lands here: close fast-forwards the clone's local base branch to the worker's branch, never pushes, and refuses a branch that is not a fast-forward. Then the card is Done. If the attempt has commits not on the base branch or uncommitted files, close does not close the card: it lists them and warns, and close(card, summary, confirm=true) then ends it as Done and archives that work first (use it when the work landed elsewhere). close(card, summary=<why>, landed=false) ends work that did not land as Dropped. An ops card (Delivery: ops) closes Done once its worker reported done with an evidence report path: close refuses it, before it stops or removes anything, while no such report stands (none yet, or a steer to the worker took it back). A scout card (a report: a plan or an investigation) closes Done only when the close says what happens next, with next set to exactly one of build=<a ship card that carries the build, open or Done>, decision=<an open card whose hold waits on the captain, so the decision is on his list>, drop=<why nothing is built>, or delivered={evidence, disposition} for findings actually read or relayed that complete the request with no authorized build or unresolved decision remaining. Do not invent a disposition: if a build or decision remains, name its card instead. A follow-up card may be in your lane, a lane below yours, or the lane above yours; a second mate can name main's card without gaining access to its thread. Ask main to close a scout whose follow-up is in a sibling lane. Build directly when the captain already asked for the thing built, put a build-or-drop decision to him when he asked only for a plan (card_new for it, then hold it: as a second mate your hold waits on main, which escalates it to the captain), and drop when the findings make it moot. close checks that the named card exists and, for a decision, that its hold waits on the captain, and the thread shows what was named. It refuses while the card has a hold. Main relays the summary to the captain.",
     parameters: CloseParams,
     execute: async (_id, params) =>
       reply(
@@ -285,12 +296,11 @@ export function registerMate(
   pi.registerTool({
     name: "dispatch",
     label: "Dispatch",
-    description:
-      "Creates a new work card and starts its worker in its own worktree on a host. Supply title, short name, kind, project, captain's intent, host, and task. Only starts NEW work. To restart existing work use restart_card; to steer it use comment. A local-only worker starts from the clone's local base branch, not origin's.",
+    description: `Creates a new work card and starts its worker in its own worktree on a host. Dispatching is how all work gets done: never do it yourself in your own turn, not a one-off, a quick job, or work that fits no registered project. Work that fits none goes under project "${PERSONAL_PROJECT}", which main's first dispatch creates if not already registered. Supply title, short name, kind, project, captain's intent, host, and task. Only starts NEW work. To restart existing work use restart_card; to steer it use comment. A local-only worker starts from the clone's local base branch, not origin's.`,
     parameters: DispatchParams,
     execute: async (_id, params) => {
-      const { title, name, kind, project, intent, host, task, delivery, model } = params;
-      isLocal(host);
+      const { title, name, kind, project, intent, task, delivery, model } = params;
+      const host = await dispatchHost(link, params.host, project);
       const board = await link.call("board", {});
       const same = board.find(
         (each) =>

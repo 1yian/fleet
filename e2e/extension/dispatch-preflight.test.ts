@@ -81,6 +81,7 @@ test("an unsupported lane-local transport refuses without phantom work, and a co
   });
   assert.equal(results.at(-2), "Dispatched c-1-a1 on local, branch c-1-a1.");
   assert.match(results.at(-1) ?? "", /already (running|starting)/);
+  await h.waitForCall(0, "worker", WORKER_WAIT_MS);
   const started = await workSnapshot();
   assert.deepEqual(started.cards, [1]);
   assert.equal(started.attempts, 1);

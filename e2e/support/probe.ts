@@ -31,6 +31,54 @@ function observeMouse(report: (event: Record<string, unknown>) => void): void {
   });
 }
 
+function reportStops(pi: ExtensionAPI, report: (event: Record<string, unknown>) => void): void {
+  if (process.env["PROBE_STOP_RESULT"] === "1")
+    pi.on("tool_result", (event) => {
+      if (event.toolName === "stop_job")
+        report({ type: "stop_result", content: event.content, isError: event.isError });
+    });
+}
+
+function nudgeOnce(pi: ExtensionAPI, report: (event: Record<string, unknown>) => void): void {
+  let nudged = process.env["PROBE_NUDGE"] !== "1";
+  pi.on("agent_before_settle", (event) => {
+    report({ type: "before_settle", pending: event.context.pendingMessages.length });
+    if (nudged) return undefined;
+    nudged = true;
+    const nudge = { entryId: -1 };
+    return {
+      continue: true,
+      entries: [
+        {
+          type: "custom_message",
+          customType: "fleet",
+          content: "nudge",
+          display: true,
+          details: nudge,
+        },
+      ],
+    };
+  });
+}
+
+function observe(pi: ExtensionAPI, report: (event: Record<string, unknown>) => void): void {
+  observeMouse(report);
+  observeTools(pi, report);
+}
+
+function observeTools(pi: ExtensionAPI, report: (event: Record<string, unknown>) => void): void {
+  pi.on("tool_execution_end", (event) => {
+    if (event.toolName !== "restart_card") return;
+    const content: unknown = isRecord(event.result) ? event.result["content"] : undefined;
+    const text = Array.isArray(content)
+      ? content
+          .map((part: unknown) => (isRecord(part) ? optionalString(part, "text") : ""))
+          .join("")
+      : "";
+    report({ type: "tool_execution_end", tool: event.toolName, error: event.isError, text });
+  });
+}
+
 export default function probe(pi: ExtensionAPI): void {
   registerReload(pi);
   const url = (process.env["FLEET_CONTROL_URL"] ?? "").replace(/^http/, "ws");
@@ -45,7 +93,7 @@ export default function probe(pi: ExtensionAPI): void {
     for (const line of outbox.splice(0)) socket.send(line);
   });
 
-  observeMouse(report);
+  observe(pi, report);
   const edit = probeEdits(pi, report);
 
   let release: (() => void) | undefined;
@@ -80,6 +128,8 @@ export default function probe(pi: ExtensionAPI): void {
     },
   });
 
+  reportStops(pi, report);
+
   pi.events.on("fleet:delivered", (data) => {
     if (isRecord(data))
       report({ type: "fleet_delivered", entryId: optionalNumber(data, "entryId") });
@@ -105,25 +155,7 @@ export default function probe(pi: ExtensionAPI): void {
     if (entryId !== undefined) report({ type: "message_end", entryId });
   });
 
-  let nudged = process.env["PROBE_NUDGE"] !== "1";
-  pi.on("agent_before_settle", (event) => {
-    report({ type: "before_settle", pending: event.context.pendingMessages.length });
-    if (nudged) return undefined;
-    nudged = true;
-    const nudge = { entryId: -1 };
-    return {
-      continue: true,
-      entries: [
-        {
-          type: "custom_message",
-          customType: "fleet",
-          content: "nudge",
-          display: true,
-          details: nudge,
-        },
-      ],
-    };
-  });
+  nudgeOnce(pi, report);
   pi.on("agent_settled", (event) => {
     report({ type: "settled", aborted: event.aborted });
   });

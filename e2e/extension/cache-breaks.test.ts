@@ -4,16 +4,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
+import { TestClock } from "../support/clock.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { isRecord, optionalString, parseRecord } from "../support/json.ts";
-import {
-  configureMain,
-  roomyDiskEnv,
-  Scratch,
-  settingsArgs,
-  startMain,
-} from "../support/scratch.ts";
+import { configureMain, Scratch, settingsArgs, startMain } from "../support/scratch.ts";
 
 const WAIT_MS = 60_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -28,6 +23,7 @@ let cardd: Cardd;
 let h: Harness;
 let lab: HerdrLab;
 let scratch: Scratch;
+let clock: TestClock;
 beforeEach(async () => {
   cardd = await Cardd.start();
   h = await Harness.start();
@@ -38,11 +34,13 @@ beforeEach(async () => {
     join(h.dir, "agent", "settings.json"),
     JSON.stringify({ defaultProvider: "tier", defaultModel: "auto" }),
   );
-  lab = await HerdrLab.start({
-    ...h.piEnv("mate"),
-    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
-    ...roomyDiskEnv(),
-  });
+  clock = new TestClock();
+  lab = await HerdrLab.start(
+    clock.env({
+      ...h.piEnv("mate"),
+      PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
+    }),
+  );
   configureMain(scratch, cardd.url, mainToken);
 });
 afterEach(async (t) => {
@@ -95,6 +93,7 @@ test("main records why its prompt cache broke and shows whether its cache is war
   assert.ok(!(await lab.screen(pane)).includes("cache "), "no cache state before a request");
   await ask();
   await status("cache warm");
+  await clock.advance(FAKE_CACHE_LIFETIME_MS);
   await status("cache cold");
   await ask();
   assert.deepEqual(recordedBreaks(file), [], "a warm cache read is not a break");
@@ -123,7 +122,7 @@ test("main records why its prompt cache broke and shows whether its cache is war
   assert.ok(!(await lab.screen(pane)).includes("broke"), "no break history in the line");
   assert.ok(!(await lab.screen(pane)).includes("cache breaks"), "no count in the line");
 
-  await new Promise((resolve) => setTimeout(resolve, FAKE_CACHE_LIFETIME_MS + 1_000));
+  await clock.advance(FAKE_CACHE_LIFETIME_MS + 1_000);
   await ask();
   await status("cache warm");
   assert.ok(!(await lab.screen(pane)).includes("broke"), "no break history in the line");

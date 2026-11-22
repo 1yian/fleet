@@ -70,7 +70,7 @@ test("fleet starts a herdr server that is not running, and starts the lanes agai
   assert.equal(workspaces.filter((each) => each["label"] === "2ndmate-ops").length, 1);
 });
 
-test("a recorded pane that is gone when herdr is asked about it counts as a mate that is down", async () => {
+test("a vanished pane is unread until a fresh check confirms the lane is down", async () => {
   fleet(["up"]);
   await until(() => (state() === "running" ? true : undefined), "ops to run");
   const bin = join(here.parent, "vanishing-bin");
@@ -88,8 +88,12 @@ exec '${real}' "$@"
 `,
     { mode: 0o755 },
   );
-  const out = fleet(["up"], { PATH: `${bin}:${process.env["PATH"] ?? ""}` });
-  assert.equal(out.find((row) => row["lane"] === "ops")?.["action"], "started");
+  assert.throws(
+    () => fleet(["up"], { PATH: `${bin}:${process.env["PATH"] ?? ""}` }),
+    /pane_not_found|pane .*not found/i,
+  );
   assert.ok(existsSync(marker), "the pane was closed under the check");
+  assert.equal(state(), "down");
+  assert.equal(fleet(["up"])[0]?.["action"], "started");
   await until(() => (state() === "running" ? true : undefined), "ops to run again");
 });

@@ -85,17 +85,102 @@ export function nextJob(life: JobLife, event: JobEvent, at: number): JobStep | u
   };
 }
 
+const JobLaunchId = Type.String({
+  pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+});
+const JobId = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
+export const StartupFenceFields = Type.Object({
+  job: JobId,
+  startupFenced: Type.Literal(true),
+  startupLaunch: JobLaunchId,
+  exitCode: Type.Integer(),
+  commandNotStarted: Type.Optional(Type.Literal(true)),
+  lost: Type.Optional(Type.Never()),
+  revived: Type.Optional(Type.Never()),
+});
+const JobExitFields = Type.Object({
+  job: JobId,
+  exitCode: Type.Integer(),
+  commandNotStarted: Type.Optional(Type.Literal(true)),
+  lost: Type.Optional(Type.Never()),
+  revived: Type.Optional(Type.Never()),
+});
+const JobLostFields = Type.Object({
+  job: JobId,
+  lost: Type.Literal(true),
+  exitCode: Type.Optional(Type.Never()),
+  revived: Type.Optional(Type.Never()),
+  commandNotStarted: Type.Optional(Type.Never()),
+});
+const JobRevivedFields = Type.Object({
+  job: JobId,
+  revived: Type.Literal(true),
+  exitCode: Type.Optional(Type.Never()),
+  lost: Type.Optional(Type.Never()),
+  commandNotStarted: Type.Optional(Type.Never()),
+});
+export const JobResultFields = Type.Union([JobExitFields, JobLostFields, JobRevivedFields]);
+const StartJob = Type.Object({
+  label: Type.String({ minLength: 1 }),
+  command: Type.String({ minLength: 1 }),
+});
+const StartedJob = Type.Object({
+  job: JobId,
+  heartbeatMs: Type.Integer({ minimum: 1, maximum: 2_147_483_647 }),
+});
+const CutoverBlocker = Type.Object({
+  job: JobId,
+  card: Type.Integer(),
+  host: Type.String(),
+  label: Type.String(),
+  state: JobStateSchema,
+});
+
 export const JOB_OPS = {
   "job.start": {
     roles: ["worker"],
+    args: StartJob,
+    result: StartedJob,
+  },
+  "job.prepare": {
+    roles: ["worker"],
+    args: Type.Object({ ...StartJob.properties, launch: JobLaunchId }),
+    result: Type.Union([
+      Type.Object({ ...StartedJob.properties, unavailable: Type.Optional(Type.Never()) }),
+      Type.Object({
+        job: JobId,
+        unavailable: Type.String({ minLength: 1 }),
+        heartbeatMs: Type.Optional(Type.Never()),
+      }),
+    ]),
+  },
+  "job.register": {
+    roles: ["worker"],
     args: Type.Object({
-      label: Type.String({ minLength: 1 }),
-      command: Type.String({ minLength: 1 }),
-    }),
-    result: Type.Object({
       job: Type.Integer(),
-      heartbeatMs: Type.Integer({ minimum: 1 }),
+      launch: JobLaunchId,
+      pid: Type.Integer({ minimum: 1 }),
     }),
+    result: Type.Object({ registered: Type.Boolean() }),
+  },
+  "job.cutover": {
+    roles: ["mate"],
+    args: Type.Union([
+      Type.Object({ action: Type.Enum(["status", "seal"]) }),
+      Type.Object({
+        action: Type.Literal("confirm-stop"),
+        job: Type.Integer(),
+        evidence: Type.String({ minLength: 1, maxLength: 1000 }),
+      }),
+    ]),
+    result: Type.Union([
+      Type.Object({ state: Type.Literal("open"), blockers: Type.Array(CutoverBlocker) }),
+      Type.Object({
+        state: Type.Literal("draining"),
+        blockers: Type.Array(CutoverBlocker, { minItems: 1 }),
+      }),
+      Type.Object({ state: Type.Literal("ready"), blockers: Type.Tuple([]) }),
+    ]),
   },
   "job.alive": {
     roles: ["worker"],
@@ -104,13 +189,35 @@ export const JOB_OPS = {
   },
   "job.finish": {
     roles: ["worker"],
-    args: Type.Object({ job: Type.Integer(), exitCode: Type.Integer(), outputTail: Type.String() }),
+    args: Type.Object({
+      job: Type.Integer(),
+      exitCode: Type.Integer(),
+      outputTail: Type.String(),
+      beforeRegistration: Type.Optional(JobLaunchId),
+      commandNotStarted: Type.Optional(Type.Literal(true)),
+    }),
     result: Type.Object({ recorded: Type.Boolean() }),
   },
   "job.stop": {
     roles: ["worker"],
     args: Type.Object({ job: Type.Integer() }),
-    result: Type.Object({ label: Type.String(), running: Type.Boolean() }),
+    result: Type.Union([
+      Type.Object(
+        {
+          label: Type.String({ minLength: 1 }),
+          running: Type.Literal(true),
+        },
+        { additionalProperties: false },
+      ),
+      Type.Object(
+        {
+          label: Type.String({ minLength: 1 }),
+          running: Type.Literal(false),
+          cancelled: Type.Optional(Type.Literal(true)),
+        },
+        { additionalProperties: false },
+      ),
+    ]),
   },
   "job.drop": {
     roles: ["worker", "mate"],
@@ -121,9 +228,19 @@ export const JOB_OPS = {
       dropped: Type.Boolean(),
     }),
   },
+  "job.idle": {
+    roles: ["worker"],
+    args: Type.Object({}),
+    result: Type.Object({ idle: Type.Boolean() }),
+  },
+  "job.running": {
+    roles: ["worker"],
+    args: Type.Object({ job: Type.Integer() }),
+    result: Type.Object({ running: Type.Boolean() }),
+  },
   jobs: {
     roles: ["worker"],
     args: Type.Object({}),
-    result: Type.Array(Type.Object({ id: Type.Integer(), label: Type.String() })),
+    result: Type.Array(Type.Object({ id: JobId, label: Type.String() })),
   },
 } as const;

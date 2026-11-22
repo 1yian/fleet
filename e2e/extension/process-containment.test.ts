@@ -65,9 +65,15 @@ function stopServer(pidFile: string): void {
   }
 }
 
+const CONNECT_MS = 2_000;
+
 const listening = (port: number): Promise<boolean> =>
   new Promise((resolve) => {
     const socket = connect({ port, host: "127.0.0.1" });
+    socket.setTimeout(CONNECT_MS, () => {
+      socket.destroy();
+      resolve(false);
+    });
     socket.once("connect", () => {
       socket.destroy();
       resolve(true);

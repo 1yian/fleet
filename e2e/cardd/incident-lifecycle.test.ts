@@ -3,9 +3,11 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { check, OPS, type Entry } from "@fleet/protocol";
+import { check, HttpOutcomeSchema, OPS, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
+import { TestClock } from "../support/clock.ts";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { poll } from "../support/harness.ts";
 import { tempDir } from "../support/run-root.ts";
 
 let fleet: Fleet | undefined;
@@ -19,12 +21,15 @@ function setClock(file: string, ms: number): void {
   renameSync(next, file);
 }
 
-async function started(scale = "0.001"): Promise<{ fleet: Fleet; clock: string }> {
+async function started(
+  scale = "0.001",
+  env: Record<string, string> = {},
+): Promise<{ fleet: Fleet; clock: string }> {
   const dir = tempDir("incident-clock-");
   mkdirSync(dir, { recursive: true });
   const clock = join(dir, "clock");
   setClock(clock, Date.now());
-  fleet = await startFleet({ CARDD_TIMING_SCALE: scale, CARDD_CLOCK_FILE: clock });
+  fleet = await startFleet({ ...env, CARDD_TIMING_SCALE: scale, CARDD_CLOCK_FILE: clock });
   return { fleet, clock };
 }
 
@@ -168,4 +173,88 @@ test("an incident intent outside the lifecycle is rejected by the database", asy
   } finally {
     db.close();
   }
+});
+
+test("a recovery whose replacement does not verify leaves the incident on the replacement's generation, so the suggested restart runs", async () => {
+  const deadlineClock = new TestClock(Date.now());
+  const { fleet: current } = await started("0.01", deadlineClock.env());
+  const card = await newCard(current.main, "replaced without an answer");
+  const token = await begin(current.main, card);
+  const first = await current.cardd.connect(token);
+  await current.main.close();
+  const postAsMate = async (op: string, args: unknown): Promise<unknown> => {
+    const { body } = await current.cardd.post(current.mainToken, op, args);
+    const result = check(HttpOutcomeSchema, body);
+    assert.ok(result.ok, result.ok ? undefined : result.error);
+    return result.value;
+  };
+  const opened = check(
+    OPS["incident.report"].result,
+    await first.call("incident.report", { error: "something odd happened" }),
+  );
+  const initial = check(OPS.card.result, await postAsMate("card", { card: card.id }));
+  const announced = initial.entries.find((entry) =>
+    entry.body.includes("Recover with restart_card"),
+  );
+  assert.ok(announced);
+  assert.match(announced.body, /Incident \d+, process generation 1\./);
+  await postAsMate("card.restart", {
+    card: card.id,
+    incident: opened.incident,
+    generation: 1,
+    mode: "replace",
+    key: "replace-it",
+  });
+  await first.close();
+  current.cardd.startNewProcess(token);
+  const second = await current.cardd.connect(token);
+  await second.waitForEntry(
+    (entry) => entry.body.startsWith(`recovery check ${String(opened.incident)} `),
+    "the recovery check on the replacement",
+  );
+  await deadlineClock.advance(10_000);
+  await poll(
+    () => incidentRow(current.cardd.db, card.id)["generation"] === 2 || undefined,
+    "the watchdog to record the new generation before the mate reconnects",
+  );
+
+  const mate = await current.cardd.connect(current.mainToken);
+  const failed = await mate.waitForEntry(
+    (entry) => entry.card === card.id && entry.body.includes("did not verify"),
+    "the failed replacement notice",
+  );
+  assert.match(
+    failed.body,
+    new RegExp(
+      `restart_card\\(card=${String(card.id)}, incident=${String(opened.incident)}, generation=2, mode=retry\\)`,
+    ),
+  );
+  assert.equal(
+    mate.entries.some(({ entry }) => entry.id === announced.id),
+    false,
+  );
+  const historical = check(OPS.card.result, await mate.call("card", { card: card.id }));
+  assert.equal(historical.entries.find((entry) => entry.id === announced.id)?.body, announced.body);
+  await assert.rejects(
+    mate.call("card.restart", {
+      card: card.id,
+      incident: opened.incident,
+      generation: 1,
+      mode: "retry",
+      key: "stale",
+    }),
+    /is about process generation 2, but the actor is on 2 and you named 1/,
+  );
+  const plan = check(
+    OPS["card.restart"].result,
+    await mate.call("card.restart", {
+      card: card.id,
+      incident: opened.incident,
+      generation: 2,
+      mode: "retry",
+      key: "check-it",
+    }),
+  );
+  assert.deepEqual([plan.incident, plan.mode, plan.generation], [opened.incident, "retry", 2]);
+  await second.close();
 });

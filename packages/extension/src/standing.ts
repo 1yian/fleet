@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { laneHomes } from "./homes.ts";
+import { discoverLanes, unreadFailure } from "./homes.ts";
+import { isAbsent, readRegular } from "./lane-config.ts";
 
 type Tier = "pinned" | "aging" | "perishable";
 type Standing = "captain.md" | "captain-shared.md" | "learnings.md";
@@ -32,7 +33,18 @@ function readIfPresent(path: string): string | undefined {
   }
 }
 
-export const readShared = (home: string): string | undefined => readIfPresent(pathOf(home, SHARED));
+export const PRESERVED_PREFIX = "fleet-preserved: ";
+
+function readStrict(path: string): string | undefined {
+  try {
+    return readRegular(path);
+  } catch (error) {
+    if (isAbsent(path, error)) return undefined;
+    throw error;
+  }
+}
+
+export const readShared = (home: string): string | undefined => readStrict(pathOf(home, SHARED));
 
 export function standingRules(home: string): string {
   const sections = STANDING.flatMap(({ file, heading }) => {
@@ -69,32 +81,75 @@ function publish(path: string, bytes: string, mode: number): void {
   renameSync(next, path);
 }
 
-function converge(home: string, bytes: string | undefined): string {
-  mkdirSync(join(home, "data"), { recursive: true });
-  mkdirSync(join(home, "state"), { recursive: true });
-  const target = pathOf(home, SHARED);
-  const current = readIfPresent(target);
-  const published = readIfPresent(publishedFile(home));
-  const edited = current !== undefined && current !== bytes && current !== published;
-  const kept = edited ? preserveAside(home, current) : undefined;
-  const aside = kept === undefined ? "" : `, edited copy preserved as data/${kept}`;
+class ConvergeFailure extends Error {
+  readonly aside: string | undefined;
+
+  constructor(error: unknown, aside: string | undefined) {
+    super(error instanceof Error ? error.message : String(error));
+    this.aside = aside;
+  }
+}
+
+function writeShared(
+  home: string,
+  target: string,
+  current: string | undefined,
+  published: string | undefined,
+  bytes: string | undefined,
+): "unchanged" | "removed" | "updated" {
   if (bytes === undefined) {
     if (current === undefined) return "unchanged";
     rmSync(target);
     rmSync(publishedFile(home), { force: true });
-    return `removed${aside}`;
+    return "removed";
   }
   if (current !== bytes) publish(target, bytes, READ_ONLY);
   chmodSync(target, READ_ONLY);
   if (published !== bytes) publish(publishedFile(home), bytes, 0o600);
-  return current === bytes ? "unchanged" : `updated${aside}`;
+  return current === bytes ? "unchanged" : "updated";
+}
+
+function converge(home: string, bytes: string | undefined): { result: string; aside?: string } {
+  mkdirSync(join(home, "data"), { recursive: true });
+  mkdirSync(join(home, "state"), { recursive: true });
+  const target = pathOf(home, SHARED);
+  const current = readStrict(target);
+  const published = readStrict(publishedFile(home));
+  const edited = current !== undefined && current !== bytes && current !== published;
+  const kept = edited ? preserveAside(home, current) : undefined;
+  const aside = kept === undefined ? "" : `, edited copy preserved as data/${kept}`;
+  const keptOnly = kept === undefined ? {} : { aside: kept };
+  try {
+    const result = writeShared(home, target, current, published, bytes);
+    return { result: `${result}${aside}`, ...keptOnly };
+  } catch (error) {
+    throw new ConvergeFailure(error, kept);
+  }
 }
 
 export function convergeSharedPreferences(
   root: string,
   bytes: string | undefined,
-): { lane: string; result: string }[] {
-  return laneHomes(root).map(({ lane, home }) => ({ lane, result: converge(home, bytes) }));
+): { results: { lane: string; result: string }[]; failures: string[]; preserved: string[] } {
+  const { homes, unread } = discoverLanes(root);
+  const results: { lane: string; result: string }[] = [];
+  const preserved: string[] = [];
+  const failures = unread.length === 0 ? [] : [unreadFailure(unread)];
+  for (const { lane, home } of homes) {
+    try {
+      const { result, aside } = converge(home, bytes);
+      results.push({ lane, result });
+      if (aside !== undefined) preserved.push(`${lane}: shared preferences ${result}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`lane ${lane} could not be updated: ${message}`);
+      if (error instanceof ConvergeFailure && error.aside !== undefined)
+        preserved.push(
+          `${lane}: shared preferences incomplete, edited copy preserved as data/${error.aside}`,
+        );
+    }
+  }
+  return { results, failures, preserved };
 }
 
 interface Entry {

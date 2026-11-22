@@ -16,7 +16,7 @@ permissions:
 jobs:
   changes:
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
       pull-requests: read
@@ -39,8 +39,9 @@ jobs:
               - "packages/**"
               - "e2e/**"
               - "package.json"
-              - "package-lock.json"
+              - "bun.lock"
               - "tsconfig.json"
+              - "bunfig.toml"
               - ".oxlintrc.json"
               - "**/oxlint-suppressions.json"
               - ".pi/extensions/**"
@@ -48,8 +49,9 @@ jobs:
               - "**/tsconfig*.json"
               - "knip.json"
               - ".dependency-cruiser.cjs"
-              - ".prettierrc.json"
-              - ".prettierignore"
+              - ".oxfmtrc.json"
+              - ".gitleaks.toml"
+              - ".githooks/**"
               - ".github/workflows/**"
               - ".github/actions/**"
             cardd:
@@ -66,7 +68,9 @@ jobs:
               - "e2e/support/probe.ts"
               - "e2e/pi/**"
               - "e2e/package.json"
-              - "package-lock.json"
+              - "bun.lock"
+              - ".github/actions/install/**"
+              - ".github/actions/install-bun/**"
             board-e2e:
               - "packages/board/**"
               - "packages/cardd/**"
@@ -74,7 +78,7 @@ jobs:
               - "e2e/board/**"
               - "e2e/support/cardd.ts"
               - "e2e/support/public-host.ts"
-              - "package-lock.json"
+              - "bun.lock"
               - ".github/workflows/ci.yml"
               - ".github/actions/**"
             extension-e2e:
@@ -83,7 +87,15 @@ jobs:
               - "packages/**"
               - "e2e/support/**"
               - "e2e/extension/**"
-              - "package-lock.json"
+              - "e2e/run.ts"
+              - "e2e/durations.json"
+              - ".githooks/**"
+              - "githooks.js"
+              - "format-files.js"
+              - ".oxfmtrc.json"
+              - "package.json"
+              - "lint.js"
+              - "bun.lock"
               - ".github/workflows/ci.yml"
               - ".github/actions/**"
             cardd-e2e:
@@ -93,32 +105,33 @@ jobs:
               - "e2e/support/fleet.ts"
               - "e2e/support/public-host.ts"
               - "e2e/cardd/**"
-              - "package-lock.json"
+              - "e2e/run.ts"
+              - "e2e/durations.json"
+              - "bun.lock"
+              - ".github/workflows/ci.yml"
+              - ".github/actions/install/**"
+              - ".github/actions/install-bun/**"
 
   static:
     timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run format:check
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm run knip
-      - run: npm run deps
+      - uses: ./.github/actions/install
+      - run: bun run format:check
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run build
+      - run: bun run knip
+      - run: bun run deps
 
   migrations:
     timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.cardd == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -126,13 +139,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-      - run: npm run migrations:check
+      - uses: ./.github/actions/install-bun
+      - run: bun run migrations:check
         env:
           MIGRATIONS_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
 
   secrets:
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     env:
       GITLEAKS_VERSION: 8.30.1
     steps:
@@ -153,50 +167,48 @@ jobs:
     timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.pi == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
+      - uses: ./.github/actions/install
       - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/pi/**/*.test.ts"
 
   e2e-cardd:
     timeout-minutes: 30
+    name: e2e-cardd (${{ matrix.shard }}/3)
     needs: changes
     if: needs.changes.outputs.cardd-e2e == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/cardd/**/*.test.ts"
-
-  e2e-extension:
-    timeout-minutes: 30
-    name: e2e-extension (${{ matrix.shard }}/4)
-    needs: changes
-    if: needs.changes.outputs.extension-e2e == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3]
     env:
-      GH_TOKEN: ${{ github.token }}
+      FLEET_E2E_CONCURRENCY: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: ./.github/actions/install
+      - run: bun run build
+      - run: node e2e/run.ts --shard=${{ matrix.shard }}/3 "e2e/cardd/**/*.test.ts"
+
+  e2e-extension:
+    timeout-minutes: 30
+    name: e2e-extension (${{ matrix.shard }}/9)
+    needs: changes
+    if: needs.changes.outputs.extension-e2e == 'true'
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FLEET_E2E_CONCURRENCY: "1"
+    steps:
+      - uses: actions/checkout@v7
         with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
+          fetch-depth: 0
+      - uses: ./.github/actions/install
       - name: Install herdr
         env:
           HERDR_VERSION: 0.9.5
@@ -204,43 +216,41 @@ jobs:
         run: |
           curl -fsSL -o herdr "https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-x86_64"
           echo "${HERDR_SHA256}  herdr" | sha256sum -c -
-          chmod +x herdr && sudo mv herdr /usr/local/bin/herdr
+          mkdir -p "$RUNNER_TEMP/bin"
+          chmod +x herdr && mv herdr "$RUNNER_TEMP/bin/herdr"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install direnv
         uses: ./.github/actions/install-direnv
         timeout-minutes: 5
       - name: Install lavish-axi, which the review end-to-end tests drive (optional on a host, docs/setup.md)
-        run: npm install -g lavish-axi@0.1.90
-      - run: npm run build
+        run: bun install -g lavish-axi@0.1.90
+      - run: bun run build
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
         timeout-minutes: 15
-      - run: node --test --test-timeout=300000 --test-concurrency=1 --test-shard=${{ matrix.shard }}/4 "e2e/extension/**/*.test.ts"
+      - run: node e2e/run.ts --shard=${{ matrix.shard }}/9 "e2e/extension/**/*.test.ts"
 
   e2e-board:
     timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.board-e2e == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run build
+      - uses: ./.github/actions/install
+      - run: bun run build
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
         timeout-minutes: 15
       - name: Install stock Lavish for the authenticated browser review
-        run: npm install -g lavish-axi@0.1.97
+        run: bun install -g lavish-axi@0.1.97
       - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/board/**/*.test.ts"
 
   tests-required:
     timeout-minutes: 10
     needs: changes
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - name: Behavior changes need end-to-end tests
         env:
@@ -269,7 +279,7 @@ jobs:
         tests-required,
       ]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
       - name: Every job passed or was skipped
         env:

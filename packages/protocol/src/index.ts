@@ -8,6 +8,7 @@ import { MAINTENANCE_OPS, MaintenanceSchema } from "./maintenance.ts";
 import { MODEL_PIN } from "./model.ts";
 import { NextSchema } from "./next.ts";
 import { ActivityMessage, CompletionEvidence, LandingFields } from "./progress.ts";
+import { PERSONAL_OPS } from "./personal.ts";
 import { PulseSchema } from "./pulse.ts";
 import { ReportStatus } from "./report.ts";
 import { SCHEDULE_OPS, ScheduleSchema } from "./schedules.ts";
@@ -18,6 +19,7 @@ import { DatedWaitSchema, HOLD_WAIT_ARGS, RemainingStepSchema } from "./waits.ts
 export * from "./address.ts";
 export * from "./approval.ts";
 export { laidOut } from "./question.ts";
+export { CAPTAIN, howToReply } from "./reply.ts";
 export * from "./branch.ts";
 export { type Complaint } from "./complaints.ts";
 export * from "./health.ts";
@@ -28,6 +30,7 @@ export { ActedSchema, LATER_EXAMPLES, laterLine, type LaterResult } from "./late
 export { MaintenanceSchema, maintenanceLine, type Maintenance } from "./maintenance.ts";
 export * from "./wakes.ts";
 export * from "./waits.ts";
+export { missingPersonalClone, PERSONAL_PROJECT } from "./personal.ts";
 export * from "./pulse.ts";
 export * from "./schedules.ts";
 export * from "./cooldowns.ts";
@@ -36,9 +39,11 @@ export { ATTENTIONS, STATUSES, type Attention, type Status } from "./standing.ts
 export {
   JOB_RUNNING,
   jobIsRunning,
+  JobResultFields,
   nextJob,
   parseJobState,
   startedJob,
+  StartupFenceFields,
   type JobEvent,
   type JobLife,
   type JobState,
@@ -54,7 +59,6 @@ export type Delivery = Static<typeof Delivery>;
 
 const CardKind = Type.Enum(["ship", "scout", "captain", "standing"]);
 const Key = Type.String({ pattern: "^[A-Za-z0-9._-]+$" });
-export const CAPTAIN = "captain";
 const ReplyId = Type.String({ pattern: "^r-[0-9]+$" });
 const ReplyTo = Type.Optional(
   Type.String({
@@ -110,13 +114,6 @@ export const OwedReplySchema = Type.Object({
   resentAt: Nullable(Type.Integer()),
 });
 export type OwedReply = Static<typeof OwedReplySchema>;
-
-export function howToReply(to: "worker" | "mate", card: number, id: string, from = ""): string {
-  const on = `card=${String(card)}`;
-  if (to === "worker") return `answer with report(status, text, replyTo="${id}")`;
-  const how = `comment(${on}, text, replyTo="${id}") or hold(${on}, question, replyTo="${id}")`;
-  return from === CAPTAIN ? `answer the captain on the board with ${how}` : `answer with ${how}`;
-}
 
 export const LIVE_STATES = ["starting", "idle", "running", "waiting", "exited", "lost"] as const;
 
@@ -353,7 +350,10 @@ export const OPS = {
   "attempt.resume": {
     roles: ["mate"],
     args: Type.Object({ card: Type.Integer() }),
-    result: AttemptPlan,
+    result: Type.Object({
+      ...AttemptPlan.properties,
+      process: Nullable(Type.String()),
+    }),
   },
   "branch.name": {
     roles: ["worker"],
@@ -364,6 +364,7 @@ export const OPS = {
   "replies.owed": { roles: ["worker"], args: Type.Object({}), result: Type.Array(ReplyId) },
   "hold.open": { roles: ["worker"], args: Type.Object({}), result: Type.Boolean() },
   ...COMPLAINT_OPS,
+  ...PERSONAL_OPS,
   ...SCHEDULE_OPS,
   ...STANDING_OPS,
   ...INCIDENT_OPS,
@@ -372,7 +373,7 @@ export const OPS = {
   report: {
     roles: ["worker"],
     args: Type.Object({
-      status: ReportStatus,
+      status: Type.Union([ReportStatus, Type.Literal("stopped-if-idle")]),
       text: Type.String({ minLength: 1 }),
       evidence: CompletionEvidence,
       key: Type.Optional(Key),
@@ -382,6 +383,7 @@ export const OPS = {
     }),
     result: Type.Object({
       ...CardSchema.properties,
+      deferred: Type.Optional(Type.Literal(true)),
       advice: Type.Optional(
         Type.String({
           description: "What the fleet tells the worker about this report, if anything",

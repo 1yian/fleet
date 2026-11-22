@@ -242,7 +242,7 @@ function reportFields(view: CardView): Record<string, string> {
   return typeof operationHandoff(view.entries)?.fields["evidence"] === "string"
     ? {
         evidence:
-          "reported, shape-checked only and not verified: do not read it, and closing an ops card is not available yet",
+          "reported, shape-checked only and not verified: do not read it, and close the card to end the operation",
       }
     : {};
 }
@@ -429,7 +429,9 @@ function headerOf(
     );
   if (header.lanes !== undefined) {
     Object.assign(record, lanesOf(header.lanes, query.lanes === true));
-    const down = header.lanes.lanes.some((each) => each.state !== "running");
+    const down = header.lanes.lanes.some(
+      (each) => each.state === "down" || each.state === "stopped",
+    );
     if (down && query.lanes !== true)
       help.push("Call `board(lanes=true)` to see why a lane is down or stopped");
     if (down)

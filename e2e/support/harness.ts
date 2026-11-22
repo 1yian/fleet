@@ -72,7 +72,13 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
-function rawText(data: RawData): string {
+function abortedIsFine(request: IncomingMessage, answering: Promise<void>): void {
+  void answering.catch((error: unknown) => {
+    if (request.complete) throw error;
+  });
+}
+
+export function rawText(data: RawData): string {
   if (Buffer.isBuffer(data)) return data.toString("utf8");
   return Array.isArray(data)
     ? Buffer.concat(data).toString("utf8")
@@ -127,8 +133,12 @@ export class Pi {
     return poll(() => this.uiRequests.find(match), what);
   }
 
-  prompt(message: string): void {
-    this.command({ type: "prompt", message });
+  prompt(message: string, whileRunning?: "followUp"): void {
+    this.command({
+      type: "prompt",
+      message,
+      ...(whileRunning === undefined ? {} : { streamingBehavior: whileRunning }),
+    });
   }
 
   compact(): void {
@@ -201,14 +211,14 @@ export class Harness {
     seedTiers(join(harness.dir, "agent"));
     server.on("request", (request, response) => {
       if (request.method === "POST" && request.url?.startsWith("/anthropic/v1/messages") === true) {
-        void harness.answerWire(request, response);
+        abortedIsFine(request, harness.answerWire(request, response));
         return;
       }
       if (request.method !== "POST" || request.url !== "/model") {
         response.writeHead(404).end();
         return;
       }
-      void harness.answerModel(request, response);
+      abortedIsFine(request, harness.answerModel(request, response));
     });
 
     harness.sockets.on("connection", (socket) => {
@@ -356,7 +366,9 @@ export class Harness {
   async stop(): Promise<void> {
     await Promise.all(this.pis.map((pi) => pi.kill()));
     this.sockets.close();
-    await new Promise((resolve) => this.server.close(resolve));
+    const closed = new Promise((resolve) => this.server.close(resolve));
+    this.server.closeAllConnections();
+    await closed;
   }
 
   private async answerModel(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -401,7 +413,11 @@ export class Harness {
   }
 }
 
-async function poll<T>(read: () => T | undefined, what: string, waitMs = WAIT_MS): Promise<T> {
+export async function poll<T>(
+  read: () => T | undefined,
+  what: string,
+  waitMs = WAIT_MS,
+): Promise<T> {
   const deadline = Date.now() + waitMs;
   for (;;) {
     const value = read();

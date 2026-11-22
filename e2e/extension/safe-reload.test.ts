@@ -123,6 +123,13 @@ async function mainHears(
   prompt = "WHO-RELOADED",
 ): Promise<void> {
   await fleet.matePid("main");
+  await until(
+    () =>
+      fleet
+        .userTexts("mate")
+        .find((text) => text.startsWith("[fleet] maintenance:") && text.includes("Reload batch ")),
+    "the batch summary to reach main",
+  );
   await fleet.lab.submit(fleet.mainPane, prompt);
   const heard = await until(
     () => fleet.h.callsOf("mate").find((each) => lastUser(each).includes(prompt)),

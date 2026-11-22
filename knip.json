@@ -24,6 +24,7 @@
         "support/owned-launch.ts",
         "support/reaper.ts",
         "support/roomy-disk.ts",
+        "support/clock-preload.ts",
         "support/fake-no-mistakes.ts",
         "support/fake-go.ts",
         "support/fake-pi.ts",
@@ -47,5 +48,5 @@
       "ignore": ["src/vendor/**"]
     }
   },
-  "ignoreBinaries": ["bws", "herdr", "lavish-axi", "openssl", "pgrep"]
+  "ignoreBinaries": ["bws", "herdr", "lavish-axi", "mkfifo", "openssl", "pgrep"]
 }

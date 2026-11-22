@@ -2,6 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import { CardSchema, check, OPS, type Card, type Holder } from "@fleet/protocol";
 import { Cardd, type Session } from "./cardd.ts";
 
+export const MINUTE = 60_000;
+
 export interface Fleet {
   readonly cardd: Cardd;
   readonly mainToken: string;
@@ -136,4 +138,125 @@ export function ageSession(cardd: Cardd, card: Card, ms: number): void {
   } finally {
     db.close();
   }
+}
+
+export function ageEntry(cardd: Cardd, entry: number, ms: number): void {
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    db.exec("DROP TRIGGER IF EXISTS entries_no_update");
+    db.prepare("UPDATE entries SET created_at = created_at - ? WHERE id = ?").run(ms, entry);
+  } finally {
+    db.close();
+  }
+}
+
+export function ageDelivery(
+  cardd: Cardd,
+  session: string,
+  entry: number,
+  column: "updated_at" | "told_at",
+  ms: number,
+): void {
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    db.prepare(
+      `UPDATE deliveries SET ${column} = ${column} - ? WHERE session = ? AND entry = ?`,
+    ).run(ms, session, entry);
+  } finally {
+    db.close();
+  }
+}
+
+export function ageBatch(cardd: Cardd, lane: string, ms: number): void {
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    db.prepare("UPDATE sessions SET batch_since = batch_since - ? WHERE id = ?").run(ms, lane);
+  } finally {
+    db.close();
+  }
+}
+
+export function ageDated(cardd: Cardd, cards: readonly Card[], ms: number): void {
+  const ids = cards.map(({ id }) => id);
+  const marks = ids.map(() => "?").join(", ");
+  const db = new DatabaseSync(cardd.db, { timeout: 5000 });
+  try {
+    db.exec("DROP TRIGGER IF EXISTS entries_no_update");
+    db.exec("BEGIN IMMEDIATE");
+    db.prepare(`UPDATE entries SET created_at = created_at - ? WHERE card IN (${marks})`).run(
+      ms,
+      ...ids,
+    );
+    db.prepare(`UPDATE cards SET created_at = created_at - ? WHERE id IN (${marks})`).run(
+      ms,
+      ...ids,
+    );
+    db.prepare(
+      `UPDATE entries SET fields = json_set(fields, '$.until', json_extract(fields, '$.until') - ?)
+       WHERE card IN (${marks}) AND json_type(fields, '$.until') IN ('integer', 'real')`,
+    ).run(ms, ...ids);
+    db.exec("COMMIT");
+  } finally {
+    db.close();
+  }
+}
+
+export class CheckPasses {
+  private passes = 0;
+  private readonly fleet: Fleet;
+  private readonly mate: Session;
+
+  private constructor(fleet: Fleet, mate: Session) {
+    this.fleet = fleet;
+    this.mate = mate;
+  }
+
+  static async open(fleet: Fleet): Promise<CheckPasses> {
+    const mate = await fleet.cardd.connect(fleet.cardd.addLane("check-passes", "main"));
+    return new CheckPasses(fleet, mate);
+  }
+
+  async next(): Promise<void> {
+    this.passes += 1;
+    const card = await newCard(this.mate, `check pass ${String(this.passes)}`);
+    const worker = await this.fleet.cardd.connect(await begin(this.mate, card));
+    worker.send({ t: "activity", state: "running" });
+    await worker.call("jobs", {});
+    ageSession(this.fleet.cardd, card, 6 * MINUTE);
+    await this.mate.waitForEntry(
+      (entry) => entry.card === card.id && entry.fields["condition"] === "worker-stalled",
+      `the timed check to pass over a worker silent for six minutes (pass ${String(this.passes)})`,
+    );
+  }
+}
+
+export function pastClock(ms: number): void {
+  while (Date.now() <= ms);
+}
+
+function readOnly<T>(cardd: Cardd, read: (db: DatabaseSync) => T): T {
+  const db = new DatabaseSync(cardd.db, { readOnly: true, timeout: 5000 });
+  try {
+    return read(db);
+  } finally {
+    db.close();
+  }
+}
+
+export function registeredAt(cardd: Cardd, job: number): number {
+  return readOnly(cardd, (db) => {
+    const at = db.prepare("SELECT registered_at AS at FROM jobs WHERE id = ?").get(job)?.["at"];
+    if (typeof at !== "number") throw new Error(`job ${String(job)} has no registration time`);
+    return at;
+  });
+}
+
+export function lastReportAt(cardd: Cardd, card: Card): number {
+  return readOnly(cardd, (db) => {
+    const at = db
+      .prepare("SELECT max(created_at) AS at FROM entries WHERE card = ? AND kind = 'report'")
+      .get(card.id)?.["at"];
+    if (typeof at !== "number") throw new Error(`c-${String(card.id)} has no report`);
+    return at;
+  });
 }

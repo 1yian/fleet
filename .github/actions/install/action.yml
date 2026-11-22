@@ -1,0 +1,11 @@
+name: Install dependencies
+description: Sets up Node 24 and the pinned Bun, then installs the locked dependencies.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+    - uses: ./.github/actions/install-bun
+    - shell: bash
+      run: bun install --frozen-lockfile

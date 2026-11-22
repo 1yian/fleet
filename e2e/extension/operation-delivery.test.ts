@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { lastUser, toolResults, WORKER_WAIT_MS, workersOf } from "../support/dispatch-lab.ts";
@@ -147,49 +146,18 @@ test("a steer after done cancels the handoff on the board", async () => {
   assert.doesNotMatch(seen[1] ?? "", /evidence: /);
 });
 
-test("closing an ops card is refused in every mode, and after each refusal the same worker, refs, files and scratch remain", async () => {
-  dispatchOperation();
+test("close refuses an ops card that has no done report and leaves its worker running, then ends it Done once the evidence is handed over", async () => {
+  dispatchOperation({ tool: "close", args: { card: 1, summary: "Operation done" } });
   const pidFile = join(h.dir, "worker.pid");
-  const snaps: unknown[] = [];
-  const answers: string[] = [];
-  const snapshot = async (): Promise<unknown> => {
-    const db = new DatabaseSync(cardd.db, { readOnly: true });
-    const attempts = db.prepare("SELECT n, host, state, branch FROM attempts ORDER BY id").all();
-    const sessions = db.prepare("SELECT id FROM sessions WHERE role = 'worker' ORDER BY id").all();
-    db.close();
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
-    return {
-      pid,
-      alive: alive(pid),
-      workers: await workersOf(lab),
-      attempts,
-      sessions,
-      head: git(tree, "rev-parse", "HEAD"),
-      refs: git(scratch.root, "for-each-ref", "--format=%(refname) %(objectname)"),
-      status: git(tree, "status", "--porcelain", "--ignored", "--untracked-files=all"),
-      tracked: readFileSync(join(tree, ".gitignore"), "utf8"),
-      untracked: readFileSync(join(tree, "untracked.txt"), "utf8"),
-      ignored: readFileSync(join(tree, "state", "leak.txt"), "utf8"),
-      scratch: readdirSync(hostScratch(), { recursive: true, withFileTypes: true })
-        .filter((entry) => entry.isFile())
-        .map((entry) => join(entry.parentPath, entry.name))
-        .map((path) => [path, readFileSync(path, "utf8")]),
-      archive: existsSync(`${scratch.root}.archive`),
-      card: (await cardd.thread(1)).card.status,
-    };
-  };
+  const refused = Promise.withResolvers<{
+    answer: string;
+    workers: string[];
+    tree: boolean;
+    status: string;
+    cleanups: number;
+  }>();
   h.onModel(async () => {
-    await h.waitForCall(2, "mate", WORKER_WAIT_MS);
-    writeFileSync(join(tree, "product.txt"), "unexpected product change\n");
-    git(tree, "add", "product.txt");
-    git(tree, "commit", "-qm", "unexpected product change");
-    writeFileSync(
-      join(tree, ".gitignore"),
-      `${readFileSync(join(tree, ".gitignore"), "utf8")}# edited\n`,
-    );
-    writeFileSync(join(tree, "untracked.txt"), "preserve me\n");
-    mkdirSync(join(tree, "state"), { recursive: true });
-    writeFileSync(join(tree, "state", "leak.txt"), "ignored but mine\n");
+    await refused.promise;
     return {
       tool: "bash",
       args: { command: `echo $PPID > "${pidFile}"; ${workerWrites().args.command}` },
@@ -197,45 +165,42 @@ test("closing an ops card is refused in every mode, and after each refusal the s
   }, "worker");
   h.onModel((turns) => reportFromWorker(turns), "worker");
   h.onModel(() => ({ text: "reported" }), "worker");
-  const attempts = [
-    { card: 1, summary: "Done" },
-    { card: 1, summary: "Done", confirm: true },
-    { card: 1, summary: "Not approved", landed: false },
-    { card: 1, summary: "Not approved", landed: false, confirm: true },
-  ];
-  attempts.forEach((args, index) => {
-    h.onModel(async (turns) => {
-      if (index > 0) {
-        answers.push(toolResults(turns).at(-1) ?? "");
-        snaps.push(await snapshot());
-      } else snaps.push(await snapshot());
-      return { tool: "close", args };
-    }, "mate");
-  });
   h.onModel(async (turns) => {
-    answers.push(toolResults(turns).at(-1) ?? "");
-    snaps.push(await snapshot());
+    const thread = await cardd.thread(1);
+    refused.resolve({
+      answer: toolResults(turns).at(-1) ?? "",
+      workers: await workersOf(lab),
+      tree: existsSync(tree),
+      status: thread.card.status,
+      cleanups: thread.entries.filter((entry) => entry.kind === "cleanup").length,
+    });
     return { text: "left open" };
   }, "mate");
+  h.onModel(() => ({ tool: "close", args: { card: 1, summary: "Operation done" } }), "mate");
+  h.onModel(() => ({ text: "closed" }), "mate");
   await start();
-  await finished(7);
-  for (let tries = 0; snaps.length < 5 && tries < 100; tries += 1)
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.equal(snaps.length, 5);
-  assert.equal(answers.length, 4);
-  const [baseline] = snaps;
-  assert.equal(JSON.stringify(baseline).includes('"alive":true'), true);
-  assert.equal(JSON.stringify(baseline).includes('"card":"with-mate"'), true);
-  snaps.slice(1).forEach((after, index) => {
-    assert.deepEqual(after, baseline, `after refusal ${String(index + 1)}`);
-  });
-  for (const answer of answers)
-    assert.match(
-      answer,
-      /c-1 delivers ops; closing an operation is not available until authoritative retirement lands \(tracked on its own card\); leave it open/,
-    );
-  assert.equal(
-    (await cardd.thread(1)).entries.some((entry) => entry.kind === "cleanup"),
-    false,
+  const closing = await finished(5);
+  const first = await refused.promise;
+  assert.match(first.answer, /c-1 did not land: the worker has not reported done\./);
+  assert.deepEqual(first.workers, ["c-1-a1"]);
+  assert.equal(first.tree, true);
+  assert.equal(first.status, "working");
+  assert.equal(first.cleanups, 0);
+
+  assert.match(toolResults(closing).at(-1) ?? "", /^c-1 is done\./);
+  assert.equal(alive(Number(readFileSync(pidFile, "utf8").trim())), false);
+  const thread = await cardd.thread(1);
+  assert.equal(thread.card.status, "done");
+  assert.deepEqual(
+    thread.entries
+      .filter((entry) => entry.kind === "cleanup")
+      .map((entry) => entry.fields["outcome"]),
+    ["done"],
   );
+  assert.equal(existsSync(tree), false);
+  assert.deepEqual(await workersOf(lab), []);
+  assert.equal(git(scratch.root, "branch", "--list", "c-1-a1"), "");
+  assert.equal(existsSync(`${scratch.root}.archive`), false);
+  assert.match(readFileSync(report, "utf8"), /Observed state: ready/);
+  assert.equal(originCalls(), "");
 });

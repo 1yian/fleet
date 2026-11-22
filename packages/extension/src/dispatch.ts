@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
 import type { Delivery, OpResult } from "@fleet/protocol";
 import { ADD_WORKTREE } from "./clones.ts";
 import { contain, releaseAll } from "./containment.ts";
 import { extensionOn } from "./extension-path.ts";
 import { fleetArgs, TRUST_ARG } from "./fleet-args.ts";
 import {
+  AgentReadinessTimedOut,
+  AgentStartRefused,
   field,
   herdr,
   onHost,
@@ -13,6 +16,7 @@ import {
   records,
   scrub,
   shellIdle,
+  startReplacementOnce,
   worktreeOf,
 } from "./host.ts";
 import { claimWorkspace, openWorkerWorkspace } from "./place.ts";
@@ -101,11 +105,36 @@ async function until(check: () => Promise<boolean>, waitMs: number): Promise<boo
   return true;
 }
 
+class StartUnconfirmed extends Error {
+  readonly timedOut: boolean;
+
+  constructor(cause: unknown) {
+    super(toError(cause).message, { cause });
+    this.timedOut = cause instanceof AgentReadinessTimedOut;
+  }
+}
+
+async function launchReplacement(host: string, pane: string, args: string[]): Promise<void> {
+  let idle: boolean;
+  try {
+    idle = await until(() => shellIdle(host, pane), SHELL_WAIT_MS);
+  } catch (error) {
+    throw new DidNotStart(error);
+  }
+  if (!idle)
+    throw new DidNotStart(new Error(`the shell in pane ${pane} on ${host} did not become idle`));
+  try {
+    await startReplacementOnce(host, args);
+  } catch (error) {
+    throw error instanceof AgentStartRefused ? error : new StartUnconfirmed(error);
+  }
+}
+
 async function launchOnce(host: string, pane: string, args: string[]): Promise<Error | undefined> {
+  const watch = { over: false };
   const launched = until(() => shellIdle(host, pane), SHELL_WAIT_MS)
     .then(() => herdr(host, args))
     .then(() => undefined, toError);
-  const watch = { over: false };
   const appeared = (async (): Promise<undefined> => {
     while (!watch.over && !(await piRunning(host, pane).catch(() => false))) await sleep(POLL_MS);
     return undefined;
@@ -121,31 +150,82 @@ const STAY_MS = 3000;
 
 const EXIT_LINES = 20;
 
+async function paneTail(host: string, pane: string, token: string): Promise<string> {
+  const text = await paneText(host, pane).catch(() => "");
+  const lines = scrub(text, [token])
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line !== "");
+  return `The pane is still open. Last lines of the pane:\n${lines.slice(-EXIT_LINES).join("\n")}`;
+}
+
 async function exitedMessage(
   host: string,
   pane: string,
   worker: { session: string; token: string },
+  connected: boolean,
 ): Promise<string> {
-  const text = await paneText(host, pane).catch(() => "");
-  const lines = scrub(text, [worker.token])
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter((line) => line !== "");
-  const shown = lines.slice(-EXIT_LINES).join("\n");
-  return `Pi is not running in pane ${pane} on ${host} after ${worker.session} was started in it, so the worker never connected. The pane is still open. Last lines of the pane:\n${shown}`;
+  const what = connected
+    ? `after ${worker.session} connected to Fleet`
+    : `after ${worker.session} was started in it, so the worker never connected`;
+  return `Pi is not running in pane ${pane} on ${host} ${what}. ${await paneTail(host, pane, worker.token)}`;
 }
 
 async function confirmStays(
   host: string,
   pane: string,
   worker: { session: string; token: string },
+  connected: boolean,
 ): Promise<void> {
   const deadline = Date.now() + STAY_MS;
   while (Date.now() < deadline) {
     if (await shellIdle(host, pane).catch(() => false))
-      throw new Error(await exitedMessage(host, pane, worker));
+      throw new Error(await exitedMessage(host, pane, worker, connected));
     await sleep(POLL_MS);
   }
+}
+
+export class DidNotStart extends Error {
+  constructor(cause: unknown, context?: string, token = "") {
+    const seen = new Set<Error>();
+    const messages = new Set(context === undefined ? [] : [context]);
+    let current = cause;
+    while (current instanceof Error && !seen.has(current)) {
+      seen.add(current);
+      messages.add(scrub(current.message, [token]));
+      current = current.cause;
+    }
+    if (seen.size === 0) messages.add(scrub(String(cause), [token]));
+    super([...messages].join("\n"), { cause });
+  }
+}
+
+type ReplacementStarted = () => Promise<boolean | undefined>;
+
+async function replacementError(
+  host: string,
+  pane: string,
+  worker: { session: string; token: string },
+  error: unknown,
+  replacementStarted: ReplacementStarted,
+): Promise<Error | string> {
+  const running = await piRunning(host, pane).catch(() => undefined);
+  const cause = scrub(toError(error).message, [worker.token]);
+  const timedOut =
+    error instanceof AgentReadinessTimedOut ||
+    (error instanceof StartUnconfirmed && error.timedOut);
+  if (timedOut && (await replacementStarted()) === true) return cause;
+  if (running === true && !(error instanceof AgentStartRefused)) return toError(error);
+  if (running === false && error instanceof StartUnconfirmed)
+    return new Error(
+      `${cause}\nThe replacement could not be confirmed after the start command; the request was not refunded.`,
+      { cause: error },
+    );
+  const context =
+    running === false
+      ? `The replacement did not start. Pi is not running in pane ${pane} on ${host}. ${await paneTail(host, pane, worker.token)}`
+      : undefined;
+  return new DidNotStart(error, context, worker.token);
 }
 
 async function startAgent(
@@ -154,16 +234,30 @@ async function startAgent(
   args: string[],
   worker: { session: string; token: string },
   lost: (text: string) => void,
-): Promise<void> {
+  replacementStarted?: ReplacementStarted,
+): Promise<string | undefined> {
+  let readiness: string | undefined;
   try {
-    await launchAgent(host, pane, args);
+    if (replacementStarted === undefined) await launchAgent(host, pane, args);
+    else await launchReplacement(host, pane, args);
   } catch (error) {
-    if (await piRunning(host, pane).catch(() => true)) throw error;
-    throw new Error(await exitedMessage(host, pane, worker), { cause: error });
+    if (replacementStarted !== undefined) {
+      const outcome =
+        error instanceof DidNotStart
+          ? error
+          : await replacementError(host, pane, worker, error, replacementStarted);
+      if (outcome instanceof Error) throw outcome;
+      readiness = outcome;
+    } else {
+      const running = await piRunning(host, pane).catch(() => undefined);
+      if (running !== false) throw error;
+      throw new Error(await exitedMessage(host, pane, worker, false), { cause: error });
+    }
   }
-  confirmStays(host, pane, worker).catch((error: unknown) => {
+  confirmStays(host, pane, worker, readiness !== undefined).catch((error: unknown) => {
     lost(error instanceof Error ? error.message : String(error));
   });
+  return readiness;
 }
 
 async function launchAgent(host: string, pane: string, args: string[]): Promise<void> {
@@ -259,17 +353,21 @@ async function closeWorkspace(host: string, clone: string, session: string): Pro
   if (workspace !== undefined) await herdr(host, ["workspace", "close", workspace]);
 }
 
-export async function replaceWorker(
-  link: Link,
-  launch: Launch,
-  recovery: { card: number; host: string; repeat: boolean },
-  avoid: readonly string[] = [],
-): Promise<string> {
-  const plan = await link.call("attempt.resume", { card: recovery.card });
-  if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
-  if (recovery.repeat)
-    return `A process of ${plan.session} already runs or is starting on ${recovery.host}, so this repeated request left it alone.`;
-  const extension = await extensionOn(recovery.host, launch.extension);
+interface Recovery {
+  card: number;
+  host: string;
+  actor: string;
+  notice?: number | undefined;
+}
+
+interface Replacement {
+  plan: Plan;
+  pane: string;
+  path: string;
+  extension: string;
+}
+
+async function freshPane(plan: Plan, recovery: Recovery): Promise<{ pane: string; path: string }> {
   const old = await worktreePane(recovery.host, plan, recovery.card);
   if (await piRunning(recovery.host, old.pane)) await stopPi(recovery.host, old.pane, plan.session);
   await closeWorkspace(recovery.host, plan.clone, plan.session);
@@ -277,7 +375,36 @@ export async function replaceWorker(
   const { pane, path, workspace } = await worktreePane(recovery.host, plan, recovery.card);
   await claimOwned(recovery.host, workspace, plan, recovery.card);
   await contain(recovery.host, pane, path);
-  await startAgent(
+  return { pane, path };
+}
+
+async function prepareReplacement(
+  link: Link,
+  launch: Launch,
+  recovery: Recovery,
+): Promise<Replacement> {
+  const plan = await link.call("attempt.resume", { card: recovery.card });
+  if (!plan.resumed) throw new Error(`${plan.session} had no live attempt to replace`);
+  const extension = await extensionOn(recovery.host, launch.extension);
+  const fresh = await freshPane(plan, recovery);
+  if (recovery.notice !== undefined)
+    await link.call("card.restart.notice", { card: recovery.card, request: recovery.notice });
+  return { plan, ...fresh, extension };
+}
+
+export async function replaceWorker(
+  link: Link,
+  launch: Launch,
+  recovery: Recovery,
+  avoid: readonly string[] = [],
+): Promise<string> {
+  const { plan, pane, path, extension } = await prepareReplacement(link, launch, recovery).catch(
+    (error: unknown) => {
+      throw new DidNotStart(error);
+    },
+  );
+  const launched = randomUUID();
+  const readiness = await startAgent(
     recovery.host,
     pane,
     [
@@ -299,6 +426,7 @@ export async function replaceWorker(
         role: "worker",
         fleetProject: plan.fleetProject,
         avoid,
+        launch: launched,
       }),
       [
         TRUST_ARG,
@@ -311,7 +439,24 @@ export async function replaceWorker(
     ].flat(),
     plan,
     launch.lost,
+    async () => {
+      const current = await link
+        .call("attempt.resume", { card: recovery.card })
+        .catch(() => undefined);
+      return current?.session === recovery.actor ? current.process === launched : undefined;
+    },
   );
-  await contain(recovery.host, pane, path);
-  return `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
+  try {
+    await contain(recovery.host, pane, path);
+  } catch (error) {
+    if (readiness === undefined) throw error;
+    throw new Error(
+      `${scrub(toError(error).message, [plan.token])}\nHerdr also reported:\n${readiness}`,
+      { cause: error },
+    );
+  }
+  const started = `Started ${plan.session} again on ${recovery.host}, on its own session and branch ${plan.branch}.`;
+  return readiness === undefined
+    ? started
+    : `${started} The replacement connected to Fleet, but Herdr did not confirm interactive readiness; the restart still counts and was not relaunched. Herdr reported:\n${readiness}`;
 }

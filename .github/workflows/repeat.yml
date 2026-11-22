@@ -22,7 +22,7 @@ env:
 
 jobs:
   shard:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -30,12 +30,8 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run build
+      - uses: ./.github/actions/install
+      - run: bun run build
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
         timeout-minutes: 15
@@ -46,7 +42,9 @@ jobs:
         run: |
           curl -fsSL -o herdr "https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-x86_64"
           echo "${HERDR_SHA256}  herdr" | sha256sum -c -
-          chmod +x herdr && sudo mv herdr /usr/local/bin/herdr
+          mkdir -p "$RUNNER_TEMP/bin"
+          chmod +x herdr && mv herdr "$RUNNER_TEMP/bin/herdr"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install direnv
         uses: ./.github/actions/install-direnv
         timeout-minutes: 5

@@ -1,154 +1,30 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, test } from "node:test";
-import { Cardd, type Session } from "../support/cardd.ts";
-import { Harness, type Turn } from "../support/harness.ts";
-import { HerdrLab } from "../support/herdr.ts";
-import { toolResults } from "../support/dispatch-lab.ts";
-import { isRecord, records, type JsonRecord } from "../support/json.ts";
+import { test } from "node:test";
+import { records } from "../support/json.ts";
 import { OPS_TURNS, QUIET_TURNS, writeLedger } from "../support/ledger.ts";
 import { cloneWithRemote, landOnRemote, tip } from "../support/remote.ts";
-import { configureMain, mateArgs, roomyDiskEnv, Scratch, startMain } from "../support/scratch.ts";
+import { mateArgs, startMain } from "../support/scratch.ts";
 
-const WAIT_MS = 60_000;
-const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
-const TRANSPORT = fileURLToPath(new URL("../support/switch-transport.ts", import.meta.url));
-
-let cardd: Cardd;
-let h: Harness;
-let lab: HerdrLab;
-let here: Scratch;
-let p620: Scratch;
-let ghost: Session;
-let marker: string;
-beforeEach(async () => {
-  cardd = await Cardd.start();
-  h = await Harness.start();
-  here = new Scratch();
-  p620 = new Scratch();
-  marker = join(here.parent, "p620-down");
-  const mainToken = cardd.addLane("main", undefined, here.root);
-  configureMain(here, cardd.url, mainToken, {
-    hosts: { p620: ["node", TRANSPORT, marker] },
-    roots: { p620: p620.root },
-  });
-  const settings = (lane: string) => ({
-    url: cardd.url,
-    token: cardd.addLane(lane, "main"),
-    args: mateArgs(h),
-  });
-  here.addLane("ops", settings("ops"));
-  p620.addLane("far", settings("far"));
-  ghost = await cardd.connect(cardd.addLane("ghost", "main"));
-  lab = await HerdrLab.start({
-    ...h.piEnv("mate"),
-    PATH: `${BIN}:${process.env["PATH"] ?? ""}`,
-    FLEET_SUPERVISE_MS: "1000",
-    ...roomyDiskEnv(),
-  });
-});
-afterEach(async (t) => {
-  await lab.printIfFailed(t);
-  const stopped = await Promise.allSettled([ghost.close(), lab.stop(), h.stop(), cardd.stop()]);
-  here.dispose();
-  p620.dispose();
-  const failed = stopped.find((result) => result.status === "rejected");
-  if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
-});
-
-async function until<T>(
-  read: () => T | undefined | Promise<T | undefined>,
-  what: string,
-  detail?: () => Promise<string>,
-): Promise<T> {
-  const deadline = Date.now() + WAIT_MS;
-  for (;;) {
-    const value = await read();
-    if (value !== undefined) return value;
-    if (Date.now() > deadline) {
-      assert.fail(`timed out waiting for ${what}\n${(await detail?.()) ?? ""}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-}
-
-function rowsOf(host: Scratch, args: readonly string[]): JsonRecord[] {
-  const parsed: unknown = JSON.parse(host.fleet([...args, "--json"], { HERDR_SESSION: lab.name }));
-  return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
-}
-
-const states = (host: Scratch): Record<string, string> =>
-  Object.fromEntries(
-    rowsOf(host, ["status"]).map((row) => [String(row["lane"]), String(row["state"])]),
-  );
-const waitState = (host: Scratch, lane: string, state: string) =>
-  until(
-    () => (states(host)[lane] === state ? true : undefined),
-    `${lane} to be ${state}`,
-    async () => {
-      const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);
-      const workspace = workspaces.find((each) => each["label"] === `2ndmate-${lane}`);
-      const listed = await lab.run([
-        "pane",
-        "list",
-        "--workspace",
-        String(workspace?.["workspace_id"]),
-      ]);
-      const pane = String(records(listed["panes"])[0]?.["pane_id"]);
-      const info = JSON.stringify(
-        (await lab.run(["pane", "process-info", "--pane", pane]))["process_info"],
-      );
-      return `status: ${JSON.stringify(states(host))}\nprocesses: ${info}\nscreen:\n${await lab.screen(pane)}`;
-    },
-  );
-
-async function paneInfo(lane: string): Promise<JsonRecord[]> {
-  const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]);
-  const workspace = workspaces.find((each) => each["label"] === `2ndmate-${lane}`);
-  const listed = await lab.run([
-    "pane",
-    "list",
-    "--workspace",
-    String(workspace?.["workspace_id"]),
-  ]);
-  const pane = String(records(listed["panes"])[0]?.["pane_id"]);
-  return records([(await lab.run(["pane", "process-info", "--pane", pane]))["process_info"]]);
-}
-
-async function groupOf(lane: string): Promise<number> {
-  return Number((await paneInfo(lane))[0]?.["foreground_process_group_id"]);
-}
-
-const waitPi = (lane: string) =>
-  until(async () => {
-    const processes = records((await paneInfo(lane))[0]?.["foreground_processes"]);
-    return processes.some((each) => each["name"] === "pi" || each["argv0"] === "pi")
-      ? true
-      : undefined;
-  }, `${lane} to run Pi`);
-
-const sessionText = (): string =>
-  readdirSync(join(h.dir, "sessions"))
-    .map((file) => readFileSync(join(h.dir, "sessions", file), "utf8"))
-    .join("\n");
-
-async function wakeMain(title: string): Promise<void> {
-  const card: unknown = await ghost.call("card.new", { title, kind: "scout" });
-  const id: unknown = Reflect.get(Object(card), "id");
-  await ghost.call("hold", {
-    card: id,
-    question: `${title}?`,
-    options: ["Yes"],
-  });
-}
-
-const users = (turns: Turn[]): string =>
-  turns
-    .filter((turn) => turn.role === "user")
-    .map((turn) => turn.text)
-    .join("\n");
+import {
+  WAIT_MS,
+  cardd,
+  h,
+  lab,
+  here,
+  p620,
+  marker,
+  until,
+  rowsOf,
+  waitState,
+  paneInfo,
+  groupOf,
+  waitPi,
+  sessionText,
+  wakeMain,
+  users,
+} from "../support/lanes-lab.ts";
 
 test(
   "a mate starts with its compile cache under the host's fleet folder, off the tmp folder",
@@ -279,78 +155,122 @@ test("main tells the captain when a host cannot be reached, and when it is back"
   assert.match(users(next), /\[fleet\] lanes: p620 can be reached again/);
 });
 
-test("a mate that keeps dying is held, and only naming it starts it again", async () => {
-  const loopy = cardd.addLane("loopy", "main");
-  here.addLane("loopy", {
+test("an unreadable main preference file never removes a healthy sibling's published copy while another lane is unreadable", async () => {
+  const worktrees = `${p620.root}.worktrees`;
+  p620.addLane("near", {
     url: cardd.url,
-    token: `-${loopy}`,
-    args: ["--approve", "--definitely-not-an-option"],
+    token: cardd.addLane("near", "main"),
+    args: mateArgs(h),
   });
-  const actionOf = (lane: string): unknown =>
-    rowsOf(here, ["up"]).find((row) => row["lane"] === lane)?.["action"];
-  for (let start = 1; start <= 3; start += 1) {
-    assert.equal(actionOf("loopy"), "started");
-    await waitState(here, "loopy", "down");
-  }
-  assert.equal(actionOf("loopy"), "held");
-  assert.equal(states(here)["loopy"], "stopped");
-  assert.match(here.fleet(["up"], { HERDR_SESSION: lab.name }), /loopy: stopped: crash loop/);
-  assert.match(here.fleet(["up", "loopy"], { HERDR_SESSION: lab.name }), /^loopy: started/);
+  const copy = join(worktrees, "lane-near", "data", "captain-shared.md");
+  const baseline = join(worktrees, "lane-near", "state", "captain-shared.published");
+  mkdirSync(join(worktrees, "lane-near", "state"), { recursive: true });
+  writeFileSync(copy, "- published\n");
+  writeFileSync(baseline, "- published\n");
+  writeFileSync(join(worktrees, "lane-far", "config", "lane.json"), "");
+  const source = join(here.root, "data", "captain-shared.md");
+  rmSync(source, { force: true });
+  mkdirSync(source, { recursive: true });
+  h.onModel(() => ({ text: "noted" }), "mate");
+  await startMain(lab, here, h);
+  const heard = (): string => {
+    try {
+      return sessionText();
+    } catch {
+      return "";
+    }
+  };
+  await until(
+    () => (heard().includes("shared preferences did not reach p620") ? true : undefined),
+    "main to report that the shared preferences were not published",
+  );
+  await until(
+    () => (heard().includes("near started on p620") ? true : undefined),
+    "the healthy sibling to start",
+  );
+  assert.equal(readFileSync(copy, "utf8"), "- published\n");
+  assert.equal(readFileSync(baseline, "utf8"), "- published\n");
 });
 
-test("main stops, restarts, and starts lanes with lane, its board shows them, and it never starts a lane held by hand", async () => {
-  let kicked: number | undefined;
-  h.onModel(() => ({ tool: "lane", args: { name: "ops", action: "stop" } }), "mate");
-  h.onModel(async (turns) => {
-    assert.match(toolResults(turns).at(-1) ?? "", /^ops \(local\): stopped$/);
-    kicked = await groupOf("far");
-    process.kill(-kicked, "SIGKILL");
-    await until(async () => ((await groupOf("far")) === kicked ? undefined : true), "far to die");
+for (const fault of ["malformed", "unreadable"]) {
+  test(`an ${fault === "malformed" ? "invalid" : fault} lane config prevents maintenance recovery until repaired`, async () => {
+    const config = join(`${p620.root}.worktrees`, "lane-far", "config", "lane.json");
+    const backup = `${config}.backup`;
+    p620.addLane("near", {
+      url: cardd.url,
+      token: cardd.addLane("near", "main"),
+      args: mateArgs(h),
+    });
+    writeFileSync(
+      join(`${p620.root}.worktrees`, "lane-near", "data", "captain-shared.md"),
+      "local edit\n",
+    );
+    writeFileSync(marker, "down");
+    renameSync(config, backup);
+    if (fault === "malformed") writeFileSync(config, "");
+    else mkdirSync(config);
+    h.onModel(() => ({ text: "noted" }), "mate");
+    await startMain(lab, here, h);
+    const outage = await h.waitForCall(0, "mate", WAIT_MS);
+    assert.match(users(outage), /p620 cannot be reached/);
+    rmSync(marker);
+    const detail = fault === "malformed" ? "is not valid JSON" : "EISDIR";
+    const failed = "[fleet] lanes: p620 failed: lane far could not be read: ";
+    const recovered = "p620 can be reached again";
+    const started = "far started on p620";
+    await until(
+      () =>
+        h
+          .callsOf("mate")
+          .map(users)
+          .find((message) => message.includes(failed)),
+      "main to report a definite prerequisite failure on p620",
+      () => h.callsOf("mate").map(users).at(-1) ?? "no model call",
+    );
+    await until(
+      () => (sessionText().includes("near started on p620") ? true : undefined),
+      "a healthy sibling lane to start while far is unreadable",
+    );
+    await until(
+      () => (sessionText().includes("edited copy preserved as data/") ? true : undefined),
+      "main to hear where near's edited preferences were kept despite far's failure",
+    );
+    assert.match(sessionText(), /preserved as data\/[^\n]* \(on p620\)/);
+    await waitState(p620, "near", "running");
+    const rows = rowsOf(p620, ["status"]);
+    assert.equal(rows.find((row) => row["lane"] === "near")?.["state"], "running");
+    const unread = rows.find((row) => row["lane"] === "far");
+    assert.equal(unread?.["state"], "unknown");
+    assert.match(String(unread["reason"]), new RegExp(detail));
+    assert.throws(() => rowsOf(p620, ["status", "--placement"]), new RegExp(detail));
+    const beforeRepair = sessionText();
+    assert.ok(!beforeRepair.includes(recovered));
+    assert.ok(!beforeRepair.includes(started));
+    rmSync(config, { recursive: true });
+    renameSync(backup, config);
+    await until(() => {
+      const notices = sessionText();
+      return notices.includes(recovered) && notices.includes(started) ? true : undefined;
+    }, "main to announce recovery and a successful start after repairing the lane config");
     await waitState(p620, "far", "running");
-    await waitPi("far");
-    assert.equal(states(here)["ops"], "stopped");
-    return { tool: "board", args: {} };
-  }, "mate");
-  h.onModel((turns) => {
-    const board = toolResults(turns).at(-1) ?? "";
-    assert.match(board, /^lanes\[2\]\{name,state\}:\n {2}ops,stopped\n {2}far,running$/m);
-    assert.match(board, /^ {2}Call `board\(lanes=true\)` to see why a lane is down or stopped$/m);
-    assert.match(
-      board,
-      /^ {2}Call `lane\(name=<lane>, action="start"\)` to start a lane that is down or stopped$/m,
-    );
-    return { tool: "board", args: { lanes: true } };
-  }, "mate");
-  h.onModel((turns) => {
-    const board = toolResults(turns).at(-1) ?? "";
-    assert.match(board, /^ {2}ops,local,stopped,stopped by hand$/m);
-    assert.match(board, /^lanes\[2\]\{name,host,state,detail\}:$/m);
-    assert.match(board, /^ {2}far,p620,running,""$/m);
-    assert.doesNotMatch(board, /board\(lanes=true\)/);
-    return { tool: "lane", args: { name: "all", action: "stop" } };
-  }, "mate");
-  h.onModel((turns) => {
-    assert.equal(
-      toolResults(turns).at(-1),
-      'lane "all" only restarts: name each lane to start or stop it',
-    );
-    return { tool: "lane", args: { name: "all", action: "restart" } };
-  }, "mate");
-  h.onModel((turns) => {
-    const restart = toolResults(turns).at(-1) ?? "";
-    assert.match(restart, /far \(p620\): started/);
-    assert.match(restart, /ops \(local\): stopped - stopped by hand/);
-    return { tool: "lane", args: { name: "ops", action: "start" } };
-  }, "mate");
-  h.onModel(() => ({ text: "all lanes run" }), "mate");
+    const notices = sessionText();
+    assert.ok(notices.includes(failed) && notices.indexOf(failed) < notices.indexOf(recovered));
+  });
+}
+
+test("a failure line that mentions a preserved copy is still reported as a failure", async () => {
+  const name = "preserved as x";
+  p620.addLane(name, { url: cardd.url, token: cardd.addLane(name, "main"), hold: true });
+  writeFileSync(join(`${p620.root}.worktrees`, `lane-${name}`, "config", "lane.json"), "");
+  h.onModel(() => ({ text: "noted" }), "mate");
   await startMain(lab, here, h);
-  await waitState(here, "ops", "running");
-  await waitState(p620, "far", "running");
-  await wakeMain("Check the lanes");
-  const turns = await h.waitForCall(6, "mate", WAIT_MS);
-  assert.match(
-    turns.filter((turn) => turn.role === "toolResult").at(-1)?.text ?? "",
-    /^ops \(local\): started$/,
+  await until(
+    () =>
+      h
+        .callsOf("mate")
+        .map(users)
+        .find((message) => message.includes(`p620 failed: lane ${name} could not be read`)),
+    "main to report the unreadable lane as a failure",
+    () => h.callsOf("mate").map(users).at(-1) ?? "no model call",
   );
-  await waitState(here, "ops", "running");
 });

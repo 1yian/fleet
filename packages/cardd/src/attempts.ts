@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { branchNameProblem, check, type Card, type CardView, type Delivery } from "@fleet/protocol";
 import Type from "typebox";
-import { abandonRunningJobs, runningJobSql } from "./jobs.ts";
+import { abandonRunningJobs, outstandingJobSql } from "./jobs.ts";
 import { requireOpen } from "./change.ts";
 import {
   addEntry,
@@ -237,7 +237,8 @@ function taskWithDelivery(card: Card, task: string, delivery: Delivery | null): 
 
 export const quietSql = (state: string, attempt: string): string =>
   `(${state} IN ('idle', 'waiting')
-    AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.attempt = ${attempt} AND ${runningJobSql("j.state")}))`;
+    AND NOT EXISTS (SELECT 1 FROM jobs j
+      WHERE j.attempt = ${attempt} AND ${outstandingJobSql("j")}))`;
 
 export function connected(db: DatabaseSync, session: string): boolean {
   const state = db.prepare("SELECT state FROM sessions WHERE id = ?").get(session)?.["state"];
@@ -335,6 +336,19 @@ export function repinAttempt(
     live.id,
   );
   return { previous };
+}
+
+export function restoreAttemptPin(
+  db: DatabaseSync,
+  card: number,
+  from: string | undefined,
+): boolean {
+  const live = liveAttempt(db, card);
+  if (live === undefined) return false;
+  const { changes } = db
+    .prepare("UPDATE attempts SET model = ?, updated_at = ? WHERE id = ?")
+    .run(from ?? null, Date.now(), live.id);
+  return Number(changes) > 0;
 }
 
 export function resumeAttempt(db: DatabaseSync, card: Card): Begun {

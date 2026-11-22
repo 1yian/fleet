@@ -1,3 +1,11 @@
+import { hostname } from "node:os";
+
+export function fleetHostName(): string {
+  const named = process.env["FLEET_HOST"];
+  if (named && named !== "local") return named;
+  return hostname().toLowerCase().split(".")[0] ?? "";
+}
+
 const DEFAULT_TOOL_DIRS = [
   "/opt/homebrew/bin",
   "/opt/homebrew/sbin",

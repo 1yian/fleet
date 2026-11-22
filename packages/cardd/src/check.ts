@@ -1,9 +1,8 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { idlePark } from "@fleet/protocol";
 import { quietSql } from "./attempts.ts";
-import { jobStateSql, loseSilentJobs } from "./jobs.ts";
-import { chaseIntake, dueBatches, remind } from "./deliveries.ts";
-import { IN_FLIGHT_DELIVERY } from "./delivery-states.ts";
+import { jobStateSql, launchedJobSql, loseSilentJobs, startedAtSql } from "./jobs.ts";
+import { chaseIntake, dueBatches, hasInFlightDelivery, remind } from "./deliveries.ts";
 import { escalationText, told, UNRECOVERABLE, unrecoverable } from "./incident-escalation.ts";
 import { liveStateSql } from "./incident-lifecycle.ts";
 import { incidentFrom, LIVE_INCIDENT, roleOf } from "./incident-store.ts";
@@ -13,7 +12,7 @@ import { reconcileIncidents, watchdogIncident } from "./incidents.ts";
 import { describe, labelOf, nextStep } from "./incident-text.ts";
 import { remaining } from "./incident-kinds.ts";
 import { replyNudges } from "./replies.ts";
-import { finishedOpen, idleNow, resting } from "./status.ts";
+import { finishedOpen, idleNow, resting, type Finish } from "./status.ts";
 import { addEntry, getCard, loadOpenCards, mainLane, workerOf, type Loaded } from "./store.ts";
 import { type Timings } from "./timing.ts";
 import { actingLane, bundleMatches, minutesSince } from "./bundle.ts";
@@ -86,7 +85,7 @@ const WORKER_RULES: readonly {
 
 const IDLE_WORKERS = (
   ids: readonly number[],
-): string => `SELECT w.card AS card, w.lane AS lane, w.seen AS seen,
+): string => `SELECT w.card AS card, w.lane AS lane, w.seen AS seen, w.session AS session,
     coalesce((SELECT max(created_at) FROM entries WHERE card = w.card AND author LIKE 'worker:%'), 0) AS spoke,
     (SELECT max(created_at) FROM entries WHERE card = w.card AND author = 'check'
       AND json_extract(fields, '$.condition') = 'worker-idle-nudge') AS nudged,
@@ -96,8 +95,7 @@ const IDLE_WORKERS = (
         WHERE card = w.card AND author LIKE 'worker:%'), 0)) AS ignored
   FROM (${workerCards(ids)}) w
   WHERE ${quietSql("w.state", "w.attemptId")}
-    AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}
-    AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session = w.session AND d.state IN (${IN_FLIGHT_DELIVERY}))`;
+    AND NOT ${LIVE_INCIDENT.replace("SESSION", "w.session")}`;
 
 const NUDGE_TEXT =
   "you went idle without reporting. If the work is done or you are stuck, call report now with the right status. If you are still working, carry on and report when you reach a handoff.";
@@ -145,9 +143,10 @@ function idleMatches(db: DatabaseSync, ids: readonly number[], now: number, t: T
     const seen = Number(row["seen"]);
     const nudged = typeof row["nudged"] === "number" ? row["nudged"] : 0;
     const ignored = typeof row["ignored"] === "number" ? row["ignored"] : undefined;
-    const settled = now - seen >= t.idleNudge;
+    if (now - seen < t.idleNudge || hasInFlightDelivery(db, String(row["session"]), card))
+      return [];
     const nudge: Match[] =
-      settled && (ignored === undefined || nudged < seen)
+      ignored === undefined || nudged < seen
         ? [
             {
               card,
@@ -160,8 +159,7 @@ function idleMatches(db: DatabaseSync, ids: readonly number[], now: number, t: T
             },
           ]
         : [];
-    const tier =
-      ignored === undefined || !settled ? 0 : repeatTier(now - ignored, t.idleTell, t.repeat);
+    const tier = ignored === undefined ? 0 : repeatTier(now - ignored, t.idleTell, t.repeat);
     const text = "worker idle without a handoff, and it did not act on a nudge";
     return [
       ...nudge,
@@ -198,12 +196,14 @@ function withIncidents(
   });
 }
 
-function closeAdvice(kind: string, merged: boolean, hasPr: boolean, delivery: unknown): string {
-  if (merged) return "Close it now with close(card, summary).";
+function closeAdvice(kind: string, finish: Finish, hasPr: boolean, delivery: unknown): string {
+  if (finish.merged) return "Close it now with close(card, summary).";
   if (delivery === "ops")
-    return "Closing an ops card is not available yet: leave it open. Do not call close, with or without confirm=true or landed=false.";
+    return "Its worker handed over the evidence report. Close it with close(card, summary): if close warns about commits or files left in the worktree, call close again with confirm=true to archive them. If the operation did not happen and will not, close(card, summary=<why>, landed=false).";
   if (kind === "ship" && delivery === "local-only")
-    return "Its branch lands on the local base branch when you close it: once the landing is authorized (yolo on, or the captain's word for it), close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
+    return finish.emptyBranch
+      ? "Nothing lands from its empty branch. Close it now with close(card, summary); no landing approval is needed."
+      : "Its branch lands on the local base branch when you close it: once the landing is authorized (yolo on, or the captain's word for it), close(card, summary). If it will not land, close(card, summary=<why>, landed=false).";
   if (kind === "scout")
     return "Relay the findings, then close it with close(card, summary, next=<build, decision, or drop>): the findings need a ship card that builds them, a decision of the captain's that waits on a card, or the reason that nothing is built. Use close(card, summary=<why>, landed=false) if it did not land.";
   if (kind !== "ship")
@@ -232,14 +232,14 @@ function finishedMatches(
     status: string;
     since: number;
   },
-  finish: { merged: boolean; at: number },
+  finish: Finish,
   now: number,
   t: Timings,
 ): Match[] {
   const since = Math.max(card.since, finish.at);
   const tier = repeatTier(now - since, t.chase, t.chase);
   if (tier === 0) return [];
-  const close = closeAdvice(card.kind, finish.merged, card.pr !== null, card.delivery);
+  const close = closeAdvice(card.kind, finish, card.pr !== null, card.delivery);
   const waited = `${card.status}, ${String(minutesSince(now, since))} min`;
   const text = `reminder: c-${String(card.id)} is finished and still open (${waited}). ${close}`;
   return [{ card: card.id, lane: card.lane, condition: "finished", text, tier }];
@@ -306,7 +306,14 @@ function lostJobMatches(db: DatabaseSync, now: number, t: Timings): Match[] {
      FROM jobs j JOIN attempts a ON a.id = j.attempt JOIN cards c ON c.id = a.card
      WHERE ${jobStateSql("j.state", "lost")} AND j.dropped_at IS NULL AND a.state IN ('starting', 'active')
        AND NOT EXISTS (SELECT 1 FROM jobs later
-         WHERE later.attempt = j.attempt AND later.label = j.label AND later.id > j.id)
+         WHERE later.attempt = j.attempt AND later.label = j.label
+           AND (${startedAtSql("later")} > ${startedAtSql("j")}
+             OR (${startedAtSql("later")} = ${startedAtSql("j")} AND later.id > j.id))
+           AND ${launchedJobSql("later")}
+           AND NOT EXISTS (SELECT 1 FROM entries result
+             WHERE result.card = a.card AND result.author = 'job:' || later.id
+               AND result.kind = 'job-result'
+               AND json_type(result.fields, '$.commandNotStarted') = 'true'))
      ORDER BY j.id`,
   ).flatMap((row) => {
     const tier = repeatTier(now - Number(row["since"]), t.repeat, t.repeat);
@@ -453,6 +460,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLo
       })
       .map(({ card }) => card.id),
   );
+  const incidentNotices = reconcileIncidents(db, now, t);
   const checks = [
     ...withIncidents(db, workerMatches(db, open, now, t), now, t),
     ...finishedCards(open, t),
@@ -476,7 +484,7 @@ export function runCheck(db: DatabaseSync, now: number, t: Timings, grace: JobLo
     ...scheduledWakes(db, t.wall()),
     ...firedSchedules(db, t.wall()),
     ...dueBatches(db, { now: t.wall(), window: t.batch }),
-    ...reconcileIncidents(db, now, t),
+    ...incidentNotices,
     ...lostMates(db, now, t),
     ...expireMaintenance(db, now, t),
     ...replyNudges(db, open, now, t),

@@ -102,6 +102,14 @@ test("fleet up refuses a missing gh executable and leaves the mate down", () => 
   assert.equal(status(), "cleo: down\n");
 });
 
+test("fleet up refuses a host without bun and names the version and the fix", () => {
+  assert.equal(
+    refusal(["up"], { PATH: pathWithout("bun") }),
+    `bun is missing on ${HOST}. Fix: install bun 1.3.13 or later: brew install oven-sh/bun/bun (macOS), or see https://bun.sh/docs/installation\n`,
+  );
+  assert.equal(status(), "cleo: down\n");
+});
+
 interface GhStub {
   readonly plain: { readonly code: number; readonly stderr: string } | "hang" | "killed";
   readonly json?: string;

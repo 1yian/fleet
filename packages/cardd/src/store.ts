@@ -5,6 +5,7 @@ import {
   CardSchema,
   check,
   DELIVERIES,
+  JOB_RUNNING,
   type Activity,
   type Card,
   type Delivery,
@@ -12,7 +13,9 @@ import {
 } from "@fleet/protocol";
 import Type from "typebox";
 import { yoloFor } from "./authority.ts";
-import { standingFrom, type Standing } from "./status.ts";
+import { retireNoticeDeliveries } from "./delivery-states.ts";
+import { acceptsRestartNotice, affectsStanding, standingFrom, type Standing } from "./status.ts";
+import { listProjects } from "./projects.ts";
 
 export interface Session {
   readonly id: string;
@@ -33,15 +36,8 @@ const CardRowSchema = Type.Omit(CardSchema, ["status", "updatedAt"]);
 const CARD_JSON = `json_object('id', id, 'name', CASE name WHEN '' THEN 'c-' || id ELSE name END, 'title', title, 'lane', lane, 'project', coalesce(project, historical_project),
   'kind', kind, 'revision', revision, 'pr', pr, 'delivery', delivery, 'intent', intent, 'spec', spec,
   'createdAt', created_at)`;
-const STREAM_KINDS: ReadonlySet<string> = new Set([
-  "comment",
-  "report",
-  "hold",
-  "release",
-  "answer",
-  "cleanup",
-  "review-feedback",
-]);
+const RESTART_NOTICE_ENTRIES = `SELECT id, card FROM entries WHERE card = ? AND kind = 'comment'
+  AND json_type(fields, '$.restartNotice') = 'integer'`;
 export const ENTRY_JSON = `json_object('id', e.id, 'card', e.card, 'author', e.author, 'kind', e.kind,
   'body', e.body, 'fields', json(e.fields), 'createdAt', e.created_at)`;
 const SESSION_JSON = `json_object('id', s.id, 'role', s.role, 'lane', s.lane, 'card', a.card,
@@ -155,31 +151,36 @@ export function reachable(
 export const isLaneCard = (db: DatabaseSync, card: Card): boolean =>
   laneCardOf(db, card.lane) === card.id;
 
-export function addProject(
-  db: DatabaseSync,
-  project: {
-    name: string;
-    delivery: string;
-    clones: Record<string, string>;
-    yolo: boolean;
-    repo: string | null;
-  },
-): void {
+interface NewProject {
+  name: string;
+  delivery: string;
+  clones: Record<string, string>;
+  yolo: boolean;
+  repo: string | null;
+}
+
+export function insertProjectIfMissing(db: DatabaseSync, project: NewProject): boolean {
   if (project.delivery === "ops")
     throw new Error("ops is card-only: project changes keep their registered delivery mode");
-  if (db.prepare("SELECT 1 FROM projects WHERE name = ?").get(project.name) !== undefined)
+  const { changes } = db
+    .prepare(
+      "INSERT INTO projects (name, delivery, clones, yolo, repo) VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO NOTHING",
+    )
+    .run(
+      project.name,
+      project.delivery,
+      JSON.stringify(project.clones),
+      project.yolo ? 1 : 0,
+      project.repo,
+    );
+  return changes !== 0;
+}
+
+export function addProject(db: DatabaseSync, project: NewProject): void {
+  if (!insertProjectIfMissing(db, project))
     throw new Error(
       `project ${project.name} is already in the registry: project list shows it. project clone adds a host's clone, and project repo, delivery, and yolo change the rest`,
     );
-  db.prepare(
-    "INSERT INTO projects (name, delivery, clones, yolo, repo) VALUES (?, ?, ?, ?, ?)",
-  ).run(
-    project.name,
-    project.delivery,
-    JSON.stringify(project.clones),
-    project.yolo ? 1 : 0,
-    project.repo,
-  );
 }
 
 export function setClone(db: DatabaseSync, project: string, host: string, path: string): void {
@@ -286,10 +287,10 @@ function loaded(db: DatabaseSync, row: unknown, now: number): Loaded {
   return { card, entries, standing };
 }
 
-export function loadCard(db: DatabaseSync, id: number): Loaded {
+export function loadCard(db: DatabaseSync, id: number, now = Date.now()): Loaded {
   const [row] = json(db, `SELECT ${CARD_JSON} AS j FROM cards WHERE id = ?`, id);
   if (row === undefined) throw new Error(`no card c-${String(id)}`);
-  return loaded(db, row, Date.now());
+  return loaded(db, row, now);
 }
 
 export function loadCards(db: DatabaseSync): Loaded[] {
@@ -394,8 +395,14 @@ export function addEntry(
       "INSERT INTO entries (card, author, kind, body, fields, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .run(entry.card, entry.author, entry.kind, entry.body, JSON.stringify(entry.fields), now);
-  if (STREAM_KINDS.has(entry.kind))
+  if (affectsStanding(entry.kind)) {
     db.prepare("UPDATE cards SET revision = revision + 1 WHERE id = ?").run(entry.card);
+    if (
+      db.prepare(`${RESTART_NOTICE_ENTRIES} LIMIT 1`).get(entry.card) !== undefined &&
+      !acceptsRestartNotice(loadCard(db, entry.card, now), now)
+    )
+      db.prepare(retireNoticeDeliveries(RESTART_NOTICE_ENTRIES)).run(now, entry.card);
+  }
   const deliver = db.prepare(
     "INSERT INTO deliveries (session, entry, state, updated_at) VALUES (?, ?, 'pending', ?)",
   );
@@ -425,7 +432,9 @@ export function activityOf(db: DatabaseSync, card: Card, lane: boolean): Activit
         .get(card.lane)
     : db
         .prepare(
-          `SELECT s.state AS state, coalesce(s.last_seen, a.created_at) AS at
+          `SELECT iif(s.state = 'idle' AND EXISTS (SELECT 1 FROM jobs j
+                 WHERE j.attempt = a.id AND j.state = '${JOB_RUNNING}'), 'waiting', s.state) AS state,
+             coalesce(s.last_seen, a.created_at) AS at
            FROM sessions s JOIN attempts a ON a.id = s.attempt
            WHERE a.card = ? AND a.state IN ('starting', 'active') AND s.state <> 'closed'`,
         )
@@ -468,31 +477,4 @@ export function mainLane(db: DatabaseSync): string {
   const name = db.prepare("SELECT name FROM lanes WHERE parent IS NULL").get()?.["name"];
   if (typeof name !== "string") throw new Error("there is no main lane");
   return name;
-}
-
-interface Project {
-  readonly name: string;
-  readonly delivery: string;
-  readonly base: string;
-  readonly clones: { host: string; path: string }[];
-  readonly yolo: boolean;
-}
-
-export function listProjects(db: DatabaseSync): Project[] {
-  return db
-    .prepare(
-      "SELECT name, delivery, default_base AS base, clones, yolo FROM projects ORDER BY name",
-    )
-    .all()
-    .map((row) => {
-      const clones: unknown = JSON.parse(String(row["clones"]));
-      const paths = typeof clones === "object" && clones !== null ? Object.entries(clones) : [];
-      return {
-        name: String(row["name"]),
-        delivery: String(row["delivery"]),
-        base: String(row["base"]),
-        clones: paths.map(([host, path]) => ({ host, path: String(path) })),
-        yolo: row["yolo"] === 1,
-      };
-    });
 }

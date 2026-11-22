@@ -14,13 +14,13 @@ The project's `AGENTS.md` and `CONTRIBUTING.md`, as applicable, govern the work 
 ## Setup
 
 1. `pwd -P` and `git rev-parse --show-toplevel` must both be your own copy of the project. If not, report `blocked` ("launched outside an isolated copy") and stop.
-2. Unless you are a scout or your Delivery is ops, name your task branch first with `branch(name)`: `<type>/<slug>`, a conventional-commit type and a 2 to 5 word kebab-case summary, not the card number. Pick another slug if it is refused.
+2. Unless you are a scout, your Delivery is ops, or your local-only task delivers only an artifact, name your task branch first with `branch(name)`: `<type>/<slug>`, a conventional-commit type and a 2 to 5 word kebab-case summary, not the card number. Pick another slug if it is refused.
 
 ## Rules
 
 1. **Merging.** Never push to the default branch or merge on your own. Merge only when your mate's comment says so and the required checks are green: `gh pr merge <url> --squash`, then report `merged` with `pr=<url>`. Red or pending checks, or a failed merge: report `blocked` with the reason. A merge conflict: resolve it as rule 9 says and report `done` again.
 2. **One PR per card.** In a PR delivery mode (never ops or report), open it from your task branch and pass `pr=<full https URL>` on `done` and `merged`. If the work needs a second PR, tell your mate before opening it, never report a second URL on this card, and, if your worktree already holds changes meant for the second PR, do not merge until your mate says they are safe on their own card.
-3. **Files.** Edit only your copy, and leave it clean before `done`. Scratch output (builds, clones, temp files) goes in `$TMPDIR`. Evidence for your mate or the captain goes in `$FLEET_SCRATCH`, left in place at its original path when the card closes. Never put large folders in `/tmp`. Updated mates and host tools never move or remove scratch, but unreloaded mates and old host tools still can during a rolling update, and a current checkout does not prove a mate reloaded.
+3. **Files.** Edit only your copy, and leave it clean before `done`. For a local-only artifact task, you may write only the final artifact at the destination explicitly authorized for that task, never in another worktree. Scratch output (builds, clones, temp files) goes in `$TMPDIR`. Evidence for your mate or the captain goes in `$FLEET_SCRATCH`, left in place at its original path when the card closes. Never put large folders in `/tmp`. Updated mates and host tools never move or remove scratch, but unreloaded mates and old host tools still can during a rolling update, and a current checkout does not prove a mate reloaded.
 4. **Reports.** One short line each, sparingly. Anything longer goes in a file in `$FLEET_SCRATCH`, and the report names its absolute path without restating it. Statuses:
    - `working`: a phase change your mate would act on. It never ends your turn.
    - `in-review`: you started no-mistakes.
@@ -65,7 +65,11 @@ The pipeline rebases for you: never rebase by hand. While a run is active, never
 
 ## Delivery: local-only
 
-Never push or open a PR. Your mate lands your branch on the clone's local base branch.
+Never push or open a PR.
+
+If the task delivers only an artifact, leave the branch and working copy unchanged. Save the final artifact at the destination explicitly authorized for the task, or in `$FLEET_SCRATCH` if none is specified. Play, run, or open the actual result, then report `done` with its absolute path and what you verified. If the check fails, fix the artifact or report the blocker. Do not commit or ask for a branch to land.
+
+For repository changes, your mate lands your branch on the clone's local base branch.
 
 1. Commit the change on your task branch, as a clean fast-forward of the local base branch: if the base moved, `git rebase <base>` with no fetch.
 2. Run the full checks from the applicable project guides, end-to-end suite included, since no CI runs. Fix what they find.
@@ -78,7 +82,7 @@ You perform an approved operation, not a product change. No PR, commit, push, or
 1. Perform the operation on the authorized targets only, and verify the resulting state. Change no project files. If product changes are needed, report `blocked` with the evidence.
 2. Write a report directly in `$FLEET_SCRATCH`, such as `$FLEET_SCRATCH/operation.md`: a regular file outside the worktree, not in its `tmp` folder or `/tmp`. The fleet checks only its path shape and never reads it. Record what you did, the targets, before and after state, and remaining work. No secrets. If `$FLEET_SCRATCH` is empty, report `blocked`.
 3. If `git status --short` or commits off the base show changes, report `blocked` with the paths. Never commit, discard, or push them.
-4. Report `done` with text "operation complete: <one-line summary>" and `evidence=<absolute report path>`, with no `pr`. The path goes only in `evidence`. Stop. Closing an ops card is not available yet, so your card stays open for your mate. A steer from your mate after your handoff cancels it: report `done` again.
+4. Report `done` with text "operation complete: <one-line summary>" and `evidence=<absolute report path>`, with no `pr`. The path goes only in `evidence`. Stop. Your mate closes the card as Done once it reads the handoff. A steer from your mate after your handoff cancels it: report `done` again.
 
 ## Delivery: report
 

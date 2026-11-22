@@ -13,6 +13,7 @@ import { applyCacheBreakLog } from "./cache-breaks.ts";
 import { applyCachePolicy } from "./cache-policy.ts";
 import { applyCompactionBackoff } from "./compaction-backoff.ts";
 import { applyCompactionPolicy } from "./compaction-policy.ts";
+import { startDiscordBridge } from "./discord/bridge.ts";
 import { Complaints } from "./complaints.ts";
 import { applyContextPolicy } from "./context-policy.ts";
 import { refreshEveryCloneOnFirstConnect } from "./clones.ts";
@@ -21,7 +22,8 @@ import { Failures } from "./failure.ts";
 import { format, idsInSessionFile } from "./inbox.ts";
 import { closeMerged, isMergedReport } from "./auto-close.ts";
 import { registerIntake } from "./intake.ts";
-import { Jobs, registerDropJob } from "./jobs.ts";
+import { registerDropJob } from "./job-tools.ts";
+import { Jobs } from "./jobs.ts";
 import { enableCodemode } from "./codemode.ts";
 import type { Bws, BwsConfig } from "./bws.ts";
 import {
@@ -254,8 +256,21 @@ function tellUnreadable(pi: ExtensionAPI, error: string, reloading: boolean): vo
   );
 }
 
-function workerTools(pi: ExtensionAPI, link: Link, cardd: { url: string; token: string }): Jobs {
-  const jobs = new Jobs(link, cardd);
+function workerTools(
+  pi: ExtensionAPI,
+  link: Link,
+  cardd: { url: string; token: string },
+  runInProgress: () => boolean,
+): Jobs {
+  const warn = (text: string): void => {
+    pi.sendMessage(
+      { customType: "fleet-job-cleanup", content: `[fleet] ${text}`, display: true },
+      { triggerTurn: false },
+    );
+  };
+  const jobs = new Jobs(link, cardd, warn, () => {
+    if (!runInProgress()) link.activity(jobs.waiting ? "waiting" : "idle");
+  });
   jobs.register(pi);
   registerBranch(pi, link);
   return jobs;
@@ -274,22 +289,6 @@ function sendEntry(
   pi.sendMessage(
     { customType: "fleet", content, display: true, details: { entryId: entry.id } },
     { triggerTurn: entry.fields["compaction"] !== true, deliverAs: mode },
-  );
-}
-
-function deliverAfterSync(
-  jobs: Jobs,
-  seen: Set<number>,
-  id: number,
-  deliver: (extra: string) => void,
-): void {
-  jobs.sync().then(
-    () => {
-      deliver("");
-    },
-    () => {
-      seen.delete(id);
-    },
   );
 }
 
@@ -366,11 +365,12 @@ function start(
     };
     const mateWork = role === "mate" ? afterEntry(link, entry) : undefined;
     if (mateWork !== undefined) void mateWork.then(deliver);
-    else if (entry.kind === "job-result" && jobs !== undefined)
-      deliverAfterSync(jobs, seen, entry.id, deliver);
-    else deliver("");
+    else {
+      if (entry.kind === "job-result") jobs?.observeResult(entry);
+      deliver("");
+    }
   };
-  const jobs = role === "worker" ? workerTools(pi, link, { url, token }) : undefined;
+  const jobs = role === "worker" ? workerTools(pi, link, { url, token }, runInProgress) : undefined;
   registerDropJob(pi, link);
   registerGuard(pi);
   const failures = new Failures(link);
@@ -397,6 +397,7 @@ function start(
   if (lane === "main") {
     refreshEveryCloneOnFirstConnect(pi, link);
     registerUpdate(pi, HOME(), link);
+    startDiscordBridge(pi, HOME(), ctx);
   }
   maintenance.queue = new MaintenanceQueue(pi, link, ctx, role === "worker", stow, { url, token });
   applyPolicies(pi, ctx, role);
@@ -422,6 +423,10 @@ export default function fleet(pi: ExtensionAPI): void {
   pi.registerFlag("fleet-avoid", {
     type: "string",
     description: "Comma-separated providers the model router must skip",
+  });
+  pi.registerFlag("fleet-process", {
+    type: "string",
+    description: "The process id this launch announces to cardd",
   });
   pi.registerFlag("fleet-url", { type: "string", description: "The cardd websocket URL" });
   pi.registerFlag("fleet-token", { type: "string", description: "This session's cardd token" });

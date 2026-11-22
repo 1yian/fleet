@@ -1,13 +1,25 @@
 {
   "categories": {
-    "correctness": "off"
+    "correctness": "error",
+    "suspicious": "error",
+    "pedantic": "error",
+    "perf": "error",
+    "style": "error",
+    "restriction": "error"
   },
-  "plugins": ["typescript", "eslint"],
+  "plugins": [
+    "typescript",
+    "eslint",
+    "unicorn",
+    "oxc",
+    "import",
+    "promise",
+    "node",
+    "react",
+    "react-perf",
+    "jsx-a11y"
+  ],
   "jsPlugins": [
-    {
-      "name": "eslint-js",
-      "specifier": "oxlint-plugin-eslint"
-    },
     {
       "name": "hooks-js",
       "specifier": "eslint-plugin-react-hooks"
@@ -34,59 +46,59 @@
     }
   },
   "rules": {
-    "eslint-js/for-direction": [2],
-    "eslint-js/no-async-promise-executor": [2],
-    "eslint-js/no-case-declarations": [2],
-    "eslint-js/no-compare-neg-zero": [2],
-    "eslint-js/no-cond-assign": [2, "except-parens"],
-    "eslint-js/no-constant-binary-expression": [
+    "eslint/for-direction": [2],
+    "eslint/no-async-promise-executor": [2],
+    "eslint/no-case-declarations": [2],
+    "eslint/no-compare-neg-zero": [2],
+    "eslint/no-cond-assign": [2, "except-parens"],
+    "eslint/no-constant-binary-expression": [
       2,
       {
         "checkRelationalComparisons": false
       }
     ],
-    "eslint-js/no-constant-condition": [
+    "eslint/no-constant-condition": [
       2,
       {
         "checkLoops": "allExceptWhileTrue"
       }
     ],
-    "eslint-js/no-control-regex": [2],
-    "eslint-js/no-debugger": [2],
-    "eslint-js/no-delete-var": [2],
-    "eslint-js/no-dupe-else-if": [2],
-    "eslint-js/no-duplicate-case": [2],
-    "eslint-js/no-empty": [
+    "eslint/no-control-regex": [2],
+    "eslint/no-debugger": [2],
+    "eslint/no-delete-var": [2],
+    "eslint/no-dupe-else-if": [2],
+    "eslint/no-duplicate-case": [2],
+    "eslint/no-empty": [
       2,
       {
         "allowEmptyCatch": false
       }
     ],
-    "eslint-js/no-empty-character-class": [2],
-    "eslint-js/no-empty-pattern": [
+    "eslint/no-empty-character-class": [2],
+    "eslint/no-empty-pattern": [
       2,
       {
         "allowObjectPatternsAsParameters": false
       }
     ],
-    "eslint-js/no-empty-static-block": [2],
-    "eslint-js/no-ex-assign": [2],
-    "eslint-js/no-extra-boolean-cast": [2, {}],
-    "eslint-js/no-fallthrough": [
+    "eslint/no-empty-static-block": [2],
+    "eslint/no-ex-assign": [2],
+    "eslint/no-extra-boolean-cast": [2, {}],
+    "eslint/no-fallthrough": [
       2,
       {
         "allowEmptyCase": false,
         "reportUnusedFallthroughComment": false
       }
     ],
-    "eslint-js/no-global-assign": [
+    "eslint/no-global-assign": [
       2,
       {
         "exceptions": []
       }
     ],
-    "eslint-js/no-invalid-regexp": [2, {}],
-    "eslint-js/no-irregular-whitespace": [
+    "eslint/no-invalid-regexp": [2, {}],
+    "eslint/no-irregular-whitespace": [
       2,
       {
         "skipComments": false,
@@ -96,82 +108,80 @@
         "skipTemplates": false
       }
     ],
-    "eslint-js/no-loss-of-precision": [2],
-    "eslint-js/no-misleading-character-class": [
+    "eslint/no-loss-of-precision": [2],
+    "eslint/no-misleading-character-class": [
       2,
       {
         "allowEscape": false
       }
     ],
-    "eslint-js/no-nonoctal-decimal-escape": [2],
-    "eslint-js/no-octal": [2],
-    "eslint-js/no-prototype-builtins": [2],
-    "eslint-js/no-regex-spaces": [2],
-    "eslint-js/no-self-assign": [
+    "eslint/no-nonoctal-decimal-escape": [2],
+    "eslint/no-prototype-builtins": [2],
+    "eslint/no-regex-spaces": [2],
+    "eslint/no-self-assign": [
       2,
       {
         "props": true
       }
     ],
-    "eslint-js/no-shadow-restricted-names": [
+    "eslint/no-shadow-restricted-names": [
       2,
       {
         "reportGlobalThis": true
       }
     ],
-    "eslint-js/no-sparse-arrays": [2],
-    "eslint-js/no-unassigned-vars": [2],
-    "eslint-js/no-unexpected-multiline": [2],
-    "eslint-js/no-unreachable": [2],
-    "eslint-js/no-unsafe-finally": [2],
-    "eslint-js/no-unsafe-optional-chaining": [
+    "eslint/no-sparse-arrays": [2],
+    "eslint/no-unassigned-vars": [2],
+    "eslint/no-unexpected-multiline": [2],
+    "eslint/no-unreachable": [2],
+    "eslint/no-unsafe-finally": [2],
+    "eslint/no-unsafe-optional-chaining": [
       2,
       {
         "disallowArithmeticOperators": false
       }
     ],
-    "eslint-js/no-unused-labels": [2],
-    "eslint-js/no-unused-private-class-members": [2],
-    "eslint-js/no-useless-assignment": [2],
-    "eslint-js/no-useless-backreference": [2],
-    "eslint-js/no-useless-catch": [2],
-    "eslint-js/no-useless-escape": [
+    "eslint/no-unused-labels": [2],
+    "eslint/no-unused-private-class-members": [2],
+    "eslint/no-useless-assignment": [2],
+    "eslint/no-useless-backreference": [2],
+    "eslint/no-useless-catch": [2],
+    "eslint/no-useless-escape": [
       2,
       {
         "allowRegexCharacters": []
       }
     ],
-    "eslint-js/preserve-caught-error": [
+    "eslint/preserve-caught-error": [
       2,
       {
-        "requireCatchParameter": false,
-        "errorClassNames": []
+        "requireCatchParameter": false
       }
     ],
-    "eslint-js/require-yield": [2],
-    "eslint-js/use-isnan": [
+    "eslint/require-yield": [2],
+    "eslint/use-isnan": [
       2,
       {
         "enforceForIndexOf": false,
         "enforceForSwitchCase": true
       }
     ],
-    "eslint-js/valid-typeof": [
+    "eslint/valid-typeof": [
       2,
       {
         "requireStringLiterals": false
       }
     ],
-    "eslint-js/no-var": [2],
-    "eslint-js/prefer-const": [
+    "eslint/no-var": [2],
+    "eslint/prefer-const": [
       2,
       {
         "destructuring": "any",
         "ignoreReadBeforeAssign": false
       }
     ],
-    "eslint-js/prefer-rest-params": [2],
-    "eslint-js/prefer-spread": [2],
+    "eslint/prefer-rest-params": [2],
+    "eslint/prefer-spread": [2],
     "typescript/await-thenable": [2],
     "typescript/ban-ts-comment": [
       2,
@@ -348,8 +358,8 @@
       }
     ],
     "typescript/consistent-type-imports": [2],
-    "eslint-js/complexity": [2, 10],
-    "eslint-js/max-lines": [
+    "eslint/complexity": [2, 10],
+    "eslint/max-lines": [
       2,
       {
         "max": 500,
@@ -357,7 +367,7 @@
         "skipComments": false
       }
     ],
-    "eslint-js/max-lines-per-function": [
+    "eslint/max-lines-per-function": [
       2,
       {
         "max": 100,
@@ -365,9 +375,164 @@
         "skipComments": false
       }
     ],
-    "eslint-js/max-depth": [2, 3],
-    "eslint-js/max-nested-callbacks": [2, 3],
-    "eslint-js/eqeqeq": [2, "always"]
+    "eslint/max-depth": [2, 3],
+    "eslint/max-nested-callbacks": [2, 3],
+    "eslint/eqeqeq": [2, "always"],
+    "eslint/accessor-pairs": "off",
+    "eslint/arrow-body-style": "off",
+    "eslint/class-methods-use-this": "off",
+    "eslint/curly": "off",
+    "eslint/default-case": "off",
+    "eslint/func-names": "off",
+    "eslint/func-style": "off",
+    "eslint/id-length": "off",
+    "eslint/init-declarations": "off",
+    "eslint/logical-assignment-operators": "off",
+    "eslint/max-classes-per-file": "off",
+    "eslint/max-params": "off",
+    "eslint/max-statements": "off",
+    "eslint/new-cap": "off",
+    "eslint/no-await-in-loop": "off",
+    "eslint/no-bitwise": "off",
+    "eslint/no-console": "off",
+    "eslint/no-continue": "off",
+    "eslint/no-duplicate-imports": "off",
+    "eslint/no-loop-func": "off",
+    "eslint/no-magic-numbers": "off",
+    "eslint/no-negated-condition": "off",
+    "eslint/no-nested-ternary": "off",
+    "eslint/no-new": "off",
+    "eslint/no-plusplus": "off",
+    "eslint/no-promise-executor-return": "off",
+    "eslint/no-redeclare": "off",
+    "eslint/no-shadow": "off",
+    "eslint/no-template-curly-in-string": "off",
+    "eslint/no-ternary": "off",
+    "eslint/no-undefined": "off",
+    "eslint/no-underscore-dangle": "off",
+    "eslint/no-unmodified-loop-condition": "off",
+    "eslint/no-use-before-define": "off",
+    "eslint/no-useless-return": "off",
+    "eslint/no-void": "off",
+    "eslint/one-var": "off",
+    "eslint/prefer-destructuring": "off",
+    "eslint/prefer-named-capture-group": "off",
+    "eslint/prefer-regex-literals": "off",
+    "eslint/prefer-template": "off",
+    "eslint/require-await": "off",
+    "eslint/require-unicode-regexp": "off",
+    "eslint/sort-imports": "off",
+    "eslint/sort-keys": "off",
+    "import/consistent-type-specifier-style": "off",
+    "import/exports-last": "off",
+    "import/group-exports": "off",
+    "import/max-dependencies": "off",
+    "import/no-anonymous-default-export": "off",
+    "import/no-commonjs": "off",
+    "import/no-default-export": "off",
+    "import/no-duplicates": "off",
+    "import/no-mutable-exports": "off",
+    "import/no-named-as-default": "off",
+    "import/no-named-export": "off",
+    "import/no-nodejs-modules": "off",
+    "import/no-relative-parent-imports": "off",
+    "import/no-unassigned-import": "off",
+    "import/prefer-default-export": "off",
+    "import/unambiguous": "off",
+    "jsx-a11y/click-events-have-key-events": "off",
+    "jsx-a11y/no-autofocus": "off",
+    "jsx-a11y/no-noninteractive-element-interactions": "off",
+    "jsx-a11y/prefer-tag-over-role": "off",
+    "node/no-process-env": "off",
+    "node/no-sync": "off",
+    "node/no-top-level-await": "off",
+    "oxc/branches-sharing-code": "off",
+    "oxc/no-async-await": "off",
+    "oxc/no-barrel-file": "off",
+    "oxc/no-map-spread": "off",
+    "oxc/no-optional-chaining": "off",
+    "oxc/no-rest-spread-properties": "off",
+    "promise/always-return": "off",
+    "promise/avoid-new": "off",
+    "promise/catch-or-return": "off",
+    "promise/no-promise-in-callback": "off",
+    "promise/param-names": "off",
+    "promise/prefer-await-to-callbacks": "off",
+    "promise/prefer-await-to-then": "off",
+    "promise/prefer-catch": "off",
+    "react-perf/jsx-no-new-array-as-prop": "off",
+    "react-perf/jsx-no-new-function-as-prop": "off",
+    "react-perf/jsx-no-new-object-as-prop": "off",
+    "react/exhaustive-effect-dependencies": "off",
+    "react/jsx-filename-extension": "off",
+    "react/jsx-handler-names": "off",
+    "react/jsx-max-depth": "off",
+    "react/jsx-no-literals": "off",
+    "react/jsx-no-useless-fragment": "off",
+    "react/jsx-props-no-spreading": "off",
+    "react/no-array-index-key": "off",
+    "react/no-multi-comp": "off",
+    "react/react-in-jsx-scope": "off",
+    "typescript/consistent-return": "off",
+    "typescript/explicit-function-return-type": "off",
+    "typescript/explicit-member-accessibility": "off",
+    "typescript/explicit-module-boundary-types": "off",
+    "typescript/method-signature-style": "off",
+    "typescript/no-import-type-side-effects": "off",
+    "typescript/prefer-readonly": "off",
+    "typescript/prefer-readonly-parameter-types": "off",
+    "typescript/promise-function-async": "off",
+    "typescript/require-array-sort-compare": "off",
+    "typescript/strict-boolean-expressions": "off",
+    "typescript/strict-void-return": "off",
+    "unicorn/catch-error-name": "off",
+    "unicorn/consistent-existence-index-check": "off",
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/custom-error-definition": "off",
+    "unicorn/escape-case": "off",
+    "unicorn/explicit-length-check": "off",
+    "unicorn/filename-case": "off",
+    "unicorn/import-style": "off",
+    "unicorn/max-nested-calls": "off",
+    "unicorn/new-for-builtins": "off",
+    "unicorn/no-array-callback-reference": "off",
+    "unicorn/no-array-for-each": "off",
+    "unicorn/no-array-method-this-argument": "off",
+    "unicorn/no-array-reduce": "off",
+    "unicorn/no-array-reverse": "off",
+    "unicorn/no-array-sort": "off",
+    "unicorn/no-await-expression-member": "off",
+    "unicorn/no-immediate-mutation": "off",
+    "unicorn/no-negated-condition": "off",
+    "unicorn/no-nested-ternary": "off",
+    "unicorn/no-null": "off",
+    "unicorn/no-object-as-default-parameter": "off",
+    "unicorn/no-process-exit": "off",
+    "unicorn/no-useless-spread": "off",
+    "unicorn/no-useless-undefined": "off",
+    "unicorn/number-literal-case": "off",
+    "unicorn/numeric-separators-style": "off",
+    "unicorn/prefer-array-find": "off",
+    "unicorn/prefer-array-flat-map": "off",
+    "unicorn/prefer-at": "off",
+    "unicorn/prefer-code-point": "off",
+    "unicorn/prefer-default-parameters": "off",
+    "unicorn/prefer-dom-node-text-content": "off",
+    "unicorn/prefer-global-this": "off",
+    "unicorn/prefer-import-meta-properties": "off",
+    "unicorn/prefer-native-coercion-functions": "off",
+    "unicorn/prefer-number-coercion": "off",
+    "unicorn/prefer-query-selector": "off",
+    "unicorn/prefer-set-has": "off",
+    "unicorn/prefer-single-call": "off",
+    "unicorn/prefer-spread": "off",
+    "unicorn/prefer-string-raw": "off",
+    "unicorn/prefer-string-replace-all": "off",
+    "unicorn/prefer-ternary": "off",
+    "unicorn/prefer-type-error": "off",
+    "unicorn/relative-url-style": "off",
+    "unicorn/require-array-join-separator": "off",
+    "unicorn/switch-case-braces": "off"
   },
   "overrides": [
     {
@@ -395,10 +560,10 @@
     {
       "files": ["**/*.js", "**/*.cjs"],
       "rules": {
-        "eslint-js/no-var": "off",
-        "eslint-js/prefer-const": "off",
-        "eslint-js/prefer-rest-params": "off",
-        "eslint-js/prefer-spread": "off",
+        "eslint/no-var": "off",
+        "eslint/prefer-const": "off",
+        "eslint/prefer-rest-params": "off",
+        "eslint/prefer-spread": "off",
         "typescript/await-thenable": "off",
         "typescript/no-array-delete": "off",
         "typescript/no-base-to-string": "off",
@@ -450,43 +615,42 @@
         "typescript/prefer-regexp-exec": "off",
         "typescript/prefer-string-starts-ends-with": "off",
         "typescript/switch-exhaustiveness-check": "off",
-        "eslint-js/constructor-super": [2],
-        "eslint-js/getter-return": [
+        "eslint/constructor-super": [2],
+        "eslint/getter-return": [
           2,
           {
             "allowImplicit": false
           }
         ],
-        "eslint-js/no-class-assign": [2],
-        "eslint-js/no-const-assign": [2],
-        "eslint-js/no-dupe-args": [2],
-        "eslint-js/no-dupe-class-members": [2],
-        "eslint-js/no-dupe-keys": [2],
-        "eslint-js/no-func-assign": [2],
-        "eslint-js/no-import-assign": [2],
-        "eslint-js/no-new-native-nonconstructor": [2],
-        "eslint-js/no-obj-calls": [2],
-        "eslint-js/no-redeclare": [
+        "eslint/no-class-assign": [2],
+        "eslint/no-const-assign": [2],
+        "eslint/no-dupe-class-members": [2],
+        "eslint/no-dupe-keys": [2],
+        "eslint/no-func-assign": [2],
+        "eslint/no-import-assign": [2],
+        "eslint/no-new-native-nonconstructor": [2],
+        "eslint/no-obj-calls": [2],
+        "eslint/no-redeclare": [
           2,
           {
             "builtinGlobals": true
           }
         ],
-        "eslint-js/no-setter-return": [2],
-        "eslint-js/no-this-before-super": [2],
-        "eslint-js/no-undef": [
+        "eslint/no-setter-return": [2],
+        "eslint/no-this-before-super": [2],
+        "eslint/no-undef": [
           2,
           {
             "typeof": false
           }
         ],
-        "eslint-js/no-unsafe-negation": [
+        "eslint/no-unsafe-negation": [
           2,
           {
             "enforceForOrderingRelations": false
           }
         ],
-        "eslint-js/no-with": [2]
+        "eslint/no-with": [2]
       }
     },
     {
@@ -498,23 +662,13 @@
     {
       "files": ["e2e/**/*.ts"],
       "rules": {
-        "eslint-js/no-restricted-syntax": [
-          2,
-          {
-            "selector": "Literal[value=/\\b(pkill|killall)\\b/]",
-            "message": "Never kill a process by name in e2e code: one host runs the live herdr server, the lanes, and other workers' tests, and a name match kills them all. Stop only the lab session this test started, by its own --session name, or your own process by pid."
-          },
-          {
-            "selector": "TemplateElement[value.raw=/\\b(pkill|killall)\\b/]",
-            "message": "Never kill a process by name in e2e code: one host runs the live herdr server, the lanes, and other workers' tests, and a name match kills them all. Stop only the lab session this test started, by its own --session name, or your own process by pid."
-          }
-        ]
+        "fleet/no-kill-by-name": [2]
       }
     },
     {
       "files": ["e2e/extension/kill-guard.test.ts", "e2e/extension/no-browser.test.ts"],
       "rules": {
-        "eslint-js/no-restricted-syntax": "off"
+        "fleet/no-kill-by-name": "off"
       }
     }
   ]

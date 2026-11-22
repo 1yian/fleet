@@ -17,9 +17,7 @@ export function isWorkerWorkspace(row: Record<string, unknown>): boolean {
   );
 }
 
-export async function workspaceRootPane(
-  workspace: string,
-): Promise<Record<string, unknown> | undefined> {
+async function workspaceRootPane(workspace: string): Promise<Record<string, unknown> | undefined> {
   const panes = await herdr("local", ["pane", "list", "--workspace", workspace]);
   return records(panes["panes"])[0];
 }

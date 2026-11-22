@@ -29,8 +29,15 @@ if (command.includes("'scratch'")) {
   if (largest && listingFails()) process.stdout.write("the host is too busy to count\n");
   else process.stdout.write(readFileSync(largest ? `${usage}.largest` : usage, "utf8"));
 } else if (command.includes("'--maintenance'") && existsSync(brokenLanes)) {
-  process.stderr.write("fleet up: the workspace of ops has no pane\n");
-  process.exit(1);
+  const started = readFileSync(brokenLanes, "utf8") === "";
+  if (started) writeFileSync(brokenLanes, "initial sweep complete\n");
+  process.stdout.write(
+    `${JSON.stringify({
+      failed: "fleet up: could not create the workspace of ops",
+      expected: ["cleo", "ops"],
+      outcomes: started ? [{ lane: "cleo", action: "started" }] : [],
+    })}\n`,
+  );
 } else {
   const run = spawnSync("sh", ["-c", command], { encoding: "utf8" });
   process.stdout.write(run.stdout);

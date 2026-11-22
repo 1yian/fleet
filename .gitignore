@@ -3,6 +3,7 @@ node_modules
 /config/
 /data/
 /state/
+.env
 dist/
 *.db
 *.db-wal

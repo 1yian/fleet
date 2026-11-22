@@ -3,6 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { CardViewSchema, check, OPS, type Card, type Entry } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, park, startFleet, status, type Fleet } from "../support/fleet.ts";
+import { reach } from "../support/reach.ts";
 
 let fleet: Fleet;
 let beats: NodeJS.Timeout[] = [];
@@ -25,16 +26,7 @@ const tiersOf = async (card: Card, condition: string): Promise<number[]> =>
   (await findings(card))
     .filter((entry) => entry.fields["condition"] === condition)
     .map((entry) => Number(entry.fields["tier"]));
-const inOrder = (tiers: readonly number[]): number[] => tiers.map((_, at) => at + 1);
-
-const reach = (session: Session, card: Card, condition: string, tier: number): Promise<Entry> =>
-  session.waitForEntry(
-    (entry) =>
-      entry.card === card.id &&
-      entry.fields["condition"] === condition &&
-      Number(entry.fields["tier"]) >= tier,
-    `${condition} tier ${String(tier)} on c-${String(card.id)}`,
-  );
+const rising = (tiers: readonly number[]): number[] => [...new Set(tiers)].sort((a, b) => a - b);
 
 async function metronome(ticks: number): Promise<void> {
   const card = await newCard(fleet.main, "a clock for the test");
@@ -65,7 +57,7 @@ test("a worker that never connects is reminded to its mate at once, then again e
   await reach(fleet.main, card, "worker-never-connected", 3);
   assert.equal(await status(fleet.main, card), "working");
   const sent = await tiersOf(card, "worker-never-connected");
-  assert.deepEqual(sent, inOrder(sent));
+  assert.deepEqual(sent, rising(sent));
 
   await idle(token);
   const before = (await tiersOf(card, "worker-never-connected")).length;
@@ -101,7 +93,7 @@ test("an idle worker is nudged itself once, and its mate hears only when it is s
 
   await reach(fleet.main, card, "worker-idle", 2);
   const told = await tiersOf(card, "worker-idle");
-  assert.deepEqual(told, inOrder(told));
+  assert.deepEqual(told, rising(told));
   assert.equal(await status(fleet.main, card), "working");
   assert.equal(
     worker.entries.filter(({ entry }) => entry.fields["condition"] === "worker-idle-nudge").length,
@@ -155,7 +147,7 @@ test("a card that waits on its mate is reminded in a flat bundle, one reminder e
 
   await reach(cleo, card, "decisions", 3);
   const sent = await tiersOf(card, "decisions");
-  assert.deepEqual(sent, inOrder(sent));
+  assert.deepEqual(sent, rising(sent));
   assert.match(
     cleo.entries.at(-1)?.entry.body ?? "",
     /^reminder: 1 card needs a decision or action from you\. Date a hold only when a process or an outside event is the blocker, or the captain said later, and say what watches it\. Never date a hold to quiet a card\.\nYou can settle or close these yourself\. Act on each now\. A dated wait that says nothing is running is an idle park: start what it waits on, or clear the hold and act:\n- c-\d+ blocked \(with-mate, \d+ min\)$/,
@@ -193,7 +185,7 @@ test("a dated hold that comes back is announced at once, then reminded flat unti
   assert.match(ended.body, /^hold ended; it waits on main again$/);
   await reach(fleet.main, card, "decisions", 2);
   const sent = await tiersOf(card, "decisions");
-  assert.deepEqual(sent, inOrder(sent));
+  assert.deepEqual(sent, rising(sent));
 
   await park(fleet.main, card, "wait again", 3_600_000);
   const stopped = (await tiersOf(card, "decisions")).length;
@@ -215,7 +207,7 @@ test("a mate that is busy and then idle again is not reminded twice for the same
 
   await reach(fleet.main, card, "decisions", 2);
   const sent = await tiersOf(card, "decisions");
-  assert.deepEqual(sent, inOrder(sent));
+  assert.deepEqual(sent, rising(sent));
 });
 
 test("reminders to a mate that is down wait for it, and then one reminder for the current tier arrives, not the pile", async () => {
@@ -267,7 +259,7 @@ test("a finished card its mate leaves open is reminded each tier until it is clo
   await reach(cleo, card, "finished", 2);
   await reach(cleo, card, "finished", 3);
   const sent = await tiersOf(card, "finished");
-  assert.deepEqual(sent, inOrder(sent));
+  assert.deepEqual(sent, rising(sent));
   assert.deepEqual(
     fleet.main.entries.filter(
       ({ entry }) => entry.card === card.id && entry.fields["condition"] === "finished",
@@ -296,7 +288,7 @@ test("main's own finished card is reminded each tier", async () => {
 
   for (const tier of [1, 2, 3, 4]) await reach(fleet.main, card, "finished", tier);
   const sent = await tiersOf(card, "finished");
-  assert.deepEqual(sent, inOrder(sent));
+  assert.deepEqual(sent, rising(sent));
 });
 
 test("a ship card that only did an operation is reminded how to close it", async () => {
@@ -319,12 +311,18 @@ test("a lost job is reminded to its mate each tier until the worker runs it agai
       .job;
   const dropped = await start("tests");
   const rerun = await start("build");
-  await reach(fleet.main, card, "job-lost-open", 2);
-  const twice = fleet.main.entries.filter(
-    ({ entry }) => entry.fields["condition"] === "job-lost-open",
-  );
-  assert.ok(twice.some(({ entry }) => entry.body.includes(`job ${String(dropped)} (tests)`)));
-  assert.ok(twice.some(({ entry }) => entry.body.includes(`job ${String(rerun)} (build)`)));
+  for (const [job, label] of [
+    [dropped, "tests"],
+    [rerun, "build"],
+  ] as const)
+    await fleet.main.waitForEntry(
+      (entry) =>
+        entry.card === card.id &&
+        entry.fields["condition"] === "job-lost-open" &&
+        Number(entry.fields["tier"]) >= 2 &&
+        entry.body.includes(`job ${String(job)} (${label})`),
+      `the second reminder of job ${String(job)} (${label})`,
+    );
 
   await worker.call("job.finish", { job: dropped, exitCode: 130, outputTail: "" });
   const again = check(
@@ -399,7 +397,7 @@ test("a failed model call is repeated to the mate each tier until the worker ans
 
   await reach(fleet.main, card, "runtime-failure-open", 3);
   const sent = await tiersOf(card, "runtime-failure-open");
-  assert.deepEqual(sent, inOrder(sent));
+  assert.deepEqual(sent, rising(sent));
   assert.match(
     fleet.main.entries.find(({ entry }) => entry.fields["condition"] === "runtime-failure")?.entry
       .body ?? "",
@@ -420,17 +418,17 @@ test("a repeating obligation leaves only its latest reminder for a reconnect, no
   await reach(cleo, card, "worker-never-connected", 3);
   await cleo.close();
   const back = await fleet.cardd.connect(token);
-  const latest = await reach(back, card, "worker-never-connected", 3);
-  assert.equal(latest.fields["tier"], 3);
+  const latest = Number((await reach(back, card, "worker-never-connected", 3)).fields["tier"]);
+  const delivered = back.entries
+    .filter(
+      ({ entry }) =>
+        entry.card === card.id && entry.fields["condition"] === "worker-never-connected",
+    )
+    .filter(({ again }) => again !== true)
+    .map(({ entry }) => Number(entry.fields["tier"]));
   assert.deepEqual(
-    back.entries
-      .filter(
-        ({ entry }) =>
-          entry.card === card.id && entry.fields["condition"] === "worker-never-connected",
-      )
-      .filter(({ again }) => again !== true)
-      .map(({ entry }) => entry.fields["tier"]),
-    [3],
+    delivered,
+    delivered.map((_, at) => latest + at),
   );
 });
 

@@ -131,6 +131,36 @@ test("the mate's next action reaches main once", async () => {
   assert.deepEqual(words(fleet.main), [["mate:leo", "Steered the worker"]]);
 });
 
+test("a pre-launch restart notice reaches only the worker and leaves the mate's first-action echo intact", async () => {
+  const { card, worker } = await leoCardWithWorker();
+  const { main } = fleet;
+  const ask = "Replace the worker and let me know what happened.";
+  await main.call("comment", { card: card.id, text: ask });
+  await leo.waitForEntry((entry) => entry.body === ask, "main's restart request");
+  const { request } = check(
+    OPS["card.restart"].result,
+    await leo.call("card.restart", { card: card.id, mode: "replace", key: "replace" }),
+  );
+  assert.ok(request !== undefined);
+  assert.deepEqual(await leo.call("card.restart.notice", { card: card.id, request }), {
+    posted: true,
+  });
+  const notice = await worker.waitForEntry(
+    (entry) => entry.fields["restartNotice"] === request,
+    "the worker's restart notice",
+  );
+  assert.match(notice.body, /^Your session was restarted on the same card and conversation\./);
+
+  const followUp = "The replacement is ready for the next check.";
+  await leo.call("comment", { card: card.id, text: followUp });
+  const seen = await main.waitForEntry(
+    (entry) => entry.card === card.id && entry.author === "mate:leo",
+    "the mate's actual follow-up to main",
+  );
+  assert.equal(seen.body, followUp);
+  assert.deepEqual(words(main), [["mate:leo", followUp]]);
+});
+
 test("a second mate's comment on its lane card reaches main", async () => {
   await leo.call("comment", { lane: "leo", text: "I can answer this from my records: yes" });
   const heard = await fleet.main.waitForEntry((entry) => entry.author === "mate:leo", "the answer");

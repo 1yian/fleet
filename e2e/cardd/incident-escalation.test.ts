@@ -21,10 +21,13 @@ const is =
   (condition: string) =>
   (entry: Entry): boolean =>
     entry.fields["condition"] === condition;
+const onceEach = (session: Session): Entry[] => [
+  ...new Map(session.entries.map((push) => [push.entry.id, push.entry])).values(),
+];
 const heardBy = (session: Session, condition: string, card?: Card): Entry[] =>
-  session.entries
-    .map((push) => push.entry)
-    .filter((entry) => is(condition)(entry) && (card === undefined || entry.card === card.id));
+  onceEach(session).filter(
+    (entry) => is(condition)(entry) && (card === undefined || entry.card === card.id),
+  );
 
 const reachedTier = (session: Session, card: Card, condition: string, tier: number) =>
   session.waitForEntry(

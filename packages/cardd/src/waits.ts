@@ -1,6 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
 import {
-  jobIsRunning,
   parseJobState,
   parseWait,
   type DatedWait,
@@ -9,6 +8,7 @@ import {
   type Wait,
 } from "@fleet/protocol";
 import { requireCaptainWords } from "./authority.ts";
+import { outstandingJobSql } from "./jobs.ts";
 import { factsFrom, type Standing } from "./status.ts";
 import { cardEntries, mainLane, reachable, type Loaded, type Session } from "./store.ts";
 
@@ -30,11 +30,14 @@ const ABSENT: Record<"job" | "schedule" | "worker", (id: number) => Watching> = 
 };
 
 function jobWatch(db: DatabaseSync, id: number): Watching {
-  const row = db.prepare("SELECT label, state FROM jobs WHERE id = ?").get(id);
+  const row = db
+    .prepare(
+      `SELECT label, state, ${outstandingJobSql("j")} AS outstanding FROM jobs j WHERE id = ?`,
+    )
+    .get(id);
   if (row === undefined) return ABSENT.job(id);
   const name = `job ${String(id)} (${String(row["label"])})`;
-  const state = parseJobState(row["state"]);
-  return jobIsRunning(state) ? alive(name) : gone(`${name} is ${state}`);
+  return row["outstanding"] === 1 ? alive(name) : gone(`${name} is ${parseJobState(row["state"])}`);
 }
 
 function scheduleWatch(db: DatabaseSync, id: number): Watching {

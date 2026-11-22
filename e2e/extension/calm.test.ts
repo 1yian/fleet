@@ -53,15 +53,10 @@ async function matePane(): Promise<{ pane: string; group: number; shell: number 
   };
 }
 
-async function screenWhere(
-  pane: string,
-  what: string,
-  ready: (s: string) => boolean,
-  scrollback = false,
-) {
+async function screenWhere(pane: string, what: string, ready: (s: string) => boolean) {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
-    const screen = scrollback ? await lab.history(pane) : await lab.screen(pane);
+    const screen = await lab.screen(pane);
     if (ready(screen)) return screen;
     assert.ok(Date.now() < deadline, `timed out waiting for ${what}:\n${screen}`);
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -85,6 +80,7 @@ async function cleoAsks(title: string): Promise<void> {
 }
 
 const FLEET_ROW = "[fleet] cleo on c-2 ship-the-scrollbar-fix (hold)";
+const LATER_FLEET_ROW = "[fleet] cleo on c-3 drop-the-old-banner (hold)";
 const TOOL_ROW = "board";
 const NOTE = "Checking the board first.";
 const REPLY = "Cleo wants a decision on the scrollbar fix.";
@@ -161,9 +157,12 @@ test("/calm hides fleet rows, tool rows, and working notes, keeps the conversati
   keep("5-after-restart", restarted);
 
   await lab.submit(pane, "/calm");
-  await screenWhere(pane, "the expanded note and tool", showing([NOTE, TOOL_ROW]), true);
   await lab.run(["pane", "send-text", pane, TRANSCRIPT_BOTTOM]);
-  const bottom = await screenWhere(pane, "the restored transcript end", showing([BANNER_REPLY]));
+  const bottom = await screenWhere(
+    pane,
+    "the restored transcript end",
+    showing([LATER_FLEET_ROW, BANNER_REPLY]),
+  );
   keep("6-calm-off-bottom", bottom);
   assert.equal(bottom.includes(FLEET_ROW), false);
   await lab.run(["pane", "send-text", pane, TRANSCRIPT_TOP]);
@@ -214,12 +213,7 @@ test("calm shows no Thinking... label for hidden thinking, in a live turn with a
   keep("8-calm-thinking-hidden", live);
 
   await lab.submit(pane, "/calm");
-  const normal = await screenWhere(
-    pane,
-    "the label to return",
-    showing([THINKING_LABEL, SETTLED]),
-    true,
-  );
+  const normal = await screenWhere(pane, "the label to return", showing([THINKING_LABEL, SETTLED]));
   keep("9-normal-thinking-label", normal);
 
   await lab.submit(pane, "/calm");

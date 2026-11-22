@@ -1,7 +1,11 @@
 import { readFileSync, rmSync } from "node:fs";
 import { constants } from "node:os";
+import { basename } from "node:path";
+import { check, OPS, type OpArgs } from "@fleet/protocol";
+import Type from "typebox";
 import { spawnDetached } from "./detached.ts";
 import { herdr } from "./host.ts";
+import { jobHandshake } from "./job-http.ts";
 import { shimmedEnv } from "./shims.ts";
 import { StringDecoder } from "node:string_decoder";
 
@@ -15,12 +19,14 @@ const GROUP_POLL_MS = 50;
 const MAX_RETRY_MS = 30_000;
 const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 const EARLY_REPORT_MS = 300;
+const REGISTRATION_ATTEMPTS = 3;
 
 interface Job {
   readonly url: string;
   readonly token: string;
   readonly job: number;
   readonly command: string;
+  readonly launch?: string;
   readonly timeoutMs: number;
   readonly heartbeatMs: number;
   readonly keep: Keep;
@@ -31,40 +37,40 @@ interface Keep {
   readonly lineChars: number;
 }
 
-function readJob(file: string): Job {
-  const value: unknown = JSON.parse(readFileSync(file, "utf8"));
-  rmSync(file);
-  if (typeof value !== "object" || value === null) throw new Error("the job file holds no object");
-  const field = (key: string): unknown => Reflect.get(value, key);
-  const [url, token, job, command, timeoutMs, heartbeatMs, tailLines, lineChars] = [
-    "url",
-    "token",
-    "job",
-    "command",
-    "timeoutMs",
-    "heartbeatMs",
-    "tailLines",
-    "lineChars",
-  ].map(field);
-  if (typeof url !== "string" || typeof token !== "string" || typeof command !== "string") {
-    throw new Error("the job file lacks url, token, or command");
-  }
-  if (typeof job !== "number" || typeof timeoutMs !== "number" || typeof heartbeatMs !== "number")
-    throw new Error("the job file lacks job, timeoutMs, or heartbeatMs");
-  const keep = { lines: count(tailLines, TAIL_LINES), lineChars: count(lineChars, MAX_LINE_CHARS) };
-  return {
-    url,
-    token,
-    job,
-    command,
-    timeoutMs,
-    heartbeatMs,
-    keep,
-  };
-}
+const JobFile = Type.Object({
+  url: Type.String(),
+  token: Type.String(),
+  job: Type.Integer(),
+  timeoutMs: Type.Number(),
+  heartbeatMs: OPS["job.start"].result.properties.heartbeatMs,
+  tailLines: Type.Optional(Type.Number()),
+  lineChars: Type.Optional(Type.Number()),
+  command: Type.Optional(Type.String()),
+  launch: Type.Optional(
+    Type.Object({
+      id: OPS["job.register"].args.properties.launch,
+      command: OPS["job.prepare"].args.properties.command,
+    }),
+  ),
+});
 
-const count = (value: unknown, otherwise: number): number =>
-  typeof value === "number" ? value : otherwise;
+function readJob(file: string): Job {
+  const raw: unknown = JSON.parse(readFileSync(file, "utf8"));
+  rmSync(file);
+  const { url, token, job, timeoutMs, heartbeatMs, tailLines, lineChars, command, launch } = check(
+    JobFile,
+    raw,
+  );
+  const keep = { lines: tailLines ?? TAIL_LINES, lineChars: lineChars ?? MAX_LINE_CHARS };
+  const common = { url, token, job, timeoutMs, heartbeatMs, keep };
+  if (launch === undefined) {
+    if (command === undefined) throw new Error("the legacy job file has no command");
+    return { ...common, command };
+  }
+  if (basename(file) !== `fleet-job-${String(job)}-${launch.id}.json`)
+    throw new Error("job file does not match its launch identity");
+  return { ...common, command: launch.command, launch: launch.id };
+}
 
 class Stream {
   private readonly decoder = new StringDecoder("utf8");
@@ -126,7 +132,9 @@ function mirror(out: NodeJS.WriteStream): (chunk: Buffer) => void {
   };
 }
 
-async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> {
+type JobResult = Pick<OpArgs<"job.finish">, "exitCode" | "outputTail" | "commandNotStarted">;
+
+async function run(job: Job): Promise<JobResult> {
   const tail = new Tail(job.keep);
   console.error(
     "[run_long] WARNING: Bash pipefail is enabled, not errexit. A command list returns its last command's status: 'false; true' succeeds. Use 'suite && formatter' or preserve $? explicitly. Intentional || and if recovery retain normal shell semantics; nested shells own their failure policy.",
@@ -136,6 +144,7 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
     env: shimmedEnv(process.env),
   });
   const pid = child.pid;
+  const startup = pid === undefined ? { commandNotStarted: true as const } : {};
   const signalGroup = (signal: NodeJS.Signals | 0): boolean => {
     try {
       return pid !== undefined && process.kill(-pid, signal);
@@ -184,7 +193,12 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
     void Promise.race([exited, sleep(EARLY_REPORT_MS)]).then(() => {
       tail.flush();
       const outputTail = `${tail.text()}\ninterrupted`.trim();
-      void call(job, "job.finish", { job: job.job, exitCode: INTERRUPTED_EXIT, outputTail });
+      void call(job, "job.finish", {
+        job: job.job,
+        exitCode: INTERRUPTED_EXIT,
+        outputTail,
+        ...startup,
+      });
     });
   };
   for (const signal of STOP_SIGNALS) process.on(signal, onSignal);
@@ -202,7 +216,7 @@ async function run(job: Job): Promise<{ exitCode: number; outputTail: string }> 
   tail.flush();
   if (reason === "interrupted") tail.add(["interrupted"]);
   const forced = reason === "timeout" ? TIMEOUT_EXIT : INTERRUPTED_EXIT;
-  return { exitCode: reason === undefined ? code : forced, outputTail: tail.text() };
+  return { exitCode: reason === undefined ? code : forced, outputTail: tail.text(), ...startup };
 }
 
 function call(job: Job, op: string, args: object): Promise<Response | undefined> {
@@ -214,7 +228,7 @@ function call(job: Job, op: string, args: object): Promise<Response | undefined>
   );
 }
 
-async function post(job: Job, result: { exitCode: number; outputTail: string }): Promise<void> {
+async function post(job: Job, result: JobResult): Promise<void> {
   for (let wait = 1000; ; wait = Math.min(wait * 2, MAX_RETRY_MS)) {
     const response = await call(job, "job.finish", { job: job.job, ...result });
     if (response?.status === 200 || response?.status === 401) return;
@@ -225,11 +239,41 @@ async function post(job: Job, result: { exitCode: number; outputTail: string }):
   }
 }
 
+async function register(job: Job, launch: string): Promise<boolean> {
+  for (let attempt = 0; attempt < REGISTRATION_ATTEMPTS; attempt += 1) {
+    const outcome = await jobHandshake(job, "job.register", {
+      job: job.job,
+      launch,
+      pid: process.pid,
+    })
+      .then((reply) => reply.ok && check(OPS["job.register"].result, reply.value).registered)
+      .catch(() => undefined);
+    if (outcome !== undefined) return outcome;
+    if (attempt + 1 < REGISTRATION_ATTEMPTS) await sleep(250);
+  }
+  return false;
+}
+
 const job = readJob(process.argv[2] ?? "");
+const stop = { requested: false };
+const stopBeforeRun = (): void => {
+  stop.requested = true;
+};
+for (const signal of STOP_SIGNALS) process.on(signal, stopBeforeRun);
 const heartbeat = setInterval(() => {
   void call(job, "job.alive", { job: job.job });
 }, job.heartbeatMs);
-const result = await run(job);
+const confirmed = job.launch === undefined || (await register(job, job.launch));
+for (const signal of STOP_SIGNALS) process.off(signal, stopBeforeRun);
+const result: JobResult = stop.requested
+  ? { exitCode: INTERRUPTED_EXIT, outputTail: "interrupted", commandNotStarted: true }
+  : confirmed
+    ? await run(job)
+    : {
+        exitCode: 127,
+        outputTail: "could not start: cardd did not confirm wrapper registration",
+        commandNotStarted: true,
+      };
 console.log(`\n[run_long] job ${String(job.job)} exited ${String(result.exitCode)}`);
 await post(job, result);
 clearInterval(heartbeat);

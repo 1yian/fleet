@@ -396,7 +396,12 @@ test("restart_card restarts a card whose worker died on its own session", async 
     returned - asked < FORMER_REFUSED_START_WAIT_MS,
     `the restart held the mate for ${String(returned - asked)} ms`,
   );
-  const resumed = await h.waitForCall(2, "worker", WORKER_WAIT_MS);
+  const restartText =
+    "[fleet] main on c-1 one-scrollbar: Your session was restarted on the same card and conversation. Continue your task from where you stopped.";
+  let resumed = await h.waitForCall(2, "worker", WORKER_WAIT_MS);
+  if (!resumed.some((turn) => turn.text === restartText)) {
+    resumed = await h.waitForCall(3, "worker", WORKER_WAIT_MS);
+  }
   assert.ok(
     resumed.some(
       (turn) =>

@@ -10,16 +10,18 @@
     "e2e"
   ],
   "scripts": {
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format": "oxfmt --write",
+    "format:check": "oxfmt --check",
+    "format:files": "node format-files.js",
     "lint": "node lint.js",
     "typecheck": "node typecheck.js",
     "knip": "knip --treat-config-hints-as-errors",
     "deps": "depcruise .",
     "migrations:check": "node packages/cardd/scripts/check-migrations.ts",
-    "test:e2e": "npm run build && node e2e/run.ts",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run knip && npm run deps && npm run migrations:check",
-    "build": "npm run -w @fleet/board build"
+    "test:e2e": "bun run build && node e2e/run.ts",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run knip && bun run deps && bun run migrations:check",
+    "build": "bun run --cwd packages/board build",
+    "prepare": "node githooks.js install"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
@@ -27,9 +29,8 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "knip": "6.42.1",
     "oxc-parser": "0.159.0",
+    "oxfmt": "0.79.0",
     "oxlint": "1.94.0",
-    "oxlint-plugin-eslint": "1.94.0",
-    "prettier": "3.9.10",
     "tsrs": "0.25.0-ts7.1.0-beta",
     "typescript": "6.0.3"
   }

@@ -27,7 +27,7 @@ const ORIGIN_TIMEOUT_MS = 30_000;
 
 function originOn(hosts: Hosts, host: string, clone: string): Promise<string | undefined> {
   const argv = ["git", "-C", clone, "remote", "get-url", "origin"];
-  const via = hosts[host] ?? [];
+  const via = (Object.hasOwn(hosts, host) ? hosts[host] : undefined) ?? [];
   const [file = "git", ...args] = routed(via, argv);
   return new Promise((resolve) => {
     runOnTransport(file, args, { timeout: ORIGIN_TIMEOUT_MS }, (error, out) => {
