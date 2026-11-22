@@ -437,6 +437,7 @@ export type ClientMessage = Static<typeof ClientMessage>;
 
 export const BoardSchema = Type.Object({
   browsers: Type.Optional(Type.Boolean()),
+  workerStaleBefore: Type.Integer(),
   cards: Type.Array(BoardCardSchema),
   holds: Type.Array(
     Type.Object({
