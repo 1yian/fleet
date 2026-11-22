@@ -29,6 +29,8 @@ interface Fleet {
   p620: Scratch;
   vm: Scratch;
   app: Scratch;
+  selectedClone: Scratch;
+  excludedClone: Scratch;
   remote: string;
   ghost: Session;
   farHome: string;
@@ -43,11 +45,11 @@ let fleet: Fleet | undefined;
 
 afterEach(async (t) => {
   if (fleet === undefined) return;
-  const { lab, ghost, h, cardd, here, p620, vm, app } = fleet;
+  const { lab, ghost, h, cardd, here, p620, vm, app, selectedClone, excludedClone } = fleet;
   fleet = undefined;
   await lab.printIfFailed(t);
   const stopped = await Promise.allSettled([ghost.close(), lab.stop(), h.stop(), cardd.stop()]);
-  for (const scratch of [here, p620, vm, app]) scratch.dispose();
+  for (const scratch of [here, p620, vm, app, selectedClone, excludedClone]) scratch.dispose();
   const failed = stopped.find((result) => result.status === "rejected");
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
@@ -106,6 +108,8 @@ async function start(options: { cardd?: boolean; olderCardd?: boolean } = {}): P
   const p620 = cloneOf(remote, "fleet");
   const vm = cloneOf(remote, "fleet");
   const app = cloneOf(remote, "app");
+  const selectedClone = cloneOf(remote, "selected-project");
+  const excludedClone = cloneOf(remote, "excluded-project");
   if (options.olderCardd === true) {
     ownWorkspacePackages(app.root);
     const file = join(app.root, "packages", "protocol", "src", "maintenance.ts");
@@ -147,6 +151,8 @@ async function start(options: { cardd?: boolean; olderCardd?: boolean } = {}): P
   here.addLane("ops", settings("ops"));
   const farHome = p620.addLane("far", settings("far", "p620"));
   vm.addLane("vmlane", settings("vmlane", "vm"));
+  cardd.addProject("a-excluded", { vm: excludedClone.root });
+  cardd.addProject("b-selected", { p620: selectedClone.root });
   const ghost = await cardd.connect(cardd.addLane("ghost", "main"));
   const lab = await HerdrLab.start({
     ...h.piEnv("mate"),
@@ -163,6 +169,8 @@ async function start(options: { cardd?: boolean; olderCardd?: boolean } = {}): P
     p620,
     vm,
     app,
+    selectedClone,
+    excludedClone,
     remote,
     ghost,
     farHome,
@@ -176,8 +184,12 @@ async function start(options: { cardd?: boolean; olderCardd?: boolean } = {}): P
   started.pane = await startMain(lab, here, h);
   started.before = await running(lab);
   await until(
-    () => (callsTo(vmLog).some((call) => call.includes("'cost'")) ? true : undefined),
-    "main's first supervision pass to finish on every host",
+    () =>
+      callsTo(vmLog).some((call) => call.includes("'cost'")) &&
+      [p620Log, vmLog].every((log) => callsTo(log).some((call) => call.includes("refresh_clone")))
+        ? true
+        : undefined,
+    "main's first supervision pass and clone refresh to finish on every host",
   );
   writeFileSync(upstream, "");
   return started;
@@ -253,12 +265,14 @@ test("/updatefleet with a host list updates only those hosts: the excluded host 
   }, "main, ops, and far to run a new Pi");
 
   await until(
-    () => (scratchCalls(f.p620Log) > supervised ? true : undefined),
-    "the relaunched main's first supervision pass to reach p620",
+    () =>
+      scratchCalls(f.p620Log) > supervised && tip(f.selectedClone.root) === fresh
+        ? true
+        : undefined,
+    "the relaunched main's first supervision pass and clone refresh to finish on p620",
   );
   assert.equal(after["2ndmate-vmlane"], f.before["2ndmate-vmlane"]);
   assert.deepEqual(tips(f), [fresh, fresh, old]);
-  assert.equal(callsTo(f.vmLog).length, excluded);
   assert.deepEqual(enrolled(f.cardd.db), ["far", "ops"]);
 
   f.h.onModel(() => ({ text: "noted" }), "mate");
@@ -285,6 +299,8 @@ test("/updatefleet with a host list updates only those hosts: the excluded host 
     "Board: unchanged.",
     "Main: restarts on its own conversation when this turn ends.",
   ]);
+  assert.equal(callsTo(f.vmLog).length, excluded);
+  assert.equal(tip(f.excludedClone.root), old);
 });
 
 test("a refusal on one selected host stops both selected hosts before any pull, and the excluded host is still never contacted", async () => {
