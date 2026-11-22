@@ -73,11 +73,16 @@ function keyInput(event: KeyboardEvent<HTMLDivElement>, down: boolean): BrowserI
 }
 
 class Gestures {
-  private last = { count: 0, at: 0, x: 0, y: 0, button: -1 };
+  private last = Gestures.idle();
   private readonly pressed = new Map<number, MouseInput>();
   private readonly held = new Map<string, BrowserInput>();
 
+  private static idle() {
+    return { count: 0, at: 0, x: 0, y: 0, button: -1 };
+  }
+
   reset(): void {
+    this.last = Gestures.idle();
     this.pressed.clear();
     this.held.clear();
   }
@@ -88,15 +93,7 @@ class Gestures {
       event.button === last.button &&
       event.timeStamp - last.at < MULTI_CLICK_MS &&
       Math.hypot(event.clientX - last.x, event.clientY - last.y) <= MULTI_CLICK_PX;
-    const count = repeated ? last.count + 1 : 1;
-    this.last = {
-      count,
-      at: event.timeStamp,
-      x: event.clientX,
-      y: event.clientY,
-      button: event.button,
-    };
-    const press = mouseInput(event, frame, "mousePressed", count);
+    const press = mouseInput(event, frame, "mousePressed", repeated ? last.count + 1 : 1);
     this.pressed.set(event.button, press);
     return press;
   }
@@ -105,6 +102,13 @@ class Gestures {
     const press = this.pressed.get(event.button);
     if (press === undefined) return undefined;
     this.pressed.delete(event.button);
+    this.last = {
+      count: press.clickCount,
+      at: event.timeStamp,
+      x: event.clientX,
+      y: event.clientY,
+      button: event.button,
+    };
     return mouseInput(event, frame, "mouseReleased", press.clickCount);
   }
 
@@ -115,6 +119,7 @@ class Gestures {
       buttons: 0,
     }));
     this.pressed.clear();
+    if (releases.length > 0) this.last = Gestures.idle();
     return releases;
   }
 
