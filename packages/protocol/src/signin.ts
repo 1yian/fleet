@@ -28,8 +28,7 @@ export const SigninGrantAction = Type.Object({
         }),
         end: Type.Integer({
           minimum: 1,
-          description:
-            "Code point position after the last code point of the password",
+          description: "Code point position after the last code point of the password",
         }),
       },
       {
@@ -46,8 +45,7 @@ export const SIGNIN_OPS = {
     args: Type.Object({
       grant: Type.String({
         pattern: "^sg-[0-9a-f]{16}$",
-        description:
-          "The sign-in grant reference from the captain's card comment",
+        description: "The sign-in grant reference from the captain's card comment",
       }),
       entry: Type.Integer({
         minimum: 1,
