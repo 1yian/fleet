@@ -5,6 +5,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   symlinkSync,
   writeFileSync,
@@ -109,6 +110,27 @@ test("fleet update brings Pi, only pi-tiers, and the no-mistakes fork to their l
     dependenciesOf(update(routeFork(fork)))[2],
     `no-mistakes: fork-${commit} is the latest`,
   );
+});
+
+test("fleet update leaves a real skill directory intact and reports the conflict", () => {
+  const cli = join(home, ".local", "bin", "fleet-browser");
+  const agentDir = tempDir("agent-");
+  seedTiers(agentDir);
+  const skill = join(agentDir, "skills", "fleet-browser");
+  mkdirSync(skill, { recursive: true });
+  writeFileSync(join(skill, "SKILL.md"), "local skill\n");
+  mkdirSync(dirname(cli), { recursive: true });
+  const old = join(tempDir("old-browser-"), "bin", "fleet-browser.js");
+  symlinkSync(old, cli);
+  const report = update({ PI_CODING_AGENT_DIR: agentDir });
+  assert.equal(report["state"], "updated");
+  assert.match(
+    dependenciesOf(report).at(-1) ?? "",
+    /^fleet-browser: not updated: .*fleet-browser is not a link, so it was left intact/,
+  );
+  assert.equal(readFileSync(join(skill, "SKILL.md"), "utf8"), "local skill\n");
+  assert.equal(lstatSync(skill).isDirectory(), true);
+  assert.equal(readlinkSync(cli), old);
 });
 
 test("fleet update reports a pinned pi-tiers and a Pi that another manager owns as not updated, and still updates", () => {

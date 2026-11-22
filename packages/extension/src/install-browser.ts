@@ -35,6 +35,12 @@ const cliPath = (): string => join(homedir(), ".local", "bin", "fleet-browser");
 export const browserInstalled = (): boolean =>
   lstatSync(cliPath(), { throwIfNoEntry: false }) !== undefined;
 
+function assertReplaceable(target: string): void {
+  const found = lstatSync(target, { throwIfNoEntry: false });
+  if (found !== undefined && !found.isSymbolicLink())
+    throw new Error(`${target} is not a link, so it was left intact: move it aside to link it`);
+}
+
 export function installBrowser(root: string): string {
   const browser = join(root, "packages", "fleet-browser");
   if (!existsSync(join(browser, "dist", "cli", "main.js")))
@@ -42,9 +48,9 @@ export function installBrowser(root: string): string {
   const cli = cliPath();
   const skill = join(piAgentDir(), "skills", "fleet-browser");
   const source = join(browser, "skills", "fleet-browser");
-  if (lstatSync(skill, { throwIfNoEntry: false })?.isDirectory())
-    link(join(source, "SKILL.md"), join(skill, "SKILL.md"));
-  else link(source, skill);
+  assertReplaceable(skill);
+  assertReplaceable(cli);
+  link(source, skill);
   link(join(browser, "bin", "fleet-browser.js"), cli);
   return "CLI and skill linked";
 }

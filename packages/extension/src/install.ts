@@ -224,17 +224,18 @@ function piTiersUpdate(): string {
 }
 
 export function updateDependencies(root: string): string[] {
-  const steps: [string, () => string][] = [
+  const steps: [string, () => string | undefined][] = [
     ["Pi", () => lastLine(run("pi", ["update"], { timeout: CLONE_TIMEOUT_MS }))],
     ["pi-tiers", piTiersUpdate],
     ["no-mistakes", () => installNoMistakes(true).replace(/^no-mistakes: /, "")],
+    ["fleet-browser", () => (browserInstalled() ? installBrowser(root) : undefined)],
   ];
-  if (browserInstalled()) steps.push(["fleet-browser", () => installBrowser(root)]);
-  return steps.map(([name, step]) => {
+  return steps.flatMap(([name, step]) => {
     try {
-      return `${name}: ${step()}`;
+      const done = step();
+      return done === undefined ? [] : [`${name}: ${done}`];
     } catch (error) {
-      return `${name}: not updated: ${reason(error)}`;
+      return [`${name}: not updated: ${reason(error)}`];
     }
   });
 }

@@ -40,25 +40,27 @@ Browser verbs are passed to agent-browser 0.43.0 (pinned in `package.json`); see
 
 ## Install the CLI and skill
 
-Run `bun install --frozen-lockfile` and `bin/fleet install` from the host's Fleet checkout. This builds the browser package and links `~/.local/bin/fleet-browser` and installs the skill in Pi's agent directory (`~/.pi/agent/skills` by default). Remove any old `fleet-browser` skill registration in `~/.agents/skills` or in the host's configuration manager. Fleet's `update_fleet` rebuilds the package and refreshes the same links. No standalone checkout or browser release is needed.
+Run `bun install --frozen-lockfile` and `bin/fleet install` from the host's Fleet checkout. This builds the browser package and links `~/.local/bin/fleet-browser` and installs the skill in Pi's agent directory (`~/.pi/agent/skills` by default). Remove any old `fleet-browser` skill registration in `~/.agents/skills` or in the host's configuration manager. Install and update replace only links: a real skill directory or file at the target is left intact and reported as a conflict. Fleet's `update_fleet` rebuilds the package and refreshes the same links. No standalone checkout or browser release is needed.
 
 ## Install the daemon on a browser host
 
 Requirements: Node 24, Bun, `google-chrome-stable`, `xvfb`, `xauth`, `nftables`, `taskset`, `unzip`, `curl`, Tailscale.
 
+The daemon, the broker, and the privileged credential import run code, build output, and dependencies from the checkout that installs them, and the broker holds the 1Password service-account token. Deploy from a dedicated checkout that only deployment administrators can write, outside home directories (the broker's systemd unit cannot read `/home` or `/root`), and readable by the service users. Never deploy from the regular Fleet checkout that lanes manage. Its `node_modules` and `dist` must be root-owned too, so run the build steps below as the administrator that owns the checkout.
+
 ```sh
-git clone https://github.com/1yian/fleet /opt/fleet
-cd /opt/fleet
-bun install --frozen-lockfile
-bun run --cwd packages/fleet-browser build
+sudo git clone https://github.com/1yian/fleet /opt/fleet-browser-deploy
+cd /opt/fleet-browser-deploy
+sudo bun install --frozen-lockfile
+sudo bun run --cwd packages/fleet-browser build
 cd packages/fleet-browser
 sudo NODE_BIN="$(command -v node)" FLEET_BROWSER_LINK_TEMPLATE='http://<board host>:7878/#/browser/{lane}' deploy/install.sh
 sudo deploy/token.sh add board --copy-to ~/.config/fleet-browser/board.token --owner "$USER"
 herdr plugin link "$PWD/herdr-plugin"
 ```
 
-Use an existing Fleet checkout if both service users can read it. The broker's systemd unit cannot read `/home` or `/root`, so use a checkout outside home directories for the daemon.
+Run `deploy/broker-import.sh` from this same checkout: it loads `dist/broker/import.js` next to the script, as root, with the broker's token and the submitted password.
 
-For an existing browser host, rerun `deploy/install.sh` from the new package during a browser maintenance window. It updates both systemd units and the solver path, restarts the services, and retains the existing Chrome profiles, configuration, and tokens. Do not run the token-add command again. Relink the Herdr plugin if it pointed at the old checkout. For later updates, pull and build that Fleet checkout, then use the same installer to load the updated code. Fleet does not restart active browser sessions automatically.
+For an existing browser host, check out the dedicated deploy checkout as above, rebuild it, and rerun `deploy/install.sh` from its package during a browser maintenance window. It updates both systemd units and the solver path, restarts the services, and retains the existing Chrome profiles, configuration, and tokens. Do not run the token-add command again. Relink the Herdr plugin if it pointed at the old checkout. For later updates, `git pull` and rebuild that checkout as the administrator, then use the same installer to load the updated code. Fleet does not restart active browser sessions automatically.
 
 `deploy/uninstall.sh` removes the service; profiles stay unless `PURGE_DATA=1`.
