@@ -32,9 +32,11 @@ function workerOf(card: BoardCard, staleBefore: number): Worker | undefined {
     return { card, group: "offline", status: "Disconnected" };
   if (activity.state === "running" && activity.at <= staleBefore)
     return { card, group: "offline", status: "Stale activity" };
-  if (card.holder !== null || card.status !== "working")
+  const merging = card.status === "merging" && activity.state === "running";
+  if (card.holder !== null || (card.status !== "working" && !merging))
     return { card, group: "waiting", status: phraseOf(card, false) };
-  if (activity.state === "running") return { card, group: "working", status: "Running" };
+  if (activity.state === "running")
+    return { card, group: "working", status: merging ? "Merging" : "Running" };
   return {
     card,
     group: "waiting",
