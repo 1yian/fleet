@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { type OpArgs } from "@fleet/protocol";
+import { withholdSerializedEmail } from "./complaint-email.ts";
 import { redact } from "./incident-kinds.ts";
 import { mainLane, type Session } from "./store.ts";
 
@@ -36,7 +37,7 @@ interface Issue {
 }
 
 function literalCode(text: string): string {
-  const line = text.replace(/\r\n?|\n/g, " ");
+  const line = withholdSerializedEmail(text).replace(/\r\n?|\n/g, " ");
   if (!/\S/.test(line)) return line;
   let width = 1;
   for (const [run] of line.matchAll(/`+/g)) width = Math.max(width, run.length + 1);
@@ -46,7 +47,7 @@ function literalCode(text: string): string {
 }
 
 function issueFor(session: Session, text: string, about: About, now: number): Issue {
-  const scrubbed = redact(text, "public");
+  const scrubbed = redact(withholdSerializedEmail(text), "public");
   const characters = Array.from(scrubbed);
   const details = [
     `Time: ${new Date(now).toISOString()}`,

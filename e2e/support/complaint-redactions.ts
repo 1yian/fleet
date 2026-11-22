@@ -1,6 +1,16 @@
 import { ESCAPED_KEY_COMPLAINTS } from "./complaint-escaped-keys.ts";
 
 const REDACTED_COMPLAINTS = [
+  [String.raw`{"email":"ops@b\u00fccher.example"}`, "[email withheld: serialized address]"],
+  [
+    String.raw`{"email":"\u006f\u0070\u0073\u0040lab\u002eexample"}`,
+    "[email withheld: serialized address]",
+  ],
+  [
+    JSON.stringify({ log: String.raw`{"address":"ops@b\u00fccher.example"}` }),
+    "[email withheld: serialized address]",
+  ],
+  [String.raw`label: "syn\u0074hetic.example"`, String.raw`label: "syn\u0074hetic.example"`],
   ['It printed password: "paper canoe harbor".', "It printed password: [hidden]."],
   [
     String.raw`Unauthorized for https://localhost/cb?password=paper (label \u00e9)`,

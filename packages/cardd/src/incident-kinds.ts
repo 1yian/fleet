@@ -1,3 +1,4 @@
+import { EMAIL_ADDRESS } from "./complaint-email.ts";
 import { CURL_DATA_SECRET, CURL_SHELL_EXPANSION } from "./curl-shell.ts";
 import { LEADING_ENVELOPE, milliseconds, retryAfterMs, type Envelope } from "./http-envelope.ts";
 import {
@@ -139,7 +140,6 @@ const URL_AUTHORITY =
   /(?<=(?:[a-z0-9+.-]|\\+u[\da-f]{4})+(?::|\\+u003a)(?:(?:\\?\/|\\+u002f)){1,3})(?:[^\s/\\?#]|\\(?!\/|u00(?:2f|3f|23))(?:u[\da-f]{4}|["\\bfnrt])?)+/gi;
 const URL_AUTHORITY_TOKEN = /\\(?:u[\da-f]{4}|["\\bfnrt])|\\|"[,\]}]|@/gi;
 const SECRET_PATTERNS: readonly RegExp[] = [
-  /(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|(?<![\p{L}\p{M}\p{N}.!#$%&'*+/=?^_`{|}~-])[\p{L}\p{M}\p{N}.!#$%&'*+/=?^_`{|}~-]+)@(?:[\p{L}\p{M}\p{N}-]+[.。．｡])+[\p{L}][\p{L}\p{M}\p{N}-]*/gu,
   /\b(sk|pk|xai|gsk|ghp|gho|ghs|ghu|ghr|github_pat|xox[abprs])[-_][A-Za-z0-9_-]{8,}/g,
   /\b(AKIA|ASIA)[0-9A-Z]{16}\b/g,
 ];
@@ -351,7 +351,7 @@ function redactNormalized(source: string, scope: "public" | "diagnostic"): strin
   const structured = redactContinued(redactContinued(urls, SHELL_SECRET), STRUCTURED_SECRET);
   const hidden = SECRET_PATTERNS.reduce(
     (out, pattern) => out.replace(pattern, hiddenValue),
-    structured,
+    structured.replace(EMAIL_ADDRESS, hiddenValue),
   );
   return hidden
     .replace(OPAQUE_VALUE, (match, revision: unknown) => {
