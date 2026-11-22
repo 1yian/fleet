@@ -17,6 +17,8 @@ const Chat = Type.Object({
       role: Type.Union([Type.Literal("agent"), Type.Literal("user")]),
       text: Type.String(),
       at: Type.String(),
+      delivered_at: Type.Optional(Type.String()),
+      receipt: Type.Optional(Type.String()),
       kind: Type.Optional(Type.String()),
       prompt_id: Type.Optional(Type.String()),
       anchor: Type.Optional(Type.Unknown()),
@@ -34,7 +36,12 @@ interface Binding {
   readonly session: string;
   readonly source: URL;
   readonly worker: string;
-  readonly since: number;
+}
+
+interface Moment {
+  readonly chat: ChatState | undefined;
+  readonly ended: boolean;
+  readonly replay: boolean;
 }
 
 interface Submission {
@@ -42,11 +49,21 @@ interface Submission {
   readonly prompts: { id: string; text: string }[];
 }
 
-function submissions(chat: ChatState, since: number): Submission[] {
+function submissions(chat: ChatState): Submission[] {
   const batches: Submission[] = [];
   const occurrences = new Map<string, number>();
-  for (const { role, text, at, kind, prompt_id, anchor, attachments } of chat.chat) {
-    if (role !== "user" || !(Date.parse(at) >= since)) continue;
+  for (const {
+    role,
+    text,
+    at,
+    delivered_at,
+    receipt,
+    kind,
+    prompt_id,
+    anchor,
+    attachments,
+  } of chat.chat) {
+    if (role !== "user" || delivered_at !== undefined || receipt === "none") continue;
     const fingerprint = createHash("sha256")
       .update(JSON.stringify([at, kind, prompt_id, text, anchor, attachments]))
       .digest("hex");
@@ -87,17 +104,6 @@ function recordedNotice(entries: readonly Entry[], { round, worker }: Binding): 
   );
 }
 
-function endNoted(entries: readonly Entry[], { round, session }: Binding): boolean {
-  return entries.some(
-    ({ author, kind, fields }) =>
-      author === AUTHOR &&
-      kind === "review-feedback" &&
-      fields["session"] === session &&
-      fields["round"] === round &&
-      fields["sessionEnded"] === true,
-  );
-}
-
 function addReceipt(
   db: DatabaseSync,
   binding: Binding,
@@ -129,11 +135,9 @@ function appendPrompts(
   db: DatabaseSync,
   binding: Binding,
   entries: readonly Entry[],
-  chat: ChatState | undefined,
-  ended: boolean,
-  replay: boolean,
+  { chat, ended, replay }: Moment,
 ): { added: boolean; told: boolean } {
-  const batches = chat === undefined ? [] : submissions(chat, binding.since);
+  const batches = chat === undefined ? [] : submissions(chat);
   const seen = seenPrompts(entries, binding.session);
   const last = batches.at(-1);
   const pending = batches
@@ -148,7 +152,7 @@ function appendPrompts(
       replay ? null : ended && batch === last,
     );
   }
-  const told = ended && !replay && last !== undefined && pending.at(-1)?.batch === last;
+  const told = ended && last !== undefined && pending.at(-1)?.batch === last;
   return { added: pending.length > 0, told };
 }
 
@@ -156,12 +160,10 @@ function appendFeedback(
   db: DatabaseSync,
   binding: Binding,
   entries: readonly Entry[],
-  chat: ChatState | undefined,
-  ended: boolean,
-  replay: boolean,
+  moment: Moment,
 ): boolean {
-  const { added, told } = appendPrompts(db, binding, entries, chat, ended, replay);
-  if (!ended || told || (replay && endNoted(entries, binding))) return added;
+  const { added, told } = appendPrompts(db, binding, entries, moment);
+  if (!moment.ended || told) return added;
   addReceipt(db, binding, "", [], true);
   return true;
 }
@@ -176,7 +178,7 @@ async function mapped(source: URL): Promise<boolean> {
 
 function listen(
   binding: Binding,
-  receive: (chat: ChatState | undefined, ended: boolean, replay: boolean) => void,
+  receive: (moment: Moment) => void,
   closed: () => void,
 ): WebSocket {
   const { source } = binding;
@@ -188,13 +190,18 @@ function listen(
     maxPayload: 16 * 1024 * 1024,
   });
   let revision = -1;
-  let ended = false;
-  let bootstrap: ChatState | undefined;
-  const deliver = (chat: ChatState | undefined, replay: boolean) => {
-    const end = ended;
-    ended = false;
+  let initial: ChatState | undefined;
+  let fenced = false;
+  let ready = false;
+  let ending = false;
+  const waiting: Moment[] = [];
+  const deliver = (moment: Moment) => {
+    if (!ready) {
+      waiting.push(moment);
+      return;
+    }
     try {
-      receive(chat, end, replay);
+      receive(moment);
     } catch (error) {
       console.warn(
         `Lavish source feedback for c-${String(binding.card)} could not be recorded`,
@@ -206,33 +213,40 @@ function listen(
   socket.on("error", () => undefined);
   socket.on("close", closed);
   socket.on("pong", () => {
-    if (bootstrap === undefined) {
-      if (ended) deliver(undefined, false);
-      return;
+    if (!fenced) {
+      fenced = true;
+      deliver({ chat: initial, ended: false, replay: true });
+      void mapped(source).then((present) => {
+        if (!present) {
+          socket.terminate();
+          return;
+        }
+        ready = true;
+        for (const moment of waiting.splice(0)) deliver(moment);
+      });
+    } else if (ending) {
+      ending = false;
+      deliver({ chat: undefined, ended: true, replay: false });
     }
-    void mapped(source).then((present) => {
-      const chat = bootstrap;
-      bootstrap = undefined;
-      if (present && chat !== undefined) deliver(chat, true);
-      else socket.terminate();
-    });
   });
   socket.on("message", (raw: Buffer) => {
     try {
       const message = check(Event, JSON.parse(raw.toString("utf8")));
-      if (message.type === "ended") {
-        ended = true;
-        if (bootstrap === undefined && revision >= 0) socket.ping();
+      if (message.type === "ended" && fenced) {
+        ending = true;
+        socket.ping();
       }
       if (message.type !== "chat-sync") return;
       const chat = check(Chat, message.data);
       if (chat.chat_revision <= revision) return;
-      if (revision < 0) {
-        bootstrap = chat;
-        socket.ping();
-      } else if (bootstrap !== undefined) bootstrap = chat;
-      else deliver(chat, false);
       revision = chat.chat_revision;
+      if (!fenced) {
+        if (initial === undefined) socket.ping();
+        initial = chat;
+      } else {
+        deliver({ chat, ended: ending, replay: false });
+        ending = false;
+      }
     } catch (error) {
       console.warn(`Lavish source feedback for c-${String(binding.card)} could not be read`, error);
       socket.terminate();
@@ -288,11 +302,6 @@ export class SourceReviews {
     if (source === undefined || !reviewDecision(entries, hold)) return undefined;
     const worker = workerOf(this.db, card);
     if (worker === undefined) return undefined;
-    const since = Math.max(
-      ...entries
-        .filter(({ id }) => hold.reviewRequests?.includes(id))
-        .map(({ createdAt }) => createdAt),
-    );
     return {
       card,
       round: hold.entry,
@@ -300,7 +309,6 @@ export class SourceReviews {
       worker,
       source,
       session: hold.review,
-      since,
     };
   }
 
@@ -314,8 +322,8 @@ export class SourceReviews {
     if (binding === undefined) return;
     const socket = listen(
       binding,
-      (chat, ended, replay) => {
-        this.record(binding, chat, ended, replay);
+      (moment) => {
+        this.record(binding, moment);
       },
       () => {
         if (this.watching.get(card)?.binding === binding) this.watching.delete(card);
@@ -324,12 +332,7 @@ export class SourceReviews {
     this.watching.set(card, { binding, socket });
   }
 
-  private record(
-    binding: Binding,
-    chat: ChatState | undefined,
-    ended: boolean,
-    replay: boolean,
-  ): void {
+  private record(binding: Binding, moment: Moment): void {
     if (this.watching.get(binding.card)?.binding !== binding) return;
     const changed = transaction(this.db, () => {
       const entries = cardEntries(this.db, binding.card);
@@ -348,7 +351,7 @@ export class SourceReviews {
           },
           [binding.worker],
         );
-      return appendFeedback(this.db, binding, entries, chat, ended, replay) || notice;
+      return appendFeedback(this.db, binding, entries, moment) || notice;
     });
     if (changed) this.notify(binding.worker);
   }

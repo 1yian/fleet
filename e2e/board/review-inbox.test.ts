@@ -6,7 +6,7 @@ import { check, OPS } from "@fleet/protocol";
 import type { Session } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status } from "../support/fleet.ts";
 import { Lavish } from "../support/lavish.ts";
-import { Site } from "../support/public-host.ts";
+import { Edge, Site } from "../support/public-host.ts";
 import { tempDir } from "../support/run-root.ts";
 
 async function post(origin: URL, path: string, body: object): Promise<unknown> {
@@ -37,12 +37,12 @@ async function reviewSource(t: TestContext) {
   return { origin, key };
 }
 
-async function labFor(t: TestContext, key: string, origin: URL, title: string) {
+async function labFor(t: TestContext, key: string, upstream: string, title: string) {
   const site = await Site.start();
   t.after(() => site.issuer.stop());
   const reported = "http://reviews.example.test:7331";
   const { cardd, main, mainToken } = await startFleet(
-    { ...site.env, CARDD_REVIEW_ORIGINS: `${reported}=${origin.origin}` },
+    { ...site.env, CARDD_REVIEW_ORIGINS: `${reported}=${upstream}` },
     site.flags,
   );
   t.after(() => cardd.stop());
@@ -59,9 +59,6 @@ async function labFor(t: TestContext, key: string, origin: URL, title: string) {
   };
   return { cardd, main, mainToken, card, token, review, bind };
 }
-
-const receiptsOf = (worker: Session) =>
-  worker.entries.map(({ entry }) => entry).filter((entry) => entry.kind === "review-feedback");
 
 const rounds = [
   {
@@ -188,9 +185,16 @@ test("successive stock Lavish submissions reach the Fleet worker inbox once per 
   );
 });
 
-test("an empty Send & End reaches the worker as one source-attributed session end", async (t) => {
+async function viaEdge(t: TestContext, origin: URL): Promise<{ edge: Edge; upstream: string }> {
+  const edge = await Edge.start(origin);
+  edge.forwardOrigin = true;
+  t.after(() => edge.stop());
+  return { edge, upstream: `https://127.0.0.1:${String(edge.port)}` };
+}
+
+test("an empty Send & End is one live session end that a later round never inherits", async (t) => {
   const { origin, key } = await reviewSource(t);
-  const { cardd, main, mainToken, card, token, bind } = await labFor(t, key, origin, "Empty end");
+  const { cardd, main, card, token, bind } = await labFor(t, key, origin.origin, "Empty end");
   const worker = await cardd.connect(token);
   await bind(worker, "review-empty");
   await worker.waitForEntry(
@@ -207,18 +211,31 @@ test("an empty Send & End reaches the worker as one source-attributed session en
   assert.deepEqual(ended.fields["reviewKeys"], ["review-empty"]);
   assert.equal(ended.fields["sessionEnded"], true);
   assert.deepEqual(ended.fields["sourcePrompts"], []);
-  assert.equal(await status(main, card), "needs-you");
-  await cardd.restart();
-  const mate = await cardd.connect(mainToken);
-  await cardd.connect(token);
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  const { entries } = check(OPS.card.result, await mate.call("card", { card: card.id }));
-  assert.equal(entries.filter((entry) => entry.kind === "review-feedback").length, 1);
+  const view = async () => check(OPS.card.result, await main.call("card", { card: card.id }));
+  const hold = (await view()).hold;
+  assert.ok(hold);
+  assert.equal(
+    await cardd.act(card.id, {
+      kind: "answer",
+      hold: hold.entry,
+      choice: "Continue",
+      written: true,
+    }),
+    200,
+  );
+  await bind(worker, "review-after");
+  await worker.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true && entry.body === "review-after",
+    "Fleet ownership of review-after on the already ended session",
+  );
+  const receipts = (await view()).entries.filter((entry) => entry.kind === "review-feedback");
+  assert.equal(receipts.length, 1);
+  assert.deepEqual(receipts[0]?.fields["reviewKeys"], ["review-empty"]);
 });
 
 test("a verdict replayed after a reconnect does not inherit a later session end", async (t) => {
   const { origin, key } = await reviewSource(t);
-  const { cardd, mainToken, card, token, bind } = await labFor(t, key, origin, "Replay");
+  const { cardd, mainToken, card, token, bind } = await labFor(t, key, origin.origin, "Replay");
   const worker = await cardd.connect(token);
   await bind(worker, "review-replay");
   await worker.waitForEntry(
@@ -239,26 +256,46 @@ test("a verdict replayed after a reconnect does not inherit a later session end"
     "the replayed verdict",
   );
   assert.equal(verdict.fields["sessionEnded"], null);
-  const ended = await again.waitForEntry(
-    (entry) => entry.kind === "review-feedback" && entry.body === "",
-    "the session end",
-  );
-  assert.equal(ended.fields["sessionEnded"], true);
-  assert.deepEqual(ended.fields["sourcePrompts"], []);
   const mate = await cardd.connect(mainToken);
+  const { entries } = check(OPS.card.result, await mate.call("card", { card: card.id }));
   assert.equal(await status(mate, card), "needs-you");
-  assert.equal(receiptsOf(again).length, 2);
+  assert.equal(entries.filter((entry) => entry.kind === "review-feedback").length, 1);
+});
+
+test("feedback sent while Fleet confirms the source keeps its live end state", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const { edge, upstream } = await viaEdge(t, origin);
+  const probe = edge.hold("/layout-warnings");
+  const { cardd, token, bind } = await labFor(t, key, upstream, "Fence");
+  const worker = await cardd.connect(token);
+  await bind(worker, "review-fence");
+  await probe.arrived;
+  await post(origin, `/api/${key}/prompts`, {
+    prompts: [{ uid: "1", tag: "verdict", prompt: "Final while confirming", selector: "#v" }],
+    endSession: true,
+  });
+  probe.release();
+  const verdict = await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback",
+    "the verdict sent while the source was being confirmed",
+  );
+  assert.equal(verdict.body, "Final while confirming");
+  assert.equal(verdict.fields["sessionEnded"], true);
+  assert.deepEqual(verdict.fields["reviewKeys"], ["review-fence"]);
+  const order = worker.entries.map(({ entry }) => entry.id);
+  const notice = worker.entries.find(({ entry }) => entry.fields["fleetReview"] === true);
+  assert.ok(notice);
+  assert.ok(order.indexOf(notice.entry.id) < order.indexOf(verdict.id));
 });
 
 test("a mapped link with no stock session is never taken over", async (t) => {
   const { origin, key } = await reviewSource(t);
-  const { cardd, main, card, token, bind } = await labFor(t, key, origin, "Missing");
+  const { edge, upstream } = await viaEdge(t, origin);
+  const { cardd, main, card, token, bind } = await labFor(t, key, upstream, "Missing");
   const worker = await cardd.connect(token);
-  await bind(
-    worker,
-    "review-missing",
-    `http://reviews.example.test:7331/session/${"0".repeat(16)}`,
-  );
+  const missing = "0".repeat(16);
+  const dropped = edge.tunnelClosed(`/events/${missing}`);
+  await bind(worker, "review-missing", `http://reviews.example.test:7331/session/${missing}`);
   const second = await newCard(main, "Present", "scout");
   const present = await cardd.connect(await begin(main, second));
   await present.call("report", {
@@ -276,7 +313,7 @@ test("a mapped link with no stock session is never taken over", async (t) => {
     (entry) => entry.fields["fleetReview"] === true,
     "Fleet ownership of the present session",
   );
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await dropped;
   assert.deepEqual(
     worker.entries.filter(
       ({ entry }) => entry.fields["fleetReview"] === true || entry.kind === "review-feedback",

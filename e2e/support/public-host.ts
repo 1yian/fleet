@@ -1,7 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { createHmac, createSign, generateKeyPairSync, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { request as plainRequest, type IncomingHttpHeaders } from "node:http";
+import {
+  request as plainRequest,
+  type IncomingHttpHeaders,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import { createServer, type Server } from "node:https";
 import { connect, type AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -196,27 +201,50 @@ export class Edge {
   forwardOrigin = false;
   port = 0;
   private readonly server: Server;
+  private gate: { path: string; arrive: () => void; open: Promise<undefined> } | undefined;
+  private readonly tunnels: { path: string; close: () => void }[] = [];
+
+  hold(path: string): { arrived: Promise<undefined>; release: () => void } {
+    const arrived = Promise.withResolvers<undefined>();
+    const open = Promise.withResolvers<undefined>();
+    this.gate = {
+      path,
+      arrive: () => {
+        arrived.resolve(undefined);
+      },
+      open: open.promise,
+    };
+    return {
+      arrived: arrived.promise,
+      release: () => {
+        open.resolve(undefined);
+      },
+    };
+  }
+
+  tunnelClosed(path: string): Promise<undefined> {
+    const closed = Promise.withResolvers<undefined>();
+    this.tunnels.push({
+      path,
+      close: () => {
+        closed.resolve(undefined);
+      },
+    });
+    return closed.promise;
+  }
 
   private constructor(target: URL) {
     const { cert, key } = tlsPair();
     this.server = createServer({ cert, key }, (request, response) => {
-      const upstream = plainRequest(
-        {
-          host: target.hostname,
-          port: target.port,
-          method: request.method,
-          path: request.url,
-          headers: this.headersFor(request.headers),
-        },
-        (answer) => {
-          response.writeHead(answer.statusCode ?? 502, answer.headers);
-          answer.pipe(response);
-        },
-      );
-      upstream.on("error", () => {
-        response.destroy();
-      });
-      request.pipe(upstream);
+      const gate = this.gate;
+      if (gate !== undefined && request.url?.includes(gate.path) === true) {
+        gate.arrive();
+        void gate.open.then(() => {
+          this.forward(target, request, response);
+        });
+        return;
+      }
+      this.forward(target, request, response);
     });
     this.server.on("upgrade", (request, socket, head) => {
       const upstream = connect(Number(target.port), target.hostname, () => {
@@ -234,9 +262,31 @@ export class Edge {
         each.on("close", () => {
           socket.destroy();
           upstream.destroy();
+          for (const tunnel of this.tunnels)
+            if (request.url?.includes(tunnel.path) === true) tunnel.close();
         });
       }
     });
+  }
+
+  private forward(target: URL, request: IncomingMessage, response: ServerResponse): void {
+    const upstream = plainRequest(
+      {
+        host: target.hostname,
+        port: target.port,
+        method: request.method,
+        path: request.url,
+        headers: this.headersFor(request.headers),
+      },
+      (answer) => {
+        response.writeHead(answer.statusCode ?? 502, answer.headers);
+        answer.pipe(response);
+      },
+    );
+    upstream.on("error", () => {
+      response.destroy();
+    });
+    request.pipe(upstream);
   }
 
   static async start(target: URL): Promise<Edge> {
