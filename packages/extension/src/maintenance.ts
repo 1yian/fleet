@@ -210,9 +210,31 @@ export function maintenanceReport(rows: readonly Maintenance[]): string[] {
 
 const POLL_MS = 500;
 
+export interface ReloadScope {
+  readonly hosts: readonly string[];
+  readonly mates: readonly string[];
+}
+
+const enroll = (link: Link, batch: string, scope: ReloadScope | undefined) =>
+  scope === undefined
+    ? link.call("maintenance.request", { batch, kind: "reload" })
+    : link.call("maintenance.scoped", {
+        batch,
+        kind: "reload",
+        hosts: [...scope.hosts],
+        mates: [...scope.mates],
+      });
+
+const CARDD_WITHOUT_SCOPE =
+  "cardd did not accept scoped reload enrollment (a cardd from before it refuses the operation or drops the connection), so nothing was enrolled: update cardd first";
+
+const refusedScope = (error: unknown): boolean =>
+  String(error).includes("unknown operation maintenance.scoped") ||
+  String(error).includes("cardd closed the connection");
+
 export async function requestAndAwait(
   link: Link,
-  kind: Maintenance["kind"],
+  scope: ReloadScope | undefined,
   batch: string,
   waitMs: number,
 ): Promise<Maintenance[]> {
@@ -222,8 +244,10 @@ export async function requestAndAwait(
   const first = async (): Promise<Maintenance[]> => {
     for (;;) {
       try {
-        return await link.call("maintenance.request", { batch, kind });
+        return await enroll(link, batch, scope);
       } catch (error) {
+        if (scope !== undefined && refusedScope(error))
+          throw new Error(CARDD_WITHOUT_SCOPE, { cause: error });
         if (Date.now() > deadline) throw error;
         await new Promise((resolve) => setTimeout(resolve, POLL_MS));
       }
