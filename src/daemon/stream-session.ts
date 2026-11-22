@@ -159,7 +159,12 @@ export class StreamSession {
     });
     cdp.on("Target.targetCreated", (params) => {
       const info = params.targetInfo as { targetId: string; type: string } | undefined;
-      if (info?.type === "page" && info.targetId !== this.targetId)
+      if (
+        info?.type === "page" &&
+        info.targetId !== this.targetId &&
+        this.lane.currentStep !== "direct-login" &&
+        !this.lane.privateTargets.has(info.targetId)
+      )
         void this.switchTo(info.targetId).catch(() => undefined);
       this.schedulePush();
     });
@@ -222,7 +227,7 @@ export class StreamSession {
         if (this.lane.currentStep) {
           throw new HttpError(
             409,
-            this.lane.currentStep === "credentials"
+            this.lane.currentStep !== "captcha"
               ? "the agent is typing credentials into this lane right now; try again in a few seconds"
               : "the agent is solving a captcha on this lane right now; try again in a few seconds",
           );

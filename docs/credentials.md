@@ -12,6 +12,7 @@ agent --> fleet-browser login <item> --> browser service --> broker (Unix socket
 
 ```
 fleet-browser login <item>                       username, password and one-time code, in whatever order the page asks
+fleet-browser login --stdin                      single-use non-vault login from a private input stream
 fleet-browser otp <item> [--submit]              current one-time code into the focused or visible code field
 fleet-browser mail link <item> [--match <re>] [--since 10m] [--wait 60s]
                                                  open the newest matching emailed link in the lane
@@ -22,9 +23,23 @@ fleet-browser broker status                      local read budget and 1Password
 
 `<item>` is an item title in the lane's vault (`fleet-browser-<lane>`). `login` and `otp` use a Login item (username, password, one-time password, website). `mail` uses an item that holds the lane's mailbox: username, password (an app password) and optional custom fields `server`, `port`, `tls` (default Zoho IMAP, `imap.zoho.com:993`).
 
-The step runs on the calling card's own tab (the active tab of its pinned `fleet-browser` session), so two cards of one lane can sign in side by side. A card without `FLEET_ATTEMPT` has no tab of its own and the step uses the tab the lane worked in last. The service refuses a tab that is not an open page of the lane with `409`. While the step runs, the board's viewer shows that tab, and page commands from every card of the lane are paused.
+A vault-backed step runs on the calling card's own tab (the active tab of its pinned `fleet-browser` session), so two cards of one lane can sign in side by side. A card without `FLEET_ATTEMPT` has no tab of its own and the step uses the tab the lane worked in last. The service refuses a tab that is not an open page of the lane with `409`. While the step runs, the board's viewer shows that tab (direct sign-in below uses a private tab the board never shows), and page commands from every card of the lane are paused.
 
-What the agent sees back: the steps taken (`username, password, otp`), the resulting page title and URL, and the words from a fixed list that the page showed (`incorrect`, `try again`, `locked`, `captcha`, ...). Page text is never copied into the answer.
+For vault-backed steps, what the agent sees back: the steps taken (`username, password, otp`), the resulting page title and URL, and the words from a fixed list that the page showed (`incorrect`, `try again`, `locked`, `captcha`, ...). Page text is never copied into the answer.
+
+## Direct sign-in without a vault item
+
+Run `fleet-browser login --lane <lane> --stdin < /path/to/private-envelope`. Use only an existing protected file or pipe populated by a trusted credential source. Do not copy a password from a chat, card, or tool result, or use an inline shell literal, command argument, or environment variable. This command does not provide or retrieve credentials; if no protected input exists, it cannot use a password supplied in conversation without exposing it again.
+
+Stdin accepts one UTF-8 JSON object of at most 16 KiB with `lane`, `origin`, `url`, `password` and optional `username` string fields. The origin is canonical and exact: for example `https://login.example.com` with no trailing slash, path or query. HTTPS is required, and scheme and port matter. `url` is the sign-in page to load and must be on that exact origin, without embedded credentials. The envelope's lane must match the selected lane. The browser service must be on the CLI's own host at a literal loopback HTTP URL; do not relay these requests through a proxy. The CLI does not follow service redirects.
+
+Direct sign-in is for a trusted site's visible password form that submits a POST to the same origin in the same tab, with a username field in that form if a username is supplied. The form needs exactly one eligible password field and, when a username is supplied, exactly one eligible username field: visible, named, enabled and not read-only. Multi-page sign-in, SSO and OTP still use the vault-backed commands.
+
+The step never touches an existing tab and takes no tab from the caller, so the calling card's pinned tab never shows the sign-in form. Fleet Browser closes agent browser connections to that lane, opens a fresh private tab that the board and tab lists never show, turns on service worker bypass for it before its first navigation, loads `url`, and checks that the loaded document is on the exact HTTPS origin. In an isolated world it inspects the form (exactly one eligible password field, same-tab target, `POST`, `application/x-www-form-urlencoded`, HTTPS action on the exact origin) and records the action URL and field names. It then arms a browser guard and, in a second isolated-world call that re-checks the same plan, sets the username and password without firing page events and calls the browser's native form `submit()`. No page submit handler, input handler or key press is involved, and no submit button is needed. The guard fails any request that is not HTTPS, carries a body to another origin or a body it cannot read, or carries the password anywhere except the one main-frame `POST` to the planned action whose body holds the password (and username) under the planned field names; a redirect that replays the credential is blocked. `done` requires that `POST` to have been released by the browser, answered with an HTTP status below 400, and the resulting document to have loaded, then no login fields; otherwise the outcome is `stuck`.
+
+The site owns its scripts and legitimately receives its own credential: a script the site serves, including a native `formdata` callback, can read what the form submits. Direct sign-in only excludes scripts the agent installed before delivery and unrelated origins, so use it only on a site you trust.
+
+The private tab is verified closed before the lane is released. If that cannot be verified, the lane is not released: it stays paused with its Chrome and profile untouched until it is stopped. Sign-ins and cookies are shared by the whole lane, so the calling card's own tab can reopen the site and is signed in. It stores no vault item and returns only a fixed outcome. A successful status is not proof of authentication, so verify the signed-in state before continuing.
 
 ## Rules the service enforces
 

@@ -47,6 +47,8 @@ export class Lane extends EventEmitter {
   control: Control = { kind: "agent" };
   handoff: Handoff | null = null;
   activeTarget: string | undefined;
+  readonly privateTargets = new Set<string>();
+  private pendingPrivate: Promise<string> | null = null;
   private step: AgentStep | null = null;
 
   private readonly config: Config;
@@ -106,6 +108,7 @@ export class Lane extends EventEmitter {
     this.restartTimer = null;
     await this.starting?.catch(() => undefined);
     await this.shutdownProcesses();
+    this.step = null;
     this.setStatus("stopped");
     if (this.ephemeral) {
       rmSync(this.dir, { recursive: true, force: true });
@@ -128,7 +131,36 @@ export class Lane extends EventEmitter {
     if (this.status !== "ready") return [];
     const response = await fetch(`http://127.0.0.1:${this.slot.cdpPort}/json/list`);
     const targets = (await response.json()) as JsonTarget[];
-    return targets.filter((t) => t.type === "page").map((t) => ({ id: t.id, title: t.title, url: t.url }));
+    await this.pendingPrivate?.catch(() => undefined);
+    return targets
+      .filter((t) => t.type === "page" && !this.privateTargets.has(t.id))
+      .map((t) => ({ id: t.id, title: t.title, url: t.url }));
+  }
+
+  async createPrivateTarget(cdp: CdpClient): Promise<string> {
+    const creation = cdp
+      .send<{ targetId: string }>("Target.createTarget", { url: "about:blank" })
+      .then((created) => created.targetId);
+    this.pendingPrivate = creation;
+    try {
+      const targetId = await creation;
+      this.privateTargets.add(targetId);
+      return targetId;
+    } finally {
+      this.pendingPrivate = null;
+    }
+  }
+
+  async hasTarget(ids: string[]): Promise<boolean> {
+    try {
+      const response = await fetch(`http://127.0.0.1:${this.slot.cdpPort}/json/list`);
+      const targets = (await response.json()) as JsonTarget[];
+      return targets.some((t) => ids.includes(t.id));
+    } catch (error) {
+      const chrome = this.chrome;
+      if (chrome && chrome.exitCode === null && chrome.signalCode === null) throw error;
+      return false;
+    }
   }
 
   async pageFor(target?: string): Promise<TabInfo> {
@@ -166,7 +198,7 @@ export class Lane extends EventEmitter {
       tabs,
       control: this.control,
       handoff: this.handoff,
-      credentialStep: this.step === "credentials",
+      credentialStep: this.step === "credentials" || this.step === "direct-login",
       captchaStep: this.step === "captcha",
       viewLink: this.config.handoff.linkTemplate?.replaceAll("{lane}", this.name) ?? null,
     };

@@ -1,4 +1,5 @@
 import type { MailData, SecretData, StatusData } from "../shared/broker-protocol.js";
+import type { DirectLogin } from "../shared/direct-login.js";
 import { brokerCall } from "./broker-client.js";
 import type { Config } from "./config.js";
 import { HttpError } from "./errors.js";
@@ -10,14 +11,18 @@ import {
   focusedFieldKind,
   forgetFields,
   pageSummary,
+  planDirectLogin,
   pressEnter,
   problemHints,
+  submitDirectLogin,
 } from "./forms.js";
 import type { Lane } from "./lane.js";
-import { PageSession } from "./page-session.js";
+import { ContainmentError, PageSession } from "./page-session.js";
 
 const MAX_STEPS = 6;
 const SETTLE_MS = 9000;
+
+type DirectOutcome = "done" | "stuck" | "no-form" | "off-origin";
 
 export interface LoginResult {
   outcome: "done" | "stuck" | "no-form" | "needs-otp" | "off-origin";
@@ -104,6 +109,49 @@ export class Credentials {
 
   constructor(config: Config) {
     this.config = config;
+  }
+
+  async directLogin(lane: Lane, delivery: DirectLogin): Promise<DirectOutcome> {
+    const release = lane.beginStep("direct-login");
+    let page: PageSession | undefined;
+    let contained = true;
+    let outcome: DirectOutcome = "stuck";
+    let failure: unknown;
+    try {
+      page = await PageSession.openPrivate(lane);
+      outcome = await this.driveDirectLogin(page, delivery);
+    } catch (error) {
+      failure = error;
+      contained = !(error instanceof ContainmentError);
+    }
+    if (contained && page)
+      contained = await page.discard().then(
+        () => true,
+        () => false,
+      );
+    if (!contained)
+      throw new ContainmentError("the lane stays paused: the sign-in tab was not verified closed");
+    release();
+    if (failure) throw failure;
+    return outcome;
+  }
+
+  private async driveDirectLogin(page: PageSession, delivery: DirectLogin): Promise<DirectOutcome> {
+    const { errorText } = await page.send<{ errorText?: string }>("Page.navigate", { url: delivery.url });
+    if (errorText) throw new Error("the sign-in page did not load");
+    await waitForLoad(page);
+    const plan = await planDirectLogin(page, delivery);
+    if (typeof plan === "string") return plan;
+    const guard = await page.confine(plan, delivery);
+    const submitted = await submitDirectLogin(page, delivery, plan);
+    if (submitted !== "submitted") return submitted;
+    const deadline = Date.now() + SETTLE_MS;
+    while (Date.now() < deadline && !guard.violated() && !guard.submitted()) await sleep(200);
+    if (guard.violated() || !guard.submitted()) return "stuck";
+    await sleep(900);
+    if ((await page.evaluate<string>("location.origin")) !== delivery.origin) return "stuck";
+    const fields = await detectFields(page);
+    return fields.some((field) => field.visible) ? "stuck" : "done";
   }
 
   async login(lane: Lane, item: string, target?: string): Promise<LoginResult> {

@@ -1,4 +1,6 @@
+import { request } from "node:http";
 import { AxiError } from "axi-sdk-js";
+import type { DirectLogin } from "../shared/direct-login.js";
 import type { Handoff, LaneSnapshot } from "../shared/protocol.js";
 
 export const DAEMON_URL = process.env.FLEET_BROWSER_URL ?? "http://127.0.0.1:7620";
@@ -16,6 +18,62 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const body = (await response.json()) as T & { error?: string };
   if (!response.ok) throw new AxiError(body.error ?? `service answered ${response.status}`, "SERVICE_ERROR");
   return body;
+}
+
+export async function postDirectLogin<T>(delivery: DirectLogin): Promise<T> {
+  const failed = () =>
+    new AxiError("could not deliver credentials to the local browser service", "DIRECT_LOGIN_FAILED");
+  let endpoint: URL;
+  try {
+    endpoint = new URL(DAEMON_URL);
+  } catch {
+    throw failed();
+  }
+  if (
+    endpoint.protocol !== "http:" ||
+    !["127.0.0.1", "[::1]"].includes(endpoint.hostname) ||
+    endpoint.origin !== DAEMON_URL.replace(/\/$/, "")
+  ) {
+    throw new AxiError(
+      "direct login requires a literal loopback browser service URL",
+      "DIRECT_LOGIN_NOT_LOCAL",
+    );
+  }
+  return new Promise<T>((resolve, reject) => {
+    const body = JSON.stringify({ direct: delivery });
+    const req = request(
+      new URL(`/v1/lanes/${delivery.lane}/login`, endpoint),
+      {
+        method: "POST",
+        agent: false,
+        headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+      },
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          reject(failed());
+          return;
+        }
+        let text = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => {
+          text += chunk;
+          if (text.length > 4096) req.destroy(failed());
+        });
+        res.on("error", () => reject(failed()));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(text) as T);
+          } catch {
+            reject(failed());
+          }
+        });
+      },
+    );
+    req.setTimeout(60_000, () => req.destroy(failed()));
+    req.on("error", () => reject(failed()));
+    req.end(body);
+  });
 }
 
 export const daemon = {

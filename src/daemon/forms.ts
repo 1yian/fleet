@@ -1,4 +1,5 @@
-import type { PageSession } from "./page-session.js";
+import type { DirectLogin } from "../shared/direct-login.js";
+import type { DirectPlan, PageSession } from "./page-session.js";
 
 export type FieldKind = "username" | "password" | "newpassword" | "otp";
 
@@ -41,6 +42,107 @@ const DETECT = `(() => {
   });
   return out;
 })()`;
+
+const DIRECT_LOGIN = `function (mode, origin, username, password, expected) {
+  if (location.origin !== origin || location.protocol !== 'https:') return 'off-origin';
+  const fields = ${DETECT};
+  const elements = globalThis.__fbFields;
+  delete globalThis.__fbFields;
+  const eligible = (kind, form) => fields.filter(f => f.visible && f.kind === kind)
+    .map(f => elements[f.i])
+    .filter(el => el.name && el.form && !el.matches(':disabled') && !el.readOnly && (!form || el.form === form));
+  const passwords = eligible('password');
+  if (passwords.length !== 1) return 'no-form';
+  const passwordField = passwords[0];
+  const form = passwordField.form;
+  let userField = null;
+  if (username !== null) {
+    const users = eligible('username', form);
+    if (users.length !== 1) return 'no-form';
+    userField = users[0];
+  }
+  const own = (name) => Object.getOwnPropertyDescriptor(HTMLFormElement.prototype, name).get.call(form);
+  const target = own('target') || document.querySelector('base[target]')?.target || '_self';
+  let destination;
+  try {
+    destination = new URL(own('action'));
+  } catch {
+    return 'no-form';
+  }
+  if (own('method') !== 'post' || own('enctype') !== 'application/x-www-form-urlencoded'
+    || destination.protocol !== 'https:' || destination.origin !== origin
+    || target.toLowerCase() !== '_self') return 'no-form';
+  const plan = { action: destination.href, userName: userField ? userField.name : null, passName: passwordField.name };
+  if (mode === 'plan') return plan;
+  if (JSON.stringify(plan) !== JSON.stringify(expected)) return 'no-form';
+  const set = (el, value) => {
+    const prototype = el instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(el, value);
+  };
+  if (userField) set(userField, username);
+  set(passwordField, password);
+  HTMLFormElement.prototype.submit.call(form);
+  return 'submitted';
+}`;
+
+type DirectResult = DirectPlan | "submitted" | "off-origin" | "no-form" | "stuck";
+
+async function directLoginCall(
+  page: PageSession,
+  delivery: DirectLogin,
+  mode: "plan" | "submit",
+  plan: DirectPlan | null,
+): Promise<DirectResult> {
+  const { frameTree } = await page.send<{ frameTree: { frame: { id: string } } }>("Page.getFrameTree");
+  const { executionContextId } = await page.send<{ executionContextId: number }>("Page.createIsolatedWorld", {
+    frameId: frameTree.frame.id,
+    worldName: "fleet-browser-direct-login",
+  });
+  const {
+    result: { objectId },
+  } = await page.send<{ result: { objectId?: string } }>("Runtime.evaluate", {
+    expression: "globalThis",
+    contextId: executionContextId,
+  });
+  if (!objectId) return "stuck";
+  const response = await page.send<{ result: { value?: DirectResult }; exceptionDetails?: unknown }>(
+    "Runtime.callFunctionOn",
+    {
+      objectId,
+      functionDeclaration: DIRECT_LOGIN,
+      arguments: [
+        { value: mode },
+        { value: delivery.origin },
+        { value: delivery.username ?? null },
+        { value: mode === "submit" ? delivery.password : null },
+        { value: plan },
+      ],
+      returnByValue: true,
+      silent: true,
+    },
+  );
+  const outcome = response.result.value;
+  if (typeof outcome === "object" && outcome !== null) return outcome;
+  if (outcome === "submitted" || outcome === "off-origin" || outcome === "no-form") return outcome;
+  return "stuck";
+}
+
+export async function planDirectLogin(
+  page: PageSession,
+  delivery: DirectLogin,
+): Promise<DirectPlan | "off-origin" | "no-form" | "stuck"> {
+  const result = await directLoginCall(page, delivery, "plan", null);
+  return result === "submitted" ? "stuck" : result;
+}
+
+export async function submitDirectLogin(
+  page: PageSession,
+  delivery: DirectLogin,
+  plan: DirectPlan,
+): Promise<"submitted" | "off-origin" | "no-form" | "stuck"> {
+  const result = await directLoginCall(page, delivery, "submit", plan);
+  return typeof result === "object" ? "stuck" : result;
+}
 
 export function detectFields(page: PageSession): Promise<FieldInfo[]> {
   return page.evaluate<FieldInfo[]>(DETECT);

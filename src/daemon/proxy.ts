@@ -83,17 +83,27 @@ export function proxyAgentConnection(client: WebSocket, lane: Lane, upstreamUrl:
     else queued.push(text);
   });
   upstream.on("message", (data) => {
+    if (lane.currentStep === "direct-login") return;
     const text = data.toString();
     observe(text);
     if (client.readyState === client.OPEN) client.send(scrubNetworkEvent(text));
   });
   const closeBoth = (): void => {
+    lane.off("change", closeForDirectLogin);
     if (client.readyState === client.OPEN || client.readyState === client.CONNECTING) client.close();
     if (upstream.readyState === upstream.OPEN || upstream.readyState === upstream.CONNECTING)
       upstream.close();
   };
+  const closeForDirectLogin = (): void => {
+    if (lane.currentStep !== "direct-login") return;
+    upstream.terminate();
+    client.close(1008, "page commands are paused during direct sign-in");
+    lane.off("change", closeForDirectLogin);
+  };
+  lane.on("change", closeForDirectLogin);
   client.on("close", closeBoth);
   client.on("error", closeBoth);
   upstream.on("close", closeBoth);
   upstream.on("error", closeBoth);
+  closeForDirectLogin();
 }

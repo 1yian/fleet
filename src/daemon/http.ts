@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { WebSocketServer } from "ws";
+import { DIRECT_LOGIN_LIMIT, isLoopback, parseDirectLogin } from "../shared/direct-login.js";
 import { isLaneName, type LaneName } from "../shared/lane-name.js";
 import type { Daemon } from "./daemon.js";
 import { HttpError } from "./errors.js";
@@ -104,7 +105,35 @@ async function routeAgent(daemon: Daemon, req: IncomingMessage, res: ServerRespo
   }
   if (action === "handoff") return agentHandoff(daemon, lane, parts, method, req, res, url);
   if (method === "POST" && (action === "login" || action === "otp" || action === "mail")) {
-    return agentCredentials(daemon, lane, action, (await readJson(req)) as Record<string, unknown>, res);
+    const body = await readJson(req);
+    if (typeof body !== "object" || body === null || Array.isArray(body))
+      throw new HttpError(400, "credentials request must be an object");
+    if (action === "login" && "direct" in body) {
+      if (
+        !isLoopback(req.socket.localAddress) ||
+        !isLoopback(req.socket.remoteAddress) ||
+        req.headers["content-type"] !== "application/json" ||
+        req.headers.origin ||
+        req.headers["sec-fetch-site"]
+      ) {
+        throw new HttpError(403, "direct login requires a local CLI request");
+      }
+      const delivery = parseDirectLogin(body.direct);
+      if (
+        !delivery ||
+        Buffer.byteLength(JSON.stringify(delivery)) > DIRECT_LOGIN_LIMIT ||
+        "item" in body ||
+        "target" in body
+      )
+        throw new HttpError(400, "invalid direct login envelope");
+      if (delivery.lane !== name) throw new HttpError(403, "credential lane does not match the route");
+      try {
+        return json(res, 200, { outcome: await daemon.credentials.directLogin(lane, delivery) });
+      } catch {
+        throw new HttpError(409, "direct login could not be completed");
+      }
+    }
+    return agentCredentials(daemon, lane, action, body as Record<string, unknown>, res);
   }
   if (action === "captcha" && method === "POST") {
     const body = (await readJson(req)) as Record<string, unknown>;

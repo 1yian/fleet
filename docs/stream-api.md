@@ -37,7 +37,7 @@ Lane snapshot:
 - `control`: `{ "kind": "agent" }` or `{ "kind": "human", "viewerId": "...", "since": 0 }`.
 - `handoff`: `null` or the latest handoff. `status` is `open | done | cancelled | expired`; `resolvedAt` appears once it is not open.
 - `captchaStep`: `true` while the service is solving a captcha for the agent (up to about two minutes). Same effect: the board can show "agent is solving a captcha", and taking control is refused with `409` until it clears. When the solver gives up, a handoff opens and `captchaStep` goes back to `false`.
-- `credentialStep`: `true` while the service is typing a vault secret, one-time code or emailed code into the lane for the agent (usually under ten seconds). The board can show "agent is signing in"; taking control is refused with `409` until it clears.
+- `credentialStep`: `true` while the service is submitting a direct sign-in or typing a vault secret, one-time code or emailed code into the lane for the agent (usually under ten seconds). The board can show "agent is signing in"; taking control is refused with `409` until it clears.
 - `viewLink`: built from the service's `handoff.linkTemplate` by replacing `{lane}`, the same template the handoff notifications use. On p620 it is `http://maverick.tail7d4c65.ts.net:7878/#/browser/{lane}`. `null` when no template is configured. The lane list route (`#/browser`) is the board's own and the service does not know it.
 - `chromeVersion`, `chromePid` and `display` appear once the lane has started; `tabs` is empty unless `status` is `ready`.
 
@@ -61,7 +61,9 @@ Events:
 - `event: frame`, data `{ "seq": 41, "meta": { "deviceWidth": 1439, "deviceHeight": 812, "offsetTop": 0, "pageScaleFactor": 1, "scrollOffsetX": 0, "scrollOffsetY": 0, "targetId": "..." }, "jpeg": "<base64>" }`. Latest-frame-wins: a slow consumer skips frames. The screencast only sends frames when the page changes; the first frame arrives right after connect.
 - `event: notice`, data `{ "text": "..." }`.
 
-The view follows the tab the agent last worked in (navigate, click, evaluate, activate), and any newly opened tab. Several cards can work in one lane, each in its own tab, so the tab shown is the one whichever card acted last. While a card's credential step (`login`, `otp`, `mail`) or captcha solve runs, and when a card opens a handoff, the view moves to that card's tab and stays there; `activeTab` in `state` and `meta.targetId` in `frame` name it.
+During `login --stdin` the service works in a private tab that is never listed in `tabs`, never followed by the view and never streamed; the board's view and `tabs` stay as they were.
+
+The view follows the tab the agent last worked in (navigate, click, evaluate, activate), and any newly opened tab. Several cards can work in one lane, each in its own tab, so the tab shown is the one whichever card acted last. While a card's vault-backed credential step (`login <item>`, `otp`, `mail`) or captcha solve runs, and when a card opens a handoff, the view moves to that card's tab and stays there; `activeTab` in `state` and `meta.targetId` in `frame` name it.
 
 ## Input (control only)
 

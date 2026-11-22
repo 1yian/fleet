@@ -22,7 +22,7 @@ export interface TabInfo {
   url: string;
 }
 
-export type AgentStep = "credentials" | "captcha";
+export type AgentStep = "credentials" | "direct-login" | "captcha";
 
 export interface LaneSnapshot {
   lane: LaneName;

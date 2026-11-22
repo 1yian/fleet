@@ -30,6 +30,7 @@ const READ_ONLY = [
 
 export function agentCommandError(lane: Lane, method: string): string | null {
   if (ALWAYS_DENIED.has(method)) return `fleet-browser does not allow ${method}`;
+  if (lane.currentStep === "direct-login") return "page commands are paused during direct sign-in";
   if (lane.currentStep && !TAINT_ALLOWED.some((pattern) => pattern.test(method))) {
     return lane.currentStep === "credentials"
       ? `lane ${lane.name} is filling credentials; page reads and scripts are paused until the step finishes`

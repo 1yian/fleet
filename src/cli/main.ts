@@ -17,13 +17,14 @@ import { listLanes, renderLanes, watchLanes } from "./lanes.js";
 import { renderStatus } from "./status.js";
 
 const HELP = `usage: fleet-browser <command> [args]
-commands[10]:
+commands[11]:
   (none)                          lane status: browser, control, tabs, pending handoff
   open <url>                      open a page in this lane's persistent Chrome
   snapshot [-i] | click @e | fill @e <text> | type | press | scroll | wait | screenshot <path> | eval | get | find | tab | back | reload
                                   browser verbs, passed to agent-browser (run \`fleet-browser snapshot -i\` first)
   login <item> | otp <item> [--submit] | mail link|code <item> [--match <re>] [--since 10m] [--wait 60s] [--submit]
                                   fill credentials from the lane vault; you never see the secrets
+  login --stdin                   submit one lane-, origin- and URL-bound credential envelope from piped stdin in a fresh private tab
   captcha [detect] [--kind hcaptcha|recaptcha] [--no-handoff]
                                   solve the captcha on the page with the vision-model solver; hands the lane to the captain if it cannot
   dev [--headful] [--name <n>] <verb> ...
