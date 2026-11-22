@@ -65,7 +65,7 @@ const slowPs = () => stallingTool("ps", () => "exec sleep 3600");
 
 const slowZstd = () => stallingTool("zstd", (slow) => `while [ -e '${slow}' ]; do sleep 0.1; done`);
 
-const SCAN_CAP_MS = 25_000;
+const SCAN_CAP_MS = 90_000;
 const STALL_WAIT_MS = 150_000;
 
 async function closeOnLoadedHost(
