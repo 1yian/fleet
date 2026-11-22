@@ -41,7 +41,7 @@ export class Complaints {
     this.pi.registerTool({
       name: "complain",
       label: "Complain",
-      description: `Files one sentence of feedback about how the fleet's own setup annoyed you: its tools, messages, prompts, checks, or process. Call it once, only when the fleet asks "Did anything about the system annoy you?" and the answer is yes. When the answer is no, do not call it and do not answer the question. Write one concise sentence with no credentials and no customer data. The fleet files it as an issue on the public GitHub repository github.com/1yian/fleet, with the time, your role, lane, card, and project; text that looks like a secret or an email address is hidden first. The tool can confirm handoff to cardd, not publication. Carry on without retrying. ${FEEDBACK_ONLY}`,
+      description: `Files one sentence of feedback about how the fleet's own setup annoyed you: its tools, messages, prompts, checks, or process. Call it once, only when the fleet asks "Did anything about the system annoy you?" and the answer is yes. When the answer is no, do not call it and do not answer the question. Write one concise sentence about the workflow problem that belongs in a public issue, with no credentials, customer data, or private details. The fleet files it as an issue on the public GitHub repository github.com/1yian/fleet, with the time, your role, lane, card, and project. The tool can confirm handoff to cardd, not publication. Carry on without retrying. ${FEEDBACK_ONLY}`,
       parameters: OPS["complaint.publish"].args,
       execute: async (_id, params, _signal, _update, ctx) => {
         try {
