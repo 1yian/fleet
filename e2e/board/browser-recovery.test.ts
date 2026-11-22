@@ -169,3 +169,23 @@ test("a command whose confirmed tab changed while its drain waited is not sent",
   assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
   await page.keyboard.up("Shift");
 });
+
+test("input queued before the screen stopped matching is not sent when a matching frame returns", async (t) => {
+  const { endpoint, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  endpoint.hold();
+  await page.keyboard.down("Shift");
+  await until(() => endpoint.order.includes("key:rawKeyDown:Shift"));
+  await page.keyboard.press("b");
+  endpoint.showFrame(1);
+  await page.getByText("Control held · Input paused").waitFor();
+  endpoint.showFrame(0);
+  await page.getByText("You’re in control").waitFor();
+  endpoint.release();
+  await until(() => endpoint.activeInputs === 0);
+  await nextFrames(page);
+  assert.equal(endpoint.order.includes("key:keyDown:b"), false);
+  assert.equal(endpoint.order.includes("key:keyUp:b"), false);
+  await page.keyboard.up("Shift");
+});
