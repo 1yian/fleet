@@ -193,6 +193,37 @@ async function exerciseOutage(page: Page, endpoint: BrowserEndpoint): Promise<vo
   await until(() => endpoint.events.length > batches);
 }
 
+async function exerciseReconnectDuringTab(
+  page: Page,
+  endpoint: BrowserEndpoint,
+  jpeg: readonly string[],
+): Promise<void> {
+  endpoint.order.length = 0;
+  const batches = endpoint.events.length;
+  const arrived = endpoint.arrivals;
+  const opens = endpoint.streamOpens;
+  endpoint.hold();
+  await page.getByRole("button", { name: "Workshop" }).click();
+  await until(() => endpoint.arrivals > arrived);
+  endpoint.startOutage();
+  await page.getByText("Browser connection interrupted").waitFor();
+  endpoint.endOutage();
+  await until(() => endpoint.streamOpens > opens);
+  await page.locator(".browser-surface img").waitFor();
+  await page.mouse.click(300, 250);
+  await page.keyboard.press("x");
+  await nextFrames(page);
+  assert.equal(endpoint.events.length, batches);
+  endpoint.release();
+  await page
+    .locator(".browser-surface.driving img")
+    .and(page.locator(`[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`))
+    .waitFor();
+  await screenClick(page);
+  await until(() => endpoint.events.length > batches);
+  assert.deepEqual(endpoint.order.slice(0, endpoint.order.indexOf("tab")), []);
+}
+
 async function launch(t: TestContext) {
   const browser = await chromium.launch();
   t.after(() => browser.close());
@@ -273,6 +304,7 @@ test("the board watches lanes and only drives after stream confirmation, until c
 
   await exerciseOutage(page, endpoint);
   await exerciseAmbiguousTab(page, endpoint, jpeg);
+  await exerciseReconnectDuringTab(page, endpoint, jpeg);
 
   await page.getByRole("button", { name: "Done" }).click();
   await page.getByText("Control returned to the agent.").waitFor();
@@ -296,12 +328,9 @@ test("leaving the board right after Take control does not leave the viewer holdi
   const { endpoint, page, base } = await launch(t);
   await page.goto(`${base}#/browser/garden`);
   await page.getByText("Watching · Read only").waitFor();
-  const issued = page.waitForRequest((request) =>
-    new URL(request.url()).pathname.endsWith("/command"),
-  );
-  await page.getByRole("button", { name: "Take control" }).click();
-  await issued;
   endpoint.hold();
+  await page.getByRole("button", { name: "Take control" }).click();
+  await until(() => endpoint.arrivals === 1);
   await page.getByRole("link", { name: "‹ Browsers" }).click();
   await nextFrames(page);
   assert.equal(endpoint.commands.length, 0);
@@ -311,4 +340,23 @@ test("leaving the board right after Take control does not leave the viewer holdi
     { t: "control", on: true },
     { t: "control", on: false },
   ]);
+});
+
+test("an unconfirmed change leaves the viewer watching until the page is reloaded", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
+  await page.goto(`${base}#/browser/garden`);
+  await page.getByText("Watching · Read only").waitFor();
+  await page.getByRole("button", { name: "Take control" }).click();
+  await until(() => endpoint.commands.length === 1);
+  endpoint.confirm();
+  await page.getByText("You’re in control").waitFor();
+  endpoint.failNextCommand();
+  await page.getByRole("button", { name: "Workshop" }).click();
+  await page.getByText(/reload this page before taking control again/).waitFor();
+  await page.locator(`[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`).waitFor();
+  await page.mouse.click(300, 250);
+  await page.keyboard.press("x");
+  await nextFrames(page);
+  assert.equal(endpoint.events.length, 0);
+  assert.equal(await page.getByRole("button", { name: "Garden" }).isDisabled(), true);
 });

@@ -26,6 +26,8 @@ export class BrowserEndpoint {
   activeInputs = 0;
   rejected = 0;
   streamOpens = 0;
+  arrivals = 0;
+  private failing = false;
   readonly order: string[] = [];
   readonly events: Record<string, unknown>[] = [];
   readonly commands: unknown[] = [];
@@ -112,6 +114,10 @@ export class BrowserEndpoint {
     this.outage = false;
   }
 
+  failNextCommand(): void {
+    this.failing = true;
+  }
+
   withholdState(): void {
     this.withholding = true;
   }
@@ -167,8 +173,14 @@ export class BrowserEndpoint {
     }
     const body: unknown = JSON.parse(raw);
     if (url.pathname.endsWith("/command")) {
+      this.arrivals += 1;
       await this.gate;
       this.command(viewer, body);
+      if (this.failing) {
+        this.failing = false;
+        response.writeHead(500).end();
+        return;
+      }
     } else if (this.holder !== viewer) {
       response.writeHead(409).end("viewer does not hold control, send control first");
       return;
