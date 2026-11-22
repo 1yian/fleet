@@ -70,6 +70,11 @@ install_packages() {
   sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "${options[@]}" "${PACKAGES[@]}"
 }
 
+retry "Chromium download" bunx playwright install chromium || {
+  error "Chromium could not be downloaded after ${ATTEMPTS} attempts. Playwright's download hosts were unreachable from this runner."
+  exit 1
+}
+
 if plan_packages; then
   echo "Every system package for Chromium is installed, so apt is not needed."
   exit 0
