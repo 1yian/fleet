@@ -56,7 +56,9 @@ export function useChanges(): number {
       socket = new WebSocket(
         `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/live`,
       );
+      let established = false;
       socket.addEventListener("open", () => {
+        established = true;
         setChanges((n) => n + 1);
       });
       socket.addEventListener("message", () => {
@@ -64,7 +66,7 @@ export function useChanges(): number {
       });
       socket.addEventListener("close", () => {
         if (stopped) return;
-        setChanges((n) => n + 1);
+        if (established) setChanges((n) => n + 1);
         setTimeout(open, 1000);
       });
     };
