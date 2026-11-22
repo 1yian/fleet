@@ -1,3 +1,4 @@
+import { EMAIL_ADDRESS } from "./email-address.ts";
 import { CURL_DATA_SECRET, CURL_SHELL_EXPANSION } from "./curl-shell.ts";
 import { LEADING_ENVELOPE, milliseconds, retryAfterMs, type Envelope } from "./http-envelope.ts";
 import {
@@ -12,11 +13,6 @@ import {
 } from "./redact-guards.ts";
 import type { Timings } from "./timing.ts";
 
-const EMAIL_LOCAL_PART =
-  /(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|(?<![\p{L}\p{M}\p{N}.!#$%&'*+/=?^_`{|}~-])[\p{L}\p{M}\p{N}.!#$%&'*+/=?^_`{|}~-]+)/u
-    .source;
-const EMAIL_DOMAIN = /(?:[\p{L}\p{M}\p{N}-]+[.。．｡])+[\p{L}][\p{L}\p{M}\p{N}-]*/u.source;
-const EMAIL_ADDRESS = new RegExp(`${EMAIL_LOCAL_PART}@${EMAIL_DOMAIN}`, "gu");
 const MAX_RETRIES = 2;
 const MAX_REPLACEMENTS = 1;
 
@@ -283,7 +279,7 @@ function hasUnprovenValue(text: string): boolean {
   return false;
 }
 
-export function redact(text: string, scope: "public" | "diagnostic"): string {
+function redact(text: string, scope: "public" | "diagnostic"): string {
   return redactNormalized(normalizeInput(text), scope);
 }
 

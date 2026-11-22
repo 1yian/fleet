@@ -169,8 +169,9 @@ test("every line of a multiline complaint stays inside the literal block", async
   assert.equal(issue?.title, "Setup printed: ![trace](https://example.test/trace.png) # heading");
   const expectedBlock =
     "    Setup printed:\n    ![trace](https://example.test/trace.png)\n    \n    # heading\n\n";
-  const attribution = /^- Time: \d{4}-\d\d-\d\dT[\d:.]+Z\n- Role: worker\n- Lane: `main`\n- Card: c-\d+\n- Project: `web`\n$/;
-  assert.ok(issue?.body.startsWith(expectedBlock), issue?.body);
+  const attribution =
+    /^- Time: \d{4}-\d\d-\d\dT[\d:.]+Z\n- Role: worker\n- Lane: `main`\n- Card: c-\d+\n- Project: `web`\n$/;
+  assert.ok(issue.body.startsWith(expectedBlock), issue.body);
   assert.match(issue.body.slice(expectedBlock.length), attribution);
 });
 test("leading whitespace does not consume the title budget", async () => {

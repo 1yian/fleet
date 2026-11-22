@@ -480,13 +480,6 @@ const CURL_DATA_COMPLAINTS = [
   "curl --form=api_key=paper\\ canoe https://localhost",
 ];
 
-const RECORD_WITHHELD = "[credential record withheld: credential boundaries unclear]";
-
-export const withheldFor = (text: string): string =>
-  COOKIE_COMPLAINTS.includes(text)
-    ? RECORD_WITHHELD
-    : "[YAML withheld: credential boundaries unclear]";
-
 export const FIXTURES = {
   cookies: COOKIE_COMPLAINTS,
   curlData: CURL_DATA_COMPLAINTS,
