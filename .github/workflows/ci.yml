@@ -30,9 +30,9 @@ jobs:
       extension-e2e: ${{ steps.filter.outputs.extension-e2e }}
       board-e2e: ${{ steps.filter.outputs.board-e2e }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - id: filter
-        uses: dorny/paths-filter@v4
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d
         with:
           filters: |
             code:
@@ -71,6 +71,8 @@ jobs:
               - "bun.lock"
               - ".github/actions/install/**"
               - ".github/actions/install-bun/**"
+              - ".github/actions/install-node/**"
+              - ".github/actions/download/**"
             board-e2e:
               - "packages/board/**"
               - "packages/cardd/**"
@@ -111,6 +113,8 @@ jobs:
               - ".github/workflows/ci.yml"
               - ".github/actions/install/**"
               - ".github/actions/install-bun/**"
+              - ".github/actions/install-node/**"
+              - ".github/actions/download/**"
 
   static:
     timeout-minutes: 20
@@ -118,7 +122,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: ./.github/actions/install
       - run: bun run format:check
       - run: bun run lint
@@ -133,12 +137,10 @@ jobs:
     if: needs.changes.outputs.cardd == 'true'
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
+      - uses: ./.github/actions/install-node
       - uses: ./.github/actions/install-bun
       - run: bun run migrations:check
         env:
@@ -147,21 +149,22 @@ jobs:
   secrets:
     timeout-minutes: 10
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
-    env:
-      GITLEAKS_VERSION: 8.30.1
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Install gitleaks
-        run: |
-          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
-          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -sSfLO "${base}/${tarball}"
-          curl -sSfL "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" | grep " ${tarball}$" | sha256sum -c -
-          tar -xzf "${tarball}" gitleaks
+      - name: Download gitleaks
+        id: gitleaks
+        uses: ./.github/actions/download
+        with:
+          url: https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          sha256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
       - name: Scan the full history
-        run: ./gitleaks git --redact --no-banner .
+        env:
+          ASSET: ${{ steps.gitleaks.outputs.path }}
+        run: |
+          tar -xzf "$ASSET" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --redact --no-banner .
 
   e2e-pi:
     timeout-minutes: 30
@@ -169,7 +172,7 @@ jobs:
     if: needs.changes.outputs.pi == 'true'
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: ./.github/actions/install
       - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/pi/**/*.test.ts"
 
@@ -186,7 +189,7 @@ jobs:
     env:
       FLEET_E2E_CONCURRENCY: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: ./.github/actions/install
       - run: bun run build
       - run: node e2e/run.ts --shard=${{ matrix.shard }}/3 "e2e/cardd/**/*.test.ts"
@@ -205,25 +208,21 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       FLEET_E2E_CONCURRENCY: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
       - uses: ./.github/actions/install
       - name: Install herdr
-        env:
-          HERDR_VERSION: 0.9.5
-          HERDR_SHA256: 14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d
-        run: |
-          curl -fsSL -o herdr "https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-x86_64"
-          echo "${HERDR_SHA256}  herdr" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/bin"
-          chmod +x herdr && mv herdr "$RUNNER_TEMP/bin/herdr"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+        uses: ./.github/actions/install-herdr
       - name: Install direnv
         uses: ./.github/actions/install-direnv
         timeout-minutes: 5
-      - name: Install lavish-axi, which the review end-to-end tests drive (optional on a host, docs/setup.md)
-        run: bun install -g lavish-axi@0.1.90
+      - name: Install Lavish for the extension review tests
+        uses: ./.github/actions/install-lavish
+        timeout-minutes: 5
+        with:
+          version: 0.1.90
+          sha256: 9bed9d70b5fa5bdd1514a24937d2e0f9be04c43c3961321cc6b7e6ba9e7f92be
       - run: bun run build
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
@@ -236,14 +235,18 @@ jobs:
     if: needs.changes.outputs.board-e2e == 'true'
     runs-on: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","p620-ci"]') || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: ./.github/actions/install
       - run: bun run build
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
         timeout-minutes: 15
-      - name: Install stock Lavish for the authenticated browser review
-        run: bun install -g lavish-axi@0.1.97
+      - name: Install Lavish for the authenticated browser review
+        uses: ./.github/actions/install-lavish
+        timeout-minutes: 5
+        with:
+          version: 0.1.97
+          sha256: 84e4d91c173e91b966c506da770a649d533766d93985739d26b8592143127662
       - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/board/**/*.test.ts"
 
   tests-required:

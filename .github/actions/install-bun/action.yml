@@ -1,18 +1,21 @@
 name: Install Bun
-description: Installs the pinned Bun release into a folder of this job, after checking it against a pinned checksum. Bun's binary, cache, and global packages all stay under RUNNER_TEMP, so nothing is written outside the job.
+description: Installs the pinned and verified Bun release. Bun's binary, cache, and global packages stay under RUNNER_TEMP.
 runs:
   using: composite
   steps:
+    - id: download
+      uses: ./.github/actions/download
+      with:
+        url: https://github.com/oven-sh/bun/releases/download/bun-v1.3.13/bun-linux-x64.zip
+        sha256: 79c0771fa8b92c33aae41e15a0e0d307ea99d0e2f00317c71c6c53237a78e25a
     - shell: bash
       env:
-        BUN_VERSION: 1.3.13
-        BUN_SHA256: 79c0771fa8b92c33aae41e15a0e0d307ea99d0e2f00317c71c6c53237a78e25a
+        ASSET: ${{ steps.download.outputs.path }}
       run: |
-        curl -fsSL -o "${RUNNER_TEMP}/bun.zip" "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip"
-        echo "${BUN_SHA256}  ${RUNNER_TEMP}/bun.zip" | sha256sum -c -
-        mkdir -p "${RUNNER_TEMP}/bun/bin"
-        unzip -q -j -o "${RUNNER_TEMP}/bun.zip" bun-linux-x64/bun -d "${RUNNER_TEMP}/bun/bin"
-        ln -sf bun "${RUNNER_TEMP}/bun/bin/bunx"
-        rm "${RUNNER_TEMP}/bun.zip"
-        echo "BUN_INSTALL=${RUNNER_TEMP}/bun" >> "$GITHUB_ENV"
-        echo "${RUNNER_TEMP}/bun/bin" >> "$GITHUB_PATH"
+        mkdir -p "$RUNNER_TEMP/bun/bin"
+        unzip -q -j -o "$ASSET" bun-linux-x64/bun -d "$RUNNER_TEMP/bun/bin"
+        ln -sf bun "$RUNNER_TEMP/bun/bin/bunx"
+        echo "BUN_INSTALL=$RUNNER_TEMP/bun" >> "$GITHUB_ENV"
+        echo "BUN_INSTALL_CACHE_DIR=$RUNNER_TEMP/bun/install/cache" >> "$GITHUB_ENV"
+        echo "$RUNNER_TEMP/bun/bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/bun/bin/bun" --version

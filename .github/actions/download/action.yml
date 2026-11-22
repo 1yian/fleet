@@ -1,0 +1,42 @@
+name: Download verified release
+description: Restores or downloads a pinned release asset and checks its SHA-256 before use.
+inputs:
+  url:
+    description: Release asset URL
+    required: true
+  sha256:
+    description: Expected SHA-256
+    required: true
+outputs:
+  path:
+    description: Path to the verified asset
+    value: ${{ steps.asset.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/fleet-downloads/${{ inputs.sha256 }}
+        key: release-${{ runner.os }}-${{ runner.arch }}-${{ inputs.sha256 }}
+    - id: asset
+      shell: bash
+      env:
+        URL: ${{ inputs.url }}
+        SHA256: ${{ inputs.sha256 }}
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        dir="$RUNNER_TEMP/fleet-downloads/$SHA256"
+        file="$dir/${URL##*/}"
+        if [[ "$CACHE_HIT" != true ]]; then
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 45 --retry-max-time 60 -o "$file.part" "$URL"
+          mv "$file.part" "$file"
+        fi
+        printf '%s  %s\n' "$SHA256" "$file" | sha256sum --check
+        echo "path=$file" >> "$GITHUB_OUTPUT"
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/fleet-downloads/${{ inputs.sha256 }}
+        key: ${{ steps.cache.outputs.cache-primary-key }}

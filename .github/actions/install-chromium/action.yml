@@ -1,14 +1,25 @@
 name: Install Chromium
-description: Installs the Chromium that Playwright drives, from a cache when it can, and then only the system packages that the runner lacks.
+description: Installs the Chromium revision pinned by the locked Playwright package and only the system packages that the runner lacks.
 runs:
   using: composite
   steps:
     - id: playwright
       shell: bash
-      run: echo "version=$(bunx playwright --version | awk '{ print $NF }')" >> "$GITHUB_OUTPUT"
-    - uses: actions/cache@v6
+      run: |
+        version="$(bunx --no-install playwright --version)"
+        echo "version=${version#Version }" >> "$GITHUB_OUTPUT"
+        echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/fleet-chromium" >> "$GITHUB_ENV"
+    - id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
-        path: ~/.cache/ms-playwright
-        key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+        path: ${{ runner.temp }}/fleet-chromium
+        key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
     - shell: bash
-      run: ${{ github.action_path }}/install.sh
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: "$ACTION_PATH/install.sh"
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/fleet-chromium
+        key: ${{ steps.cache.outputs.cache-primary-key }}

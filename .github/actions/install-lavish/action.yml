@@ -1,0 +1,36 @@
+name: Install Lavish
+description: Installs a verified Lavish release into the job's PATH, with bounded npm fetch retries.
+inputs:
+  version:
+    description: Exact Lavish release version
+    required: true
+  sha256:
+    description: SHA-256 of the npm tarball
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: download
+      uses: ./.github/actions/download
+      with:
+        url: https://registry.npmjs.org/lavish-axi/-/lavish-axi-${{ inputs.version }}.tgz
+        sha256: ${{ inputs.sha256 }}
+    - id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/fleet-npm
+        key: lavish-npm-${{ runner.os }}-${{ runner.arch }}-${{ inputs.sha256 }}
+    - shell: bash
+      env:
+        ASSET: ${{ steps.download.outputs.path }}
+      run: |
+        npm install --global --prefix "$RUNNER_TEMP/lavish" --cache "$RUNNER_TEMP/fleet-npm" \
+          --ignore-scripts --no-audit --no-fund --prefer-offline \
+          --fetch-retries=2 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=3000 --fetch-timeout=30000 "$ASSET"
+        echo "$RUNNER_TEMP/lavish/bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/lavish/bin/lavish-axi" --version
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/fleet-npm
+        key: ${{ steps.cache.outputs.cache-primary-key }}
