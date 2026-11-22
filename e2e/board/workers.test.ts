@@ -136,7 +136,7 @@ test("a worker whose merge is authorized is waiting until it runs, then working"
     choice: "Approve & merge",
   });
   await page.getByText("No workers are working now.").waitFor();
-  await row(page, "Waiting", task).getByText("Merging", { exact: true }).waitFor();
+  await row(page, "Waiting", task).getByText("Merge approved", { exact: true }).waitFor();
 
   worker.send({ t: "activity", state: "running" });
   await row(page, "Working", task).getByText("Merging", { exact: true }).waitFor();
@@ -157,4 +157,30 @@ test("cached working rows are hidden promptly when cardd goes away", async (cont
     .getByText("Worker status is unavailable until cardd reconnects.")
     .waitFor({ timeout: 10_000 });
   assert.equal(await page.getByRole("link", { name: task.title }).count(), 0);
+});
+
+test("a card opened from Active Workers returns there after back and forward history", async (context) => {
+  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
+  context.after(() => cardd.stop());
+  const page = await openBoardPage(context, browser);
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/"));
+  const task = await newCard(main, "Review the invoice template");
+  await cardd.connect(await begin(main, task), [], true, true);
+  await page
+    .getByRole("navigation", { name: "Fleet views" })
+    .getByRole("link", { name: "Active Workers" })
+    .click();
+  await row(page, "Working", task).getByText("Running", { exact: true }).waitFor();
+  await row(page, "Working", task).getByRole("link", { name: task.title }).click();
+  await page.getByRole("heading", { name: task.title }).waitFor();
+
+  await page.goBack();
+  await page.goBack();
+  await page.getByRole("heading", { name: "Active Workers" }).waitFor({ state: "detached" });
+  await page.goForward();
+  await page.goForward();
+  await page.getByRole("heading", { name: task.title }).waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("heading", { name: "Active Workers" }).waitFor();
+  await row(page, "Working", task).waitFor();
 });
