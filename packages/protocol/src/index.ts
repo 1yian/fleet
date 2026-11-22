@@ -21,6 +21,7 @@ export * from "./approval.ts";
 export { laidOut } from "./question.ts";
 export { CAPTAIN, howToReply } from "./reply.ts";
 export * from "./branch.ts";
+export * from "./browser.ts";
 export { type Complaint } from "./complaints.ts";
 export * from "./health.ts";
 export * from "./http.ts";
@@ -432,6 +433,7 @@ const ClientMessage = Type.Union([
 export type ClientMessage = Static<typeof ClientMessage>;
 
 export const BoardSchema = Type.Object({
+  browsers: Type.Optional(Type.Boolean()),
   cards: Type.Array(BoardCardSchema),
   holds: Type.Array(
     Type.Object({

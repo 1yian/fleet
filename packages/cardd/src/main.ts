@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { timings } from "./timing.ts";
 import { parseAccess } from "./access.ts";
+import { browserUpstream } from "./browser.ts";
 import { openDatabase } from "./db.ts";
 import { fillRepo, type Hosts } from "./pulls.ts";
 import { stampLogLines } from "./log.ts";
@@ -144,6 +145,10 @@ if (command === "serve") {
     hostnames: values.hostname,
     hosts,
     access,
+    browser: browserUpstream(
+      process.env["CARDD_BROWSER_ORIGIN"],
+      process.env["CARDD_BROWSER_TOKEN_FILE"],
+    ),
     reviewOrigins: reviewOrigins(process.env["CARDD_REVIEW_ORIGINS"], access?.host),
   });
   console.log(`cardd listening on ${url}`);
