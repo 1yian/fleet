@@ -69,6 +69,20 @@ async function waitForScreen(pane: string, wanted: string, label: string): Promi
   }
 }
 
+async function waitForSurfaces(pane: string, status: string, label: string): Promise<void> {
+  const wanted = squeezed(status);
+  const deadline = Date.now() + WAIT_MS;
+  for (;;) {
+    const screen = squeezed(await lab.screen(pane));
+    if (screen.split(wanted).length - 1 === 2) return;
+    assert.ok(
+      Date.now() < deadline,
+      `timed out waiting for both the footer and the widget to show ${label}`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 async function waitForScreenWithout(pane: string, unwanted: string, label: string): Promise<void> {
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
@@ -110,8 +124,7 @@ test("main started directly with pi names every missing tier, does not join the 
     false,
   );
   const status = `fleet: not joined - tiers file invalid (2 tiers not declared): ${file}`;
-  await waitForScreen(pane, status, "the not-joined status");
-  await waitForScreen(pane, "Missing tiers (2): nm-fixer, reviewer", "the not-joined widget");
+  await waitForSurfaces(pane, status, "the not-joined status");
 
   copyFileSync(template(), file);
   await lab.submit(pane, "/probe-reload");
@@ -124,7 +137,7 @@ test("main tells a missing tiers file from an invalid one in its status line", a
   const file = join(h.dir, "agent", "tiers.json");
   rmSync(file);
   const pane = await startMain(lab, scratch, h);
-  await waitForScreen(
+  await waitForSurfaces(
     pane,
     `fleet: not joined - tiers file missing (${String(TIERS.length)} tiers): ${file}`,
     "the missing-file status",
@@ -132,7 +145,7 @@ test("main tells a missing tiers file from an invalid one in its status line", a
 
   writeFileSync(file, "{ not json");
   await lab.submit(pane, "/probe-reload");
-  await waitForScreen(
+  await waitForSurfaces(
     pane,
     `fleet: not joined - tiers file invalid (not valid JSON): ${file}`,
     "the invalid-file status",

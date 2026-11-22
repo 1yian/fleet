@@ -188,7 +188,7 @@ export interface SweepSnapshot {
 
 export interface TierShortfall {
   readonly path: string;
-  readonly kind: "missing-file" | "invalid-json" | "incomplete";
+  readonly kind: "missing-file" | "unreadable" | "invalid-json" | "incomplete";
   readonly missing: string[];
 }
 
@@ -196,10 +196,18 @@ export function tierShortfall(): TierShortfall | undefined {
   const path = tiersConfigPath();
   let config: unknown;
   let kind: TierShortfall["kind"] = "incomplete";
+  let text: string | undefined;
   try {
-    config = JSON.parse(readFileSync(path, "utf8"));
+    text = readFileSync(path, "utf8");
   } catch (error) {
-    kind = Reflect.get(Object(error), "code") === "ENOENT" ? "missing-file" : "invalid-json";
+    kind = Reflect.get(Object(error), "code") === "ENOENT" ? "missing-file" : "unreadable";
+  }
+  if (text !== undefined) {
+    try {
+      config = JSON.parse(text);
+    } catch {
+      kind = "invalid-json";
+    }
   }
   const declared = declaredTiers(config);
   const missing = requiredTiers().filter((name) => !declared.includes(name));
@@ -208,12 +216,16 @@ export function tierShortfall(): TierShortfall | undefined {
 
 const TIER_STATES: Record<TierShortfall["kind"], string> = {
   "missing-file": "does not exist",
+  unreadable: "cannot be read",
   "invalid-json": "is not valid JSON",
   incomplete: "does not declare every tier",
 };
 
-export function tierProblems(root: string, host: string): string[] {
-  const shortfall = tierShortfall();
+export function tierProblems(
+  root: string,
+  host: string,
+  shortfall: TierShortfall | undefined,
+): string[] {
   if (shortfall === undefined) return [];
   const { path, kind, missing } = shortfall;
   const fix = `run ${join(root, "bin", "fleet")} install, which writes ${TIERS_TEMPLATE} there when the file does not exist, or give each of them a tier with a non-empty chain in it`;
@@ -227,9 +239,11 @@ export function tierStatusLine({ path, kind, missing }: TierShortfall): string {
   const reason =
     kind === "missing-file"
       ? `missing (${count} tiers)`
-      : kind === "invalid-json"
-        ? "invalid (not valid JSON)"
-        : `invalid (${count} tiers not declared)`;
+      : kind === "unreadable"
+        ? "unreadable (cannot be read)"
+        : kind === "invalid-json"
+          ? "invalid (not valid JSON)"
+          : `invalid (${count} tiers not declared)`;
   return `fleet: not joined - tiers file ${reason}: ${path}`;
 }
 
@@ -372,7 +386,7 @@ export function hostProblems(
   const host = hostname();
   return [
     ...TOOLS.flatMap((tool) => toolProblem(tool, host, checkLogin, deadline) ?? []),
-    ...tierProblems(root, host),
+    ...tierProblems(root, host, tierShortfall()),
     ...memoryProblems(root, host, snapshot),
   ];
 }

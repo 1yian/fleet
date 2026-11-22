@@ -13,7 +13,7 @@ export function refuseWithoutTiers(ctx: ExtensionContext, root: string): boolean
     }
     return false;
   }
-  const lines = tierProblems(root, hostname()).map((problem) => `fleet: ${problem}`);
+  const lines = tierProblems(root, hostname(), shortfall).map((problem) => `fleet: ${problem}`);
   if (ctx.hasUI) {
     const status = tierStatusLine(shortfall);
     ctx.ui.notify(lines.join("\n"), "error");
