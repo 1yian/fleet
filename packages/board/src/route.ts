@@ -12,6 +12,7 @@ const hash = (): string => location.hash;
 
 const positions = new Map<string, number>();
 let current = "";
+let where = "";
 
 const fresh = (): string => `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
 
@@ -45,8 +46,9 @@ export function useCardRoute(): {
   const id = card === undefined ? undefined : Number(card);
 
   const open = useCallback((next: number) => {
-    positions.set(current, window.scrollY);
+    if (!ADDRESS.test(where)) positions.set(current, window.scrollY);
     current = fresh();
+    where = `#/c-${String(next)}`;
     history.pushState({ key: current, opened: true }, "", `#/c-${String(next)}`);
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   }, []);
@@ -57,16 +59,19 @@ export function useCardRoute(): {
       return;
     }
     current = fresh();
+    where = "";
     history.replaceState({ key: current, opened: false }, "", location.pathname + location.search);
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   }, []);
 
   useEffect(() => {
     current = adopt();
+    where = location.hash;
     history.scrollRestoration = "manual";
     const depart = (): void => {
-      positions.set(current, window.scrollY);
+      if (!ADDRESS.test(where)) positions.set(current, window.scrollY);
       current = adopt();
+      where = location.hash;
     };
     window.addEventListener("popstate", depart);
     return () => {
