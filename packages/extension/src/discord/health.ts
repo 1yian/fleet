@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname } from "node:path";
 import Type, { type Static } from "typebox";
 import Value from "typebox/value";
-import { describeError, type Log } from "./log.ts";
+import type { Log } from "./log.ts";
 
 export const NEVER = "never";
 const WRITE_MS = 5_000;
@@ -55,6 +55,12 @@ export function readStatus(file: string): BridgeStatus | undefined {
   } catch {
     return undefined;
   }
+}
+
+function errorCode(error: unknown): string {
+  return error instanceof Error && "code" in error && typeof error.code === "string"
+    ? error.code
+    : "unknown error";
 }
 
 function forget(file: string): void {
@@ -150,15 +156,18 @@ export class Health {
     if (this.stopped) return;
     this.status.writtenAt = now();
     const temporary = `${this.file}.${randomUUID()}.tmp`;
+    let step = "creating the folder";
     try {
       mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
+      step = "writing";
       writeFileSync(temporary, `${JSON.stringify(this.status, null, 2)}\n`, {
         flag: "wx",
         mode: 0o600,
       });
+      step = "renaming";
       renameSync(temporary, this.file);
     } catch (error) {
-      this.log(`the status file was not written: ${describeError(error)}`);
+      this.log(`the status file was not written while ${step}: ${errorCode(error)}`);
       forget(temporary);
     }
   }
