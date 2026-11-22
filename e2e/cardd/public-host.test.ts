@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, afterEach, before, beforeEach, test } from "node:test";
 import { BoardSchema, CardSchema, check } from "@fleet/protocol";
@@ -16,6 +17,8 @@ import {
   unsigned,
   upgrade,
 } from "../support/public-host.ts";
+
+import { tempDir } from "../support/run-root.ts";
 
 const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
 const SECRET = "The secret roadmap";
@@ -135,6 +138,39 @@ test("a token from the owner opens the page, the data, /live, and an action thro
   assert.equal(act.status, 200);
   assert.equal(await open(), 0);
   assert.equal(site.issuer.hits, 1);
+});
+
+test("the lane browser relay stays off the public host even for the owner", async (t) => {
+  const isolated = await Cardd.start(
+    {
+      ...site.env,
+      CARDD_BROWSER_ORIGIN: "http://127.0.0.1:1",
+      CARDD_BROWSER_TOKEN_FILE: join(tempDir("no-browser-token-"), "token"),
+    },
+    [...site.flags, "--board", BOARD],
+  );
+  t.after(() => isolated.stop());
+  const url = new URL(isolated.url.replace(/^ws/, "http").replace(/\/session$/, "/"));
+  assert.equal((await isolated.board()).browsers, true);
+  const headers = through(site.token());
+  const board = check(
+    BoardSchema,
+    JSON.parse((await exchange(url, "/api/board", "GET", headers)).body),
+  );
+  assert.equal(board.browsers, undefined);
+  assert.equal((await exchange(url, "/api/browser/events", "GET", headers)).status, 403);
+  assert.equal(
+    (
+      await exchange(
+        url,
+        "/api/browser/lanes/main/command?viewer=lab",
+        "POST",
+        { ...headers, ...JSON_BODY },
+        { t: "control", on: true },
+      )
+    ).status,
+    403,
+  );
 });
 
 test("a request for the public host without a valid token gets no board, page, data, action, or socket", async () => {
