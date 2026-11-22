@@ -12,8 +12,7 @@ import {
   addLane,
   faultLog,
   fleet,
-  fleetEnv,
-  fleetWithEnv,
+  hangingTiming,
   legacyMaintenance,
   typedMaintenance,
   maintenanceOutcomes,
@@ -237,17 +236,9 @@ test("maintenance returns a completed start alongside a later lifecycle failure"
   assert.deepEqual(maintain(), [...action("ops", "running"), ...action("zz", "started")]);
 });
 
-const HANGING_SWEEP_ENV = {
-  FLEET_PROBE_TIMEOUT_MS: "8000",
-  FLEET_MAINTENANCE_SWEEP_MS: "51000",
-};
-
 const hangingSweep = (panes: string[]) =>
   maintenanceOutcomes(
-    fleetWithEnv(typedMaintenance, {
-      ...fleetEnv("hanging-panes", panes.join(",")),
-      ...HANGING_SWEEP_ENV,
-    }),
+    fleet(typedMaintenance, "hanging-panes", panes.join(","), "60000", hangingTiming),
   );
 
 test("an early hanging observation does not starve a later healthy lane", async () => {
@@ -307,7 +298,7 @@ test("automatic sweeps rotate past repeated hangs and reap their probes", async 
   await idlePane("ops", `${here.root}.worktrees/lane-ops`);
   writeFileSync(`${faultLog()}.targets`, `${panes.join(",")}\n`);
   h.onModel(() => ({ text: "noted" }), "mate");
-  await startMain(lab, here, h, false, undefined, HANGING_SWEEP_ENV);
+  await startMain(lab, here, h, false, undefined, hangingTiming);
   const deadline = Date.now() + 140_000;
   for (;;) {
     const rows = records(JSON.parse(fleet(["status", "--json"])));

@@ -396,15 +396,22 @@ function fleetEnv(fault = "", pane = "", probeTimeout = "20000"): NodeJS.Process
   };
 }
 
-function fleet(args: readonly string[], fault = "", pane = "", probeTimeout?: string): string {
-  return fleetWithEnv(args, fleetEnv(fault, pane, probeTimeout));
-}
+const hangingTiming = {
+  FLEET_LANE_OBSERVATION_MS: "8000",
+  FLEET_MAINTENANCE_SWEEP_MS: "51000",
+} as const;
 
-export function fleetWithEnv(args: readonly string[], env: NodeJS.ProcessEnv): string {
+function fleet(
+  args: readonly string[],
+  fault = "",
+  pane = "",
+  probeTimeout?: string,
+  timing?: typeof hangingTiming,
+): string {
   return execFileSync(process.execPath, [here.launch, ...args], {
     encoding: "utf8",
     timeout: 90_000,
-    env,
+    env: { ...fleetEnv(fault, pane, probeTimeout), ...timing },
   });
 }
 
@@ -479,6 +486,7 @@ export {
   faultLog,
   fleet,
   fleetEnv,
+  hangingTiming,
   legacyMaintenance,
   typedMaintenance,
   maintenanceOutcomes,
