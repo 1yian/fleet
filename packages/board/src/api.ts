@@ -63,7 +63,9 @@ export function useChanges(): number {
         setChanges((n) => n + 1);
       });
       socket.addEventListener("close", () => {
-        if (!stopped) setTimeout(open, 1000);
+        if (stopped) return;
+        setChanges((n) => n + 1);
+        setTimeout(open, 1000);
       });
     };
     open();
