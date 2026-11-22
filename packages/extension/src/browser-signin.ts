@@ -19,6 +19,9 @@ const SAID = {
 
 type Outcome = keyof typeof SAID;
 
+const isOutcome = (value: string | undefined): value is Outcome =>
+  value !== undefined && Object.hasOwn(SAID, value);
+
 type Envelope = OpResult<"signin.redeem">;
 
 function deliver(envelope: Envelope): Promise<Outcome> {
@@ -42,7 +45,7 @@ function deliver(envelope: Envelope): Promise<Outcome> {
     child.once("close", (code) => {
       clearTimeout(timer);
       const said = OUTCOME.exec(out)?.[1];
-      settle(code === 0 && said !== undefined && said in SAID ? (said as Outcome) : "failed");
+      settle(code === 0 && isOutcome(said) ? said : "failed");
     });
     child.stdin.end(JSON.stringify(envelope));
   });

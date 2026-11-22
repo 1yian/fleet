@@ -54,7 +54,8 @@ async function grant(
     ...extra,
   });
   assert.equal(status, 200);
-  const ref = typeof body === "object" && body !== null ? Reflect.get(body, "grant") : undefined;
+  const ref: unknown =
+    typeof body === "object" && body !== null ? Reflect.get(body, "grant") : undefined;
   assert.equal(typeof ref, "string");
   return String(ref);
 }
@@ -99,6 +100,19 @@ async function redeem(
   return results;
 }
 
+function assertSentToBrowser(browser: FakeBrowser): void {
+  const [call, ...more] = browser.calls();
+  assert.ok(call);
+  assert.equal(more.length, 0);
+  assert.deepEqual(call["argv"], ["login", "--lane", "main", "--stdin"]);
+  assert.equal(call["stdinIsTty"], false);
+  assert.deepEqual(call["keys"], ["lane", "origin", "password", "url", "username"]);
+  assert.equal(call["origin"], "https://login.example.test");
+  assert.equal(call["url"], SIGN_IN);
+  assert.equal(call["username"], USER);
+  assert.equal(call["passwordSha256"], sha(MARKER));
+}
+
 test("the captain's grant signs the lane's browser in without the worker seeing the password", async () => {
   const entry = await captainSays(MARKER);
   const ref = await grant(entry);
@@ -113,15 +127,7 @@ test("the captain's grant signs the lane's browser in without the worker seeing 
 
   assert.equal(results.length, 1);
   assert.match(results[0] ?? "", /^browser_signin done\. /);
-  const [call, ...more] = browser.calls();
-  assert.equal(more.length, 0);
-  assert.deepEqual(call?.["argv"], ["login", "--lane", "main", "--stdin"]);
-  assert.equal(call?.["stdinIsTty"], false);
-  assert.deepEqual(call?.["keys"], ["lane", "origin", "password", "url", "username"]);
-  assert.equal(call?.["origin"], "https://login.example.test");
-  assert.equal(call?.["url"], SIGN_IN);
-  assert.equal(call?.["username"], USER);
-  assert.equal(call?.["passwordSha256"], sha(MARKER));
+  assertSentToBrowser(browser);
   const others = (await fleet.cardd.thread(card.id)).entries.filter((each) => each.id !== entry);
   assert.ok(!JSON.stringify(others).includes(MARKER));
 });
@@ -223,8 +229,9 @@ test("the board refuses a grant that does not name a one-line password, an entry
     /there is no lane nowhere/,
   );
   assert.equal(
-    (await fleet.cardd.thread(card.id)).entries.filter((each) => /^Sign-in grant/.test(each.body))
-      .length,
+    (await fleet.cardd.thread(card.id)).entries.filter((each) =>
+      each.body.startsWith("Sign-in grant"),
+    ).length,
     0,
   );
 });
