@@ -302,3 +302,24 @@ test("a queued tab request does not make an old frame for that tab trusted", asy
     .waitFor();
   await page.keyboard.up("Shift");
 });
+
+test("a frame before the activation is confirmed stays a preview and grants no input", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  endpoint.holdFrame();
+  endpoint.hold();
+  await page.getByRole("button", { name: "Workshop" }).click();
+  await until(() => endpoint.arrivals === 2);
+  endpoint.showFrame(1);
+  endpoint.switchTab(1);
+  await page
+    .locator('nav[aria-label="Remote tabs"] button[aria-current="true"]', { hasText: "Workshop" })
+    .waitFor();
+  await page.locator(".browser-surface").waitFor();
+  assert.equal(await page.locator(".browser-surface.driving").count(), 0);
+  endpoint.release();
+  await page
+    .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
+    .waitFor();
+});

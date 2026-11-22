@@ -1,4 +1,4 @@
-import type { BrowserCommand } from "@fleet/protocol";
+import type { BrowserCommand, BrowserState } from "@fleet/protocol";
 
 export type BrowserInput =
   | {
@@ -34,3 +34,17 @@ export function commandError(pending: Pending): string {
   if (pending === "done") return "Couldn’t return control. Try Done again.";
   return "Couldn’t switch tabs. Try again.";
 }
+
+export interface Status {
+  readonly state?: BrowserState | undefined;
+  readonly pending?: Pending | undefined;
+  readonly notice?: string | undefined;
+  readonly offline?: boolean | undefined;
+  readonly fenced?: boolean | undefined;
+  readonly halted?: boolean | undefined;
+}
+
+export const LOST = "Control ended. You’re watching again.";
+export const CHANGED = "The remote browser changed before your request went through. Try again.";
+export const AMBIGUOUS =
+  "The last change may not have finished, so input and control changes are off. You can keep watching. Leave this page to hand control back to the agent.";
