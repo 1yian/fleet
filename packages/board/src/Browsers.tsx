@@ -1,7 +1,8 @@
-import { useState } from "react";
-import type { BrowserLane, BrowserState } from "@fleet/protocol";
+import { useState, type ComponentProps } from "react";
+import type { BrowserFrame, BrowserLane, BrowserState } from "@fleet/protocol";
 import { browserHref, openHandoff, type useBrowserLanes } from "./browser-api.ts";
 import { BrowserSurface } from "./BrowserSurface.tsx";
+import type { Pending } from "./browser-commands.ts";
 import { useBrowserViewer } from "./browser-session.ts";
 import "./browsers.css";
 
@@ -57,7 +58,7 @@ function BrowserDirectory({ lanes, feed }: Feed) {
   );
   return (
     <main className="board browser-page">
-      <a className="browser-back" href="#">
+      <a className="browser-back" href="#/">
         ‹ Board
       </a>
       <h1>Lane browsers</h1>
@@ -144,48 +145,32 @@ function viewerHint(owns: boolean, driving: boolean, halted: boolean): string {
   return "Click the browser to send input. Press Shift + Esc to leave the screen, or Done to return control.";
 }
 
-function LaneBrowser({ lane }: { readonly lane: string }) {
-  const { frame, status, command, input } = useBrowserViewer(lane);
-  const { state, pending, notice, offline, fenced, halted } = status;
-  const owns = state?.viewer.controlling === true;
-  const driving = owns && pending === undefined && fenced !== true;
-  const canTake =
+function canTake(state: BrowserState | undefined): boolean {
+  return (
     state?.snapshot.status === "ready" &&
     state.activeTab !== null &&
     state.snapshot.control.kind === "agent" &&
     !state.snapshot.credentialStep &&
-    !state.snapshot.captchaStep;
+    !state.snapshot.captchaStep
+  );
+}
+
+function actionLabel(pending: Pending | undefined, owns: boolean): string {
+  if (pending === "take") return "Taking control…";
+  if (pending === "done") return "Returning control…";
+  return owns ? "Done" : "Take control";
+}
+
+function Notices({
+  state,
+  notice,
+}: {
+  readonly state: BrowserState | undefined;
+  readonly notice: string | undefined;
+}) {
   const handoff = openHandoff(state?.snapshot);
-  const visible = frame !== undefined && state?.activeTab === frame.meta.targetId;
   return (
-    <main className="board browser-page">
-      <a className="browser-back" href={browserHref()}>
-        ‹ Browsers
-      </a>
-      <header className="browser-heading">
-        <div>
-          <h1>{lane} browser</h1>
-          <p className="muted" role="status">
-            {viewerMode(state, offline, driving)}
-          </p>
-        </div>
-        <button
-          className="browser-action"
-          type="button"
-          disabled={pending !== undefined || halted === true || (owns ? fenced === true : !canTake)}
-          onClick={() => {
-            command(owns ? "done" : "take");
-          }}
-        >
-          {pending === "take"
-            ? "Taking control…"
-            : pending === "done"
-              ? "Returning control…"
-              : owns
-                ? "Done"
-                : "Take control"}
-        </button>
-      </header>
+    <>
       {handoff === undefined ? null : (
         <p className="browser-handoff">
           <strong>Agent needs you</strong>
@@ -202,25 +187,75 @@ function LaneBrowser({ lane }: { readonly lane: string }) {
           {laneStatus(state.snapshot)}. Take control when it’s ready.
         </p>
       ) : null}
+    </>
+  );
+}
+
+function placeholder(state: BrowserState | undefined, offline: boolean | undefined): string {
+  return offline || state?.snapshot.status === "failed"
+    ? "Live view unavailable."
+    : "Waiting for the browser screen…";
+}
+
+function Screen({
+  frame,
+  state,
+  offline,
+  driving,
+  input,
+}: {
+  readonly frame: BrowserFrame | undefined;
+  readonly state: BrowserState | undefined;
+  readonly offline: boolean | undefined;
+  readonly driving: boolean;
+  readonly input: ComponentProps<typeof BrowserSurface>["input"];
+}) {
+  if (frame === undefined || state?.activeTab !== frame.meta.targetId)
+    return <p className="browser-placeholder">{placeholder(state, offline)}</p>;
+  return <BrowserSurface frame={frame} driving={driving} input={input} />;
+}
+
+function LaneBrowser({ lane }: { readonly lane: string }) {
+  const { frame, status, command, input } = useBrowserViewer(lane);
+  const { state, pending, notice, offline, fenced, halted } = status;
+  const owns = state?.viewer.controlling === true;
+  const fence = owns && fenced === true;
+  const driving = owns && pending === undefined && !fence;
+  return (
+    <main className="board browser-page">
+      <a className="browser-back" href={browserHref()}>
+        ‹ Browsers
+      </a>
+      <header className="browser-heading">
+        <div>
+          <h1>{lane} browser</h1>
+          <p className="muted" role="status">
+            {viewerMode(state, offline, driving)}
+          </p>
+        </div>
+        <button
+          className="browser-action"
+          type="button"
+          disabled={pending !== undefined || halted === true || (owns ? fence : !canTake(state))}
+          onClick={() => {
+            command(owns ? "done" : "take");
+          }}
+        >
+          {actionLabel(pending, owns)}
+        </button>
+      </header>
+      <Notices state={state} notice={notice} />
       <section className="browser-stage" aria-label="Remote browser">
         {state === undefined ? null : (
           <BrowserTabs
             state={state}
-            busy={pending !== undefined || (owns && fenced === true)}
+            busy={pending !== undefined || fence}
             select={(tab) => {
               command({ tab });
             }}
           />
         )}
-        {visible ? (
-          <BrowserSurface frame={frame} driving={driving} input={input} />
-        ) : (
-          <p className="browser-placeholder">
-            {offline || state?.snapshot.status === "failed"
-              ? "Live view unavailable."
-              : "Waiting for the browser screen…"}
-          </p>
-        )}
+        <Screen frame={frame} state={state} offline={offline} driving={driving} input={input} />
       </section>
       <p className="browser-hint muted">{viewerHint(owns, driving, halted === true)}</p>
     </main>
