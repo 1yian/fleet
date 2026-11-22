@@ -1,61 +1,19 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { test, type TestContext } from "node:test";
-import { fileURLToPath } from "node:url";
-import { chromium, type Page } from "playwright";
-import { BrowserEndpoint, REASON } from "../support/browser-endpoint.ts";
-import { boundBoardFile, openBoardPage, startBoardServer } from "../support/board.ts";
-import { tempDir } from "../support/run-root.ts";
+import { test } from "node:test";
+import type { Page } from "playwright";
+import { boundBoardFile } from "../support/board.ts";
+import { REASON, type BrowserEndpoint } from "../support/browser-endpoint.ts";
+import {
+  delivered,
+  launch,
+  near,
+  nextFrames,
+  screenClick,
+  takeControl,
+  until,
+} from "../support/browser-lab.ts";
 
-const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
 boundBoardFile();
-
-async function renderedJpegs(page: Page): Promise<string[]> {
-  const images: string[] = [];
-  for (const color of ["forestgreen", "rebeccapurple"]) {
-    await page.setContent(`<body style="background:${color}">`);
-    images.push((await page.screenshot({ type: "jpeg" })).toString("base64"));
-  }
-  return images;
-}
-
-async function until(condition: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 300 && !condition(); attempt += 1)
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.ok(condition());
-}
-
-function delivered(endpoint: BrowserEndpoint, match: Record<string, unknown>) {
-  return endpoint.events.filter((item) =>
-    Object.entries(match).every(([key, value]) => item[key] === value),
-  );
-}
-
-function near(value: unknown, expected: number): void {
-  assert.ok(typeof value === "number" && Math.abs(value - expected) <= 2, String(value));
-}
-
-async function nextFrames(page: Page): Promise<void> {
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            resolve();
-          });
-        });
-      }),
-  );
-}
-
-async function screenClick(page: Page): Promise<void> {
-  const rect = await page.getByRole("img", { name: "Live browser screen" }).boundingBox();
-  assert.ok(rect);
-  await page.mouse.click(rect.x + rect.width / 2, rect.y + rect.height / 2);
-  await page.keyboard.press("x");
-  await nextFrames(page);
-}
 
 async function exerciseInput(page: Page, endpoint: BrowserEndpoint): Promise<void> {
   await until(() => delivered(endpoint, { t: "key", type: "keyUp", key: "x" }).length === 1);
@@ -230,41 +188,6 @@ async function exerciseReconnectDuringTab(
   assert.deepEqual(endpoint.order.slice(0, endpoint.order.indexOf("tab")), []);
 }
 
-async function takeControl(page: Page, endpoint: BrowserEndpoint, base: string): Promise<void> {
-  await page.goto(`${base}#/browser/garden`);
-  await page.getByText("Watching · Read only").waitFor();
-  await page.getByRole("button", { name: "Take control" }).click();
-  await until(() => endpoint.commands.length === 1);
-  endpoint.confirm();
-  await page.getByText("You’re in control").waitFor();
-}
-
-async function launch(t: TestContext) {
-  const browser = await chromium.launch();
-  t.after(() => browser.close());
-  const drawing = await openBoardPage(t, browser, { width: 480, height: 300 });
-  const jpeg = await renderedJpegs(drawing);
-  const endpoint = new BrowserEndpoint(jpeg);
-  await new Promise<void>((resolve) => {
-    endpoint.server.listen(0, "127.0.0.1", resolve);
-  });
-  t.after(() => {
-    endpoint.server.closeAllConnections();
-    endpoint.server.close();
-  });
-  const address = endpoint.server.address();
-  assert.ok(address && typeof address !== "string");
-  const token = join(tempDir("browser-token-"), "token");
-  writeFileSync(token, endpoint.token, { mode: 0o600 });
-  const cardd = await startBoardServer(t, BOARD, {
-    CARDD_BROWSER_ORIGIN: `http://127.0.0.1:${String(address.port)}`,
-    CARDD_BROWSER_TOKEN_FILE: token,
-  });
-  const page = await openBoardPage(t, browser);
-  const base = cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/");
-  return { endpoint, jpeg, page, base };
-}
-
 test("the board watches lanes and only drives after stream confirmation, until control is returned or lost", async (t) => {
   const { endpoint, jpeg, page, base } = await launch(t);
   await page.goto(base);
@@ -411,71 +334,4 @@ test("leaving after an input timeout sends nothing while the browser may still b
   endpoint.release();
   await until(() => endpoint.activeInputs === 0);
   assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
-});
-
-test("a key held when only the stream drops is released once the same tab is confirmed again", async (t) => {
-  const { endpoint, page, base } = await launch(t);
-  await takeControl(page, endpoint, base);
-  await screenClick(page);
-  await page.keyboard.down("Shift");
-  await until(() => endpoint.order.includes("key:rawKeyDown:Shift"));
-  const opens = endpoint.streamOpens;
-  endpoint.startOutage();
-  await page.getByText("Browser connection interrupted").waitFor();
-  endpoint.withholdState();
-  endpoint.endOutage();
-  await until(() => endpoint.streamOpens > opens);
-  assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
-  endpoint.releaseState();
-  await until(() => endpoint.order.includes("key:keyUp:Shift"));
-  await page.getByText("You’re in control").waitFor();
-  const pressed = endpoint.order.indexOf("key:rawKeyDown:Shift");
-  assert.deepEqual(endpoint.order.slice(pressed), ["key:rawKeyDown:Shift", "key:keyUp:Shift"]);
-  await page.keyboard.up("Shift");
-});
-
-test("leaving before a reconnected stream is confirmed sends no release for a held key", async (t) => {
-  const { endpoint, page, base } = await launch(t);
-  await takeControl(page, endpoint, base);
-  await screenClick(page);
-  await page.keyboard.down("Shift");
-  await until(() => endpoint.order.includes("key:rawKeyDown:Shift"));
-  const opens = endpoint.streamOpens;
-  endpoint.startOutage();
-  await page.getByText("Browser connection interrupted").waitFor();
-  endpoint.withholdState();
-  endpoint.endOutage();
-  await until(() => endpoint.streamOpens > opens);
-  await page.keyboard.up("Shift");
-  await page.getByRole("link", { name: "‹ Browsers" }).click();
-  await until(() => endpoint.streams === 0);
-  assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
-  assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
-});
-
-test("a release still queued when the stream drops is sent once from the acknowledged press", async (t) => {
-  const { endpoint, page, base } = await launch(t);
-  await takeControl(page, endpoint, base);
-  await screenClick(page);
-  await page.keyboard.down("Shift");
-  await until(() => endpoint.order.includes("key:rawKeyDown:Shift") && endpoint.activeInputs === 0);
-  await nextFrames(page);
-  endpoint.hold();
-  await page.keyboard.press("a");
-  await until(() => endpoint.activeInputs > 0);
-  await page.keyboard.up("Shift");
-  const opens = endpoint.streamOpens;
-  endpoint.startOutage();
-  await page.getByText("Browser connection interrupted").waitFor();
-  endpoint.release();
-  await until(() => endpoint.activeInputs === 0);
-  endpoint.withholdState();
-  endpoint.endOutage();
-  await until(() => endpoint.streamOpens > opens);
-  assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
-  endpoint.releaseState();
-  await until(() => endpoint.order.includes("key:keyUp:Shift"));
-  await page.getByText("You’re in control").waitFor();
-  assert.equal(endpoint.order.filter((entry) => entry === "key:keyUp:Shift").length, 1);
-  await page.keyboard.up("Shift");
 });
