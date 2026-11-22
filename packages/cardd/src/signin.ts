@@ -46,7 +46,6 @@ export function createGrant(
   db: DatabaseSync,
   card: Card,
   action: GrantAction,
-  now: number,
 ): { grant: string; text: string } {
   const { url } = signinUrl(action.url);
   if (db.prepare("SELECT 1 FROM lanes WHERE name = ?").get(action.lane) === undefined)
@@ -56,8 +55,8 @@ export function createGrant(
   selected(bodyOf(db, action.entry, card.id), start, end);
   const grant = `sg-${randomBytes(8).toString("hex")}`;
   db.prepare(
-    "INSERT INTO signin_grants (id, entry, lane, url, username, span_start, span_end, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(grant, action.entry, action.lane, url, action.username ?? null, start, end, now);
+    "INSERT INTO signin_grants (id, entry, lane, url, username, span_start, span_end) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(grant, action.entry, action.lane, url, action.username ?? null, start, end);
   const text = `Sign-in grant ${grant}: one use, for lane ${action.lane}, entry ${String(action.entry)}, at ${url}. A worker in that lane redeems it with browser_signin(grant, entry, url). The password stays in the entry and is never copied here. If the sign-in fails, the grant is spent: the captain must make a new one.`;
   return { grant, text };
 }

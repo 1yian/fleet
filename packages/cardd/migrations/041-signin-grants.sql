@@ -6,7 +6,6 @@ CREATE TABLE signin_grants (
   username TEXT,
   span_start INTEGER,
   span_end INTEGER,
-  created_at INTEGER NOT NULL,
   redeemed_at INTEGER,
   CHECK ((span_start IS NULL) = (span_end IS NULL))
 ) STRICT;
