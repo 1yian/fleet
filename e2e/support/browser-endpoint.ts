@@ -28,6 +28,7 @@ export class BrowserEndpoint {
   streamOpens = 0;
   arrivals = 0;
   private failing = false;
+  private failingInput = false;
   readonly order: string[] = [];
   readonly events: Record<string, unknown>[] = [];
   readonly commands: unknown[] = [];
@@ -118,6 +119,10 @@ export class BrowserEndpoint {
     this.failing = true;
   }
 
+  failNextInput(): void {
+    this.failingInput = true;
+  }
+
   withholdState(): void {
     this.withholding = true;
   }
@@ -153,7 +158,9 @@ export class BrowserEndpoint {
       this.begin(response);
       this.viewers.set(viewer, response);
       this.streamOpens += 1;
-      response.once("close", () => this.viewers.delete(viewer));
+      response.once("close", () => {
+        if (this.viewers.get(viewer) === response) this.viewers.delete(viewer);
+      });
       if (!this.withholding) this.state(viewer, response);
     } else {
       await this.mutate(url, viewer, request, response);
@@ -184,7 +191,14 @@ export class BrowserEndpoint {
     } else if (this.holder !== viewer) {
       response.writeHead(409).end("viewer does not hold control, send control first");
       return;
-    } else await this.input(body);
+    } else {
+      await this.input(body);
+      if (this.failingInput) {
+        this.failingInput = false;
+        response.writeHead(500).end();
+        return;
+      }
+    }
     response.writeHead(200).end();
   }
 
