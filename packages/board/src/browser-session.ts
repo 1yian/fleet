@@ -71,7 +71,8 @@ class Viewer {
   private quarantined = false;
   private recovering = false;
   private latest: BrowserFrame | undefined;
-  private heldTarget: string | undefined;
+  private authority = 0;
+  private confirmedKey: string | undefined;
   private epoch = 0;
   private issuedTake = false;
   private scheduled = 0;
@@ -160,7 +161,9 @@ class Viewer {
 
   private resume(): void {
     if (this.closed || !this.recovering || !this.matched()) return;
-    void this.settle(true).then(() => {
+    const epoch = this.epoch;
+    void this.settle().then(() => {
+      if (this.epoch !== epoch) return;
       this.recovering = false;
       this.set(this.current);
     });
@@ -178,7 +181,6 @@ class Viewer {
   private discard(): void {
     this.events = [];
     this.remote.clear();
-    this.heldTarget = undefined;
   }
 
   private track(event: BrowserInput): void {
@@ -218,7 +220,12 @@ class Viewer {
     if (completed) this.invalidateCommand();
     if (!owns && pending !== "take") this.issuedTake = false;
     if (lost || previous?.activeTab !== state.activeTab) this.events = [];
-    if (!owns || state.activeTab !== this.heldTarget) this.remote.clear();
+    const key = `${String(owns)}:${state.activeTab ?? ""}`;
+    if (key !== this.confirmedKey) {
+      this.confirmedKey = key;
+      this.authority += 1;
+      this.remote.clear();
+    }
     this.set({
       state,
       pending: completed ? undefined : pending,
@@ -328,7 +335,6 @@ class Viewer {
     )
       this.events.pop();
     this.events.push(event);
-    this.heldTarget = target;
     this.schedule();
   }
 
@@ -344,14 +350,19 @@ class Viewer {
     if (!this.sending && this.events.length > 0) this.send();
   }
 
+  private acknowledge(batch: BrowserInput[], code: number, authority: number): void {
+    if (code === 409) this.remote.clear();
+    if (code === 204 && this.authority === authority) for (const event of batch) this.track(event);
+  }
+
   private send(): void {
     this.sending = true;
     const ticket = this.ticket;
+    const authority = this.authority;
     const batch = this.events.splice(0, 40);
     this.inflight = this.post("input", { events: batch }).then((code) => {
       this.sending = false;
-      if (code === 204) for (const event of batch) this.track(event);
-      if (code === 409) this.remote.clear();
+      this.acknowledge(batch, code, authority);
       if (code !== 204 && code !== 409) this.fence(AMBIGUOUS);
       if (code === 409 && this.ticket === ticket && this.canDrive()) {
         this.discard();
@@ -363,12 +374,22 @@ class Viewer {
     });
   }
 
-  private async settle(confirmed = false): Promise<void> {
-    const release = confirmed || !this.recovering;
+  private authorised(epoch: number): boolean {
+    return (
+      this.epoch === epoch &&
+      !this.mutating &&
+      this.matched() &&
+      this.current.state?.viewer.controlling === true
+    );
+  }
+
+  private async settle(): Promise<void> {
+    const epoch = this.epoch;
     while (!this.quarantined) {
       if (this.sending) await this.inflight;
       else {
-        if (this.events.length === 0 && release) this.events.push(...this.remote.values());
+        if (this.events.length === 0 && this.authorised(epoch))
+          this.events.push(...this.remote.values());
         if (this.events.length === 0) return;
         this.send();
       }
