@@ -215,6 +215,15 @@ class Hub {
     }
   }
 
+  private activity(id: string, message: Extract<ClientMessage, { t: "activity" }>): void {
+    const seen = this.db.prepare("SELECT last_seen FROM sessions WHERE id = ?").get(id)?.[
+      "last_seen"
+    ];
+    const stale = typeof seen === "number" && Date.now() - seen >= this.timing.stall;
+    if (setSessionState(this.db, id, message.state, message.progress === true) || stale)
+      this.web.changed();
+  }
+
   attach(socket: WebSocket): void {
     let token: string | undefined;
     let session: Session | undefined;
@@ -234,15 +243,8 @@ class Hub {
         logWorker("hello", session, hello);
       } else if (message.t === "read") markRead(this.db, live().id, message.entry);
       else if (message.t === "ack") acknowledge(this.db, live().id, message.entry);
-      else if (message.t === "activity") {
-        const id = live().id;
-        const seen = this.db.prepare("SELECT last_seen FROM sessions WHERE id = ?").get(id)?.[
-          "last_seen"
-        ];
-        const stale = typeof seen === "number" && Date.now() - seen >= this.timing.stall;
-        if (setSessionState(this.db, id, message.state, message.progress === true) || stale)
-          this.web.changed();
-      } else {
+      else if (message.t === "activity") this.activity(live().id, message);
+      else {
         const id = message.id;
         void this.perform(live(), message.op, message.args).then((outcome) => {
           send(socket, { t: "result", id, ...outcome });
