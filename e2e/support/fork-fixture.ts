@@ -68,4 +68,4 @@ export function routeFork(dir: string): Record<string, string> {
 }
 
 export const currentDependencies = (): string =>
-  `dependencies: Pi: pi is up to date, pi-tiers: Updated git:github.com/1yian/pi-tiers, no-mistakes: fork-${process.env["FAKE_NO_MISTAKES_COMMIT"] ?? ""} is the latest, fleet-browser: CLI and skill linked`;
+  `dependencies: Pi: pi is up to date, pi-tiers: Updated git:github.com/1yian/pi-tiers, no-mistakes: fork-${process.env["FAKE_NO_MISTAKES_COMMIT"] ?? ""} is the latest`;

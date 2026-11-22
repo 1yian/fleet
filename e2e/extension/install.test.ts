@@ -25,6 +25,7 @@ const ZONE = "America/Chicago";
 const FIRST = "2026-11-19T08:47:26-06:00";
 const GO_FIX =
   "Fix: install Go 1.25 or later (brew install go, or apt install golang-go), then run fleet install again";
+const FRESH = { connection: "close" };
 const PI_TIERS = "git:github.com/1yian/pi-tiers";
 
 let cardd: Cardd;
@@ -131,7 +132,7 @@ function valueAt(tree: Tree, ...keys: string[]): string | undefined {
 
 const withGo = (): string => [piDir, goDir].join(":");
 const reminders = async (): Promise<readonly { id: number; to: string; at: string }[]> =>
-  (await cardd.board()).schedules;
+  (await cardd.board(FRESH)).schedules;
 const setReminder = (updateReminder: boolean | undefined): void => {
   const file = join(scratch.root, "config", "lane.json");
   const lane = parseRecord(readFileSync(file, "utf8"));
@@ -226,7 +227,7 @@ test("install builds the fork with Go, installs pi-tiers and the configs, create
       "SKILL.md",
     ),
   );
-  const [schedule, ...more] = (await cardd.board()).schedules;
+  const [schedule, ...more] = (await cardd.board(FRESH)).schedules;
   assert.deepEqual(more, []);
   assert.deepEqual(
     [schedule?.owner, schedule?.to, schedule?.at, schedule?.timezone, schedule?.on],
@@ -279,7 +280,7 @@ test("updateReminder false turns the reminder off and removes it, and turning it
 test("a one-off schedule with the reminder's text is not the daily reminder, and turning the reminder off leaves it", async () => {
   commitAt(FIRST);
   assert.equal(install(withGo()).status, 0);
-  const [daily] = (await cardd.board()).schedules;
+  const [daily] = (await cardd.board(FRESH)).schedules;
   assert.ok(daily !== undefined);
   const main = await cardd.connect(mainToken);
   try {
@@ -293,7 +294,7 @@ test("a one-off schedule with the reminder's text is not the daily reminder, and
     });
     const again = install(withGo());
     assert.match(again.out.at(-2) ?? "", /^update reminder: created schedule #\d+, daily at 05:00/);
-    const both = (await cardd.board()).schedules;
+    const both = (await cardd.board(FRESH)).schedules;
     assert.equal(both.length, 2);
     assert.equal(both.filter(({ on }) => on === null).length, 1);
     assert.equal(both.filter(({ on }) => on === "2099-01-01").length, 1);
@@ -301,7 +302,7 @@ test("a one-off schedule with the reminder's text is not the daily reminder, and
     setReminder(false);
     assert.equal(install(withGo()).status, 0);
     assert.deepEqual(
-      (await cardd.board()).schedules.map(({ id, on }) => [id, on]),
+      (await cardd.board(FRESH)).schedules.map(({ id, on }) => [id, on]),
       [[daily.id, "2099-01-01"]],
     );
   } finally {

@@ -30,11 +30,16 @@ function link(source: string, target: string): void {
   }
 }
 
+const cliPath = (): string => join(homedir(), ".local", "bin", "fleet-browser");
+
+export const browserInstalled = (): boolean =>
+  lstatSync(cliPath(), { throwIfNoEntry: false }) !== undefined;
+
 export function installBrowser(root: string): string {
   const browser = join(root, "packages", "fleet-browser");
   if (!existsSync(join(browser, "dist", "cli", "main.js")))
     throw new Error(`the browser build is missing from ${browser}`);
-  const cli = join(homedir(), ".local", "bin", "fleet-browser");
+  const cli = cliPath();
   const skill = join(piAgentDir(), "skills", "fleet-browser");
   const source = join(browser, "skills", "fleet-browser");
   if (lstatSync(skill, { throwIfNoEntry: false })?.isDirectory())

@@ -246,8 +246,8 @@ export class Cardd {
     return this.url.replace(/^ws/, "http").replace(/\/session$/, path);
   }
 
-  async board(): Promise<Board> {
-    return check(BoardSchema, await (await fetch(this.http("/api/board"))).json());
+  async board(headers: Record<string, string> = {}): Promise<Board> {
+    return check(BoardSchema, await (await fetch(this.http("/api/board"), { headers })).json());
   }
 
   async thread(card: number): Promise<Thread> {

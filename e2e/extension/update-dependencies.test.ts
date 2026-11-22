@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -16,6 +17,7 @@ import { parseRecord } from "../support/json.ts";
 import { addRemote } from "../support/remote.ts";
 import { tempDir } from "../support/run-root.ts";
 import { Scratch } from "../support/scratch.ts";
+import { seedTiers } from "../support/tiers-fixture.ts";
 
 const PI_TIERS = "git:github.com/1yian/pi-tiers";
 
@@ -113,7 +115,9 @@ test("fleet update reports a pinned pi-tiers and a Pi that another manager owns 
   const pinned = `${PI_TIERS}@v0.1.14`;
   writeFileSync(state, `${pinned}\n`);
   const refusal = "Pi was installed by Nix: update it with nix profile upgrade pi";
-  const report = update({ FAKE_PI_SELF_UPDATE_REFUSAL: refusal });
+  const agentDir = tempDir("agent-");
+  seedTiers(agentDir);
+  const report = update({ FAKE_PI_SELF_UPDATE_REFUSAL: refusal, PI_CODING_AGENT_DIR: agentDir });
   assert.equal(report["state"], "updated");
   const dependencies = dependenciesOf(report);
   assert.deepEqual(dependencies.slice(0, 2), [
@@ -121,6 +125,15 @@ test("fleet update reports a pinned pi-tiers and a Pi that another manager owns 
     `pi-tiers: pinned at ${pinned}, so it was not updated: Pi never moves a pinned ref. Reinstall it with pi install ${PI_TIERS} to follow the default branch`,
   ]);
   assert.match(dependencies[2] ?? "", /^no-mistakes: fork-[0-9a-f]{8} is the latest$/);
+  assert.equal(dependencies.length, 3);
+  assert.equal(
+    lstatSync(join(home, ".local", "bin", "fleet-browser"), { throwIfNoEntry: false }),
+    undefined,
+  );
+  assert.equal(
+    lstatSync(join(agentDir, "skills", "fleet-browser"), { throwIfNoEntry: false }),
+    undefined,
+  );
   assert.deepEqual(piCalls(), ["update", "list"]);
 });
 

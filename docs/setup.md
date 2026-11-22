@@ -836,7 +836,7 @@ After it moves the lane homes, `fleet update` brings this host's dependencies to
 - **pi-tiers**: `pi update git:github.com/1yian/pi-tiers`, for that one package. `pi update --all` and `pi update --extensions` are never used, so no other Pi package is refreshed. A pi-tiers pinned to a tag or commit (`@v0.1.14`) is reported as pinned and left alone, because Pi never moves a pinned ref. A host without pi-tiers is told to run `fleet install`.
 - **no-mistakes**: the 1yian fork is rebuilt from its latest `main` when that commit differs from the installed one, into `~/.local/bin` by renaming over the old binary. The staged build is checked against the minimum build before it replaces anything. It never starts, stops, or restarts a daemon: a running daemon keeps its old build until main restarts it at a time when no pipeline runs. `no-mistakes update` is never the way, because it installs the upstream build and resets the shared daemon.
 
-- **fleet-browser**: built from the Fleet checkout, not a separate repository. The CLI and skill links are refreshed on each host. The Linux daemon is deployed separately so the update does not interrupt active browser sessions.
+- **fleet-browser**: built from the Fleet checkout, not a separate repository. The CLI and skill links are refreshed only on hosts where `fleet install` already linked the CLI, and other hosts are left alone with no line in the report. The Linux daemon is deployed separately so the update does not interrupt active browser sessions.
 
 Herdr, lavish-axi, and bws belong to their hosts' own installers, so `update_fleet` leaves them alone.
 

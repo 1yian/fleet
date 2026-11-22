@@ -9,7 +9,7 @@ import {
   noMistakesRefusal,
   PI_TIERS_SOURCE,
 } from "./dependencies.ts";
-import { installBrowser } from "./install-browser.ts";
+import { browserInstalled, installBrowser } from "./install-browser.ts";
 import { readLaneConfig } from "./lane-config.ts";
 import { hostProblems } from "./prerequisites.ts";
 import { NO_MISTAKES_TEMPLATE, TIERS_TEMPLATE, tiersConfigPath } from "./tiers-config.ts";
@@ -228,8 +228,8 @@ export function updateDependencies(root: string): string[] {
     ["Pi", () => lastLine(run("pi", ["update"], { timeout: CLONE_TIMEOUT_MS }))],
     ["pi-tiers", piTiersUpdate],
     ["no-mistakes", () => installNoMistakes(true).replace(/^no-mistakes: /, "")],
-    ["fleet-browser", () => installBrowser(root)],
   ];
+  if (browserInstalled()) steps.push(["fleet-browser", () => installBrowser(root)]);
   return steps.map(([name, step]) => {
     try {
       return `${name}: ${step()}`;
