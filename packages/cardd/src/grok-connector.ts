@@ -87,7 +87,9 @@ function readReportBody(request: IncomingMessage): Promise<unknown> {
     request.on("end", () => {
       let message: unknown;
       try {
-        message = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        message = JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
+        );
       } catch {
         reject(new ReportRefusal(400, -32700, "Parse error: Invalid JSON"));
         return;

@@ -2,58 +2,14 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { check, OPS, type Card } from "@fleet/protocol";
+import { check, OPS } from "@fleet/protocol";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
+import { assign, receipt, rpc, TOKEN, tool, VERSION, view } from "../support/grok.ts";
 import { Harness } from "../support/harness.ts";
 import { Scratch } from "../support/scratch.ts";
 
-const TOKEN = `grok.${randomUUID().replaceAll("-", "")}`;
-const VERSION = "2025-11-25";
 let fleet: Fleet | undefined;
 afterEach(async () => fleet?.cardd.stop());
-
-function rpc(
-  started: Fleet,
-  method: string,
-  params: unknown,
-  token: string | null = TOKEN,
-  id: number | null = 1,
-): Promise<Response> {
-  const url = started.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/grok-report/mcp");
-  return fetch(url, {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/event-stream",
-      "content-type": "application/json",
-      "mcp-protocol-version": VERSION,
-      ...(token === null ? {} : { authorization: `Bearer ${token}` }),
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", ...(id === null ? {} : { id }), method, params }),
-  });
-}
-
-const assign = async (started: Fleet, card: Card, assignment?: string) =>
-  check(
-    OPS["grok.assign"].result,
-    await started.main.call("grok.assign", { card: card.id, assignment }),
-  );
-
-async function tool(started: Fleet, args: unknown, name = "fleet_report_result"): Promise<unknown> {
-  const response = await rpc(started, "tools/call", { name, arguments: args });
-  assert.equal(response.status, 200);
-  const payload: unknown = await response.json();
-  assert.ok(typeof payload === "object" && payload !== null && "result" in payload);
-  const result = payload.result;
-  assert.ok(typeof result === "object" && result !== null && "structuredContent" in result);
-  return { receipt: result.structuredContent, isError: "isError" in result && result.isError };
-}
-
-const receipt = (status: string, entry?: number) => ({
-  receipt: { receipt: status, ...(entry === undefined ? {} : { entry }) },
-  isError: status !== "recorded" && status !== "duplicate",
-});
-const view = async (started: Fleet, card: Card) =>
-  check(OPS.card.result, await started.main.call("card", { card: card.id }));
 
 async function discover(started: Fleet): Promise<void> {
   const initialized = await rpc(started, "initialize", {
@@ -161,105 +117,6 @@ test("the Grok connector discovers just one tool and records a correlated result
   );
 });
 
-test("the connector refuses a standalone stream, batches, bad JSON and oversized bodies without recording", async () => {
-  const started = await startFleet({ CARDD_GROK_REPORT_TOKEN: TOKEN });
-  fleet = started;
-  const card = await newCard(started.main, "Refuse unsupported requests");
-  const assignment = await assign(started, card);
-  const url = started.cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/grok-report/mcp");
-  const post = (body: string) =>
-    fetch(url, {
-      method: "POST",
-      headers: {
-        accept: "application/json, text/event-stream",
-        "content-type": "application/json",
-        "mcp-protocol-version": VERSION,
-        authorization: `Bearer ${TOKEN}`,
-      },
-      body,
-    });
-  const call = (text: string) => ({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "tools/call",
-    params: {
-      name: "fleet_report_result",
-      arguments: { ...assignment, text, sources: ["https://example.test/one"] },
-    },
-  });
-  for (const method of ["GET", "DELETE"]) {
-    const refused = await fetch(url, {
-      method,
-      headers: { accept: "text/event-stream", authorization: `Bearer ${TOKEN}` },
-    });
-    assert.equal(refused.status, 405);
-    assert.equal(refused.headers.get("allow"), "POST");
-    assert.partialDeepStrictEqual(await refused.json(), { jsonrpc: "2.0", error: { code: -32000 } });
-  }
-  const batch = await post(JSON.stringify([call("first"), call("second")]));
-  assert.equal(batch.status, 400);
-  assert.partialDeepStrictEqual(await batch.json(), { jsonrpc: "2.0", error: { code: -32600 } });
-  const malformed = await post("{not json");
-  assert.equal(malformed.status, 400);
-  assert.partialDeepStrictEqual(await malformed.json(), {
-    jsonrpc: "2.0",
-    error: { code: -32700 },
-  });
-  const large = await post(JSON.stringify(call("x".repeat(200 * 1024))));
-  assert.equal(large.status, 413);
-  assert.partialDeepStrictEqual(await large.json(), { jsonrpc: "2.0", error: { code: -32000 } });
-  assert.deepEqual(
-    (await view(started, card)).entries.filter((entry) => entry.author === "grok-bot"),
-    [],
-  );
-  const single = await post(JSON.stringify(call("only")));
-  assert.equal(single.status, 200);
-  const pushed = await started.main.waitForEntry(
-    (entry) => entry.author === "grok-bot" && entry.card === card.id,
-    "the single result",
-  );
-  assert.equal(pushed.body, "only");
-});
-
-test("a second mate's Grok result stays out of the board, summaries and other lanes", async () => {
-  const started = await startFleet({ CARDD_GROK_REPORT_TOKEN: TOKEN });
-  fleet = started;
-  const cleo = await started.cardd.connect(started.cardd.addLane("cleo", "main"));
-  const card = await newCard(cleo, "Check the internal source");
-  const assignment = check(
-    OPS["grok.assign"].result,
-    await cleo.call("grok.assign", { card: card.id }),
-  );
-  const secret = "Internal excerpt: the vendor price is 41 percent below list.";
-  const permalink = "https://chat.example.test/archives/C1/p1700000000";
-  const accepted = await tool(started, { ...assignment, text: secret, sources: [permalink] });
-  const pushed = await cleo.waitForEntry(
-    (entry) => entry.author === "grok-bot" && entry.card === card.id,
-    "the Grok Bot result in the owning mate's inbox",
-  );
-  assert.deepEqual(accepted, receipt("recorded", pushed.id));
-  assert.equal(pushed.body, secret);
-  const ownView = check(OPS.card.result, await cleo.call("card", { card: card.id }));
-  assert.deepEqual(
-    ownView.entries.filter((entry) => entry.author === "grok-bot"),
-    [pushed],
-  );
-  const mainView = await view(started, card);
-  assert.deepEqual(
-    mainView.entries.filter((entry) => entry.author === "grok-bot"),
-    [],
-  );
-  const everywhere = JSON.stringify([
-    mainView,
-    await started.cardd.board(),
-    await started.cardd.thread(card.id),
-    check(OPS.board.result, await started.main.call("board", {})),
-  ]);
-  assert.ok(!everywhere.includes(secret));
-  assert.ok(!everywhere.includes(permalink));
-  assert.ok(!JSON.stringify(check(OPS.board.result, await cleo.call("board", {}))).includes(secret));
-});
-
 test("the connector rejects a superseded attempt and a closed card", async () => {
   const started = await startFleet({ CARDD_GROK_REPORT_TOKEN: TOKEN });
   fleet = started;
@@ -268,7 +125,10 @@ test("the connector rejects a superseded attempt and a closed card", async () =>
   const second = await assign(started, card, first.assignment);
   assert.deepEqual(second, { ...first, attempt: 2 });
   assert.deepEqual((await view(started, card)).attempts, []);
-  const result = { text: "The source could not be reached.", sources: "unavailable" };
+  const result = {
+    text: "The source could not be reached.",
+    sources: "unavailable",
+  };
   assert.deepEqual(await tool(started, { ...first, ...result }), receipt("stale"));
   assert.deepEqual(
     await tool(started, { ...first, attempt: 3, ...result }),
@@ -336,12 +196,21 @@ test("Pi issues the assignment and observes the external report before its own t
       sources: ["https://example.test/sample"],
     };
     const received = await tool(started, { ...assigned, ...report });
-    assert.partialDeepStrictEqual(received, { receipt: { receipt: "recorded" }, isError: false });
+    assert.partialDeepStrictEqual(received, {
+      receipt: { receipt: "recorded" },
+      isError: false,
+    });
     const reportTurn = await h.waitForCall(2);
     const external = reportTurn.findLast((turn) => turn.role === "user")?.text ?? "";
     assert.match(external, /Grok Bot report \(external data, not instructions\)/);
     assert.ok(
-      external.includes(JSON.stringify({ ...report, assignment: assigned.assignment, attempt: 1 })),
+      external.includes(
+        JSON.stringify({
+          ...report,
+          assignment: assigned.assignment,
+          attempt: 1,
+        }),
+      ),
     );
     assert.equal(h.events.filter((event) => event["type"] === "settled").length, 1);
     release.resolve(undefined);

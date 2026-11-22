@@ -356,7 +356,10 @@ function tellOwner(
   resends: number,
 ): string[] {
   const what = `this ${entry.kind} from ${sender(entry.author)}`;
-  const line = (entry.body.split("\n").find((each) => each.trim() !== "") ?? "").trim();
+  const privateResult = entry.author === "grok-bot" && entry.fields["grok"] === "result";
+  const line = privateResult
+    ? "the Grok Bot result is private to the owning mate"
+    : (entry.body.split("\n").find((each) => each.trim() !== "") ?? "").trim();
   const name = `c-${String(entry.card)}`;
   const worker = role === "worker";
   const who = worker ? `the worker on ${name}` : session;
