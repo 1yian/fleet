@@ -1,0 +1,7 @@
+{
+  "name": "fleet-ci-lavish",
+  "private": true,
+  "dependencies": {
+    "lavish-axi": "0.1.97"
+  }
+}

@@ -1,34 +1,28 @@
 name: Install Lavish
-description: Installs a verified Lavish release into the job's PATH, with bounded npm fetch retries.
+description: Installs a Lavish release and its whole dependency graph from the committed lockfile for that version, with bounded npm fetch retries.
 inputs:
   version:
-    description: Exact Lavish release version
-    required: true
-  sha256:
-    description: SHA-256 of the npm tarball
+    description: Lavish release version, which must have a directory beside this action holding its package.json and package-lock.json
     required: true
 runs:
   using: composite
   steps:
-    - id: download
-      uses: ./.github/actions/download
-      with:
-        url: https://registry.npmjs.org/lavish-axi/-/lavish-axi-${{ inputs.version }}.tgz
-        sha256: ${{ inputs.sha256 }}
     - id: cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ runner.temp }}/fleet-npm
-        key: lavish-npm-${{ runner.os }}-${{ runner.arch }}-${{ inputs.sha256 }}
+        key: lavish-npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('.github/actions/install-lavish/{0}/package-lock.json', inputs.version)) }}
     - shell: bash
       env:
-        ASSET: ${{ steps.download.outputs.path }}
+        LOCKED: ${{ github.action_path }}/${{ inputs.version }}
       run: |
-        npm install --global --prefix "$RUNNER_TEMP/lavish" --cache "$RUNNER_TEMP/fleet-npm" \
+        mkdir -p "$RUNNER_TEMP/lavish"
+        cp "$LOCKED/package.json" "$LOCKED/package-lock.json" "$RUNNER_TEMP/lavish/"
+        npm ci --prefix "$RUNNER_TEMP/lavish" --cache "$RUNNER_TEMP/fleet-npm" \
           --ignore-scripts --no-audit --no-fund --prefer-offline \
-          --fetch-retries=2 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=3000 --fetch-timeout=30000 "$ASSET"
-        echo "$RUNNER_TEMP/lavish/bin" >> "$GITHUB_PATH"
-        "$RUNNER_TEMP/lavish/bin/lavish-axi" --version
+          --fetch-retries=2 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=3000 --fetch-timeout=30000
+        echo "$RUNNER_TEMP/lavish/node_modules/.bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/lavish/node_modules/.bin/lavish-axi" --version
     - if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:

@@ -222,7 +222,6 @@ jobs:
         timeout-minutes: 5
         with:
           version: 0.1.90
-          sha256: 9bed9d70b5fa5bdd1514a24937d2e0f9be04c43c3961321cc6b7e6ba9e7f92be
       - run: bun run build
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
@@ -246,7 +245,6 @@ jobs:
         timeout-minutes: 5
         with:
           version: 0.1.97
-          sha256: 84e4d91c173e91b966c506da770a649d533766d93985739d26b8592143127662
       - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/board/**/*.test.ts"
 
   tests-required:
