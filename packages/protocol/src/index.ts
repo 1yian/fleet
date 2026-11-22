@@ -33,6 +33,7 @@ export { missingPersonalClone, PERSONAL_PROJECT } from "./personal.ts";
 export * from "./pulse.ts";
 export * from "./schedules.ts";
 export * from "./cooldowns.ts";
+export { AnalyticsSchema, type Analytics } from "./analytics.ts";
 export { REPORT_STATUSES, type ReportStatus } from "./report.ts";
 export { ATTENTIONS, STATUSES, type Attention, type Status } from "./standing.ts";
 export {

@@ -11,6 +11,7 @@ import { Reviews } from "./review-rounds.ts";
 import { getCard, transaction } from "./store.ts";
 import type { Timings } from "./timing.ts";
 import { version } from "./version.ts";
+import { analytics } from "./analytics.ts";
 
 const CHANGED_EVERY = 1000;
 const TYPES: Readonly<Record<string, string>> = {
@@ -273,6 +274,8 @@ export class Web {
 
   private async route(request: IncomingMessage, channel: Channel): Promise<unknown> {
     const path = new URL(request.url ?? "/", "http://board").pathname;
+    if (request.method === "GET" && path === "/api/analytics")
+      return analytics(this.db, this.timing.wall());
     if (request.method === "GET") return this.read(path, channel);
     if (request.method === "POST" && path === "/api/action") return this.act(request);
     return undefined;
