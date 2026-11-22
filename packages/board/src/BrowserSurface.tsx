@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, type KeyboardEvent, type PointerEvent } from "react";
 import type { BrowserFrame } from "@fleet/protocol";
-import type { BrowserInput } from "./browser-session.ts";
+import type { BrowserInput } from "./browser-commands.ts";
 
 function modifiers(event: {
   altKey: boolean;
