@@ -107,6 +107,11 @@ export class BrowserEndpoint {
     this.gate = undefined;
   }
 
+  releaseAndHold(): void {
+    this.release();
+    this.hold();
+  }
+
   ask(): void {
     this.asking = true;
     this.publish();
@@ -164,8 +169,8 @@ export class BrowserEndpoint {
     return this.holder !== undefined;
   }
 
-  switchTab(): void {
-    this.tab = 1;
+  switchTab(index = 1): void {
+    this.tab = index;
     this.publish();
   }
 

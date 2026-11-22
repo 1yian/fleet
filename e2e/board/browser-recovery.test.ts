@@ -25,8 +25,11 @@ test("a key held when only the stream drops is released once the same tab is con
   endpoint.endOutage();
   await until(() => endpoint.streamOpens > opens);
   assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
+  endpoint.hold();
   endpoint.releaseState();
   await until(() => endpoint.order.includes("key:keyUp:Shift"));
+  assert.equal(await page.getByText("You’re in control").count(), 0);
+  endpoint.release();
   await page.getByText("You’re in control").waitFor();
   const pressed = endpoint.order.indexOf("key:rawKeyDown:Shift");
   assert.deepEqual(endpoint.order.slice(pressed), ["key:rawKeyDown:Shift", "key:keyUp:Shift"]);
@@ -72,8 +75,11 @@ test("a release still queued when the stream drops is sent once from the acknowl
   endpoint.endOutage();
   await until(() => endpoint.streamOpens > opens);
   assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
+  endpoint.hold();
   endpoint.releaseState();
   await until(() => endpoint.order.includes("key:keyUp:Shift"));
+  assert.equal(await page.getByText("You’re in control").count(), 0);
+  endpoint.release();
   await page.getByText("You’re in control").waitFor();
   assert.equal(endpoint.order.filter((entry) => entry === "key:keyUp:Shift").length, 1);
   await page.keyboard.up("Shift");
@@ -186,10 +192,40 @@ test("a matching frame returning does not resume input until the held key is rel
     .waitFor();
   assert.equal(await page.getByText("You’re in control").count(), 0);
   assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
+  endpoint.releaseAndHold();
+  await until(() => endpoint.order.includes("key:keyUp:Shift"));
+  assert.equal(await page.getByText("You’re in control").count(), 0);
   endpoint.release();
   await page.getByText("You’re in control").waitFor();
   assert.equal(endpoint.order.filter((entry) => entry === "key:keyUp:Shift").length, 1);
-  assert.equal(endpoint.order.includes("key:keyDown:b"), false);
-  assert.equal(endpoint.order.includes("key:keyUp:b"), false);
+  assert.equal(
+    endpoint.order.some((entry) => /^key:(keyDown|keyUp):b$/i.test(entry)),
+    false,
+  );
+  await screenClick(page);
+  await until(() => endpoint.activeInputs === 0);
   await page.keyboard.up("Shift");
+  await nextFrames(page);
+  assert.equal(endpoint.order.filter((entry) => entry === "key:keyUp:Shift").length, 1);
+});
+
+test("a tab round trip does not reuse the cached frame for the returning tab", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  endpoint.holdFrame();
+  endpoint.switchTab();
+  await page
+    .locator('nav[aria-label="Remote tabs"] button[aria-current="true"]', { hasText: "Workshop" })
+    .waitFor();
+  endpoint.switchTab(0);
+  await page
+    .locator('nav[aria-label="Remote tabs"] button[aria-current="true"]', { hasText: "Garden" })
+    .waitFor();
+  assert.equal(await page.locator(".browser-surface").count(), 0);
+  assert.equal(await page.getByText("You’re in control").count(), 0);
+  endpoint.releaseFrame();
+  await page
+    .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[0] ?? ""}"]`)
+    .waitFor();
 });
