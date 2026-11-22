@@ -30,6 +30,8 @@ export class BrowserEndpoint {
   private failing = false;
   private failingInput = false;
   private refusing = false;
+  private granting = false;
+  granted = 0;
   private frameHeld = false;
   readonly order: string[] = [];
   readonly events: Record<string, unknown>[] = [];
@@ -146,6 +148,19 @@ export class BrowserEndpoint {
     return this.viewers.size;
   }
 
+  grantOnTake(): void {
+    this.granting = true;
+  }
+
+  get controlled(): boolean {
+    return this.holder !== undefined;
+  }
+
+  switchTab(): void {
+    this.tab = 1;
+    this.publish();
+  }
+
   moveTab(): void {
     this.tab = 1;
   }
@@ -241,13 +256,22 @@ export class BrowserEndpoint {
       this.activeInputsAtTab = this.activeInputs;
       this.order.push("tab");
     }
-    if (command.t === "control") this.requested = command.on ? viewer : undefined;
+    if (command.t === "control") this.control(command.on, viewer);
     else if (command.t === "tab") this.tab = TABS.findIndex((tab) => tab.id === command.id);
     else {
       this.asking = false;
       this.holder = undefined;
     }
     if (command.t !== "control") this.publish();
+  }
+
+  private control(on: boolean, viewer: string): void {
+    this.requested = on ? viewer : undefined;
+    if (on && this.granting) {
+      this.holder = viewer;
+      this.granted += 1;
+    }
+    if (!on && this.holder === viewer) this.holder = undefined;
   }
 
   private async input(body: unknown): Promise<void> {
