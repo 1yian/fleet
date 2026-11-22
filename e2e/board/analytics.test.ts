@@ -151,6 +151,8 @@ test("analytics reconciles readable ledger usage and successful closes in the re
     await inspector.innerText(),
     /42,800 tokens · Input: 3,000 · Cached input: 37,000 · Output: 2,800/,
   );
+  await page.mouse.move(2, 2);
+  assert.match(await inspector.innerText(), /No usage records/);
 
   const lanes = page.getByRole("region", { name: "Tokens by lane" });
   assert.deepEqual(await lanes.getByRole("listitem").allTextContents(), [
@@ -195,4 +197,26 @@ test("analytics reconciles readable ledger usage and successful closes in the re
     location.hash = `/c-${String(id)}`;
   }, cardId);
   assert.equal(await composer.inputValue(), "Unsent reply across views");
+
+  let refuse: () => void = () => undefined;
+  const refused = new Promise<void>((resolve) => {
+    refuse = resolve;
+  });
+  await page.route("**/api/action", async (route) => {
+    await refused;
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: false, error: "the card changed since you looked" }),
+    });
+  });
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await page.evaluate(() => {
+    location.hash = "/";
+  });
+  await page.getByRole("link", { name: "Analytics" }).click();
+  await hourly.getByText("363,600", { exact: true }).waitFor();
+  refuse();
+  await page.getByRole("link", { name: "Board", exact: true }).click();
+  await page.getByRole("alert").getByText("the card changed since you looked").waitFor();
 });

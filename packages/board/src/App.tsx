@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type Board, type BoardAction } from "@fleet/protocol";
 import { act, loadBoard, unreachable, useChanges, type Acted } from "./api.ts";
 import { Kanban } from "./Board.tsx";
@@ -121,20 +121,13 @@ function useEscape(close: () => void): void {
   }, [close]);
 }
 
-export type Drafts = ReadonlyMap<number, string>;
-
-export function App({
-  drafts,
-  setDrafts,
-}: {
-  drafts: Drafts;
-  setDrafts: Dispatch<SetStateAction<Drafts>>;
-}) {
+export function App() {
   const changes = useChanges();
   const now = useNow();
   const [notice, setNotice] = useState<string | undefined>();
   const { board, refresh } = useBoard(changes, now, setNotice);
   const { card: open, open: openCard, close } = useCardRoute();
+  const [drafts, setDrafts] = useState<ReadonlyMap<number, string>>(new Map());
   const facts = useFacts(board?.cards, now);
 
   const { notices, answer, later, dismiss, reply } = useDecisions(refresh, setNotice);

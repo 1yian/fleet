@@ -69,7 +69,9 @@ function hourLabels(hours: Data["hours"]) {
 }
 
 function Hourly({ data }: { readonly data: Data }) {
-  const [active, setActive] = useState<number>();
+  const [hovered, setHovered] = useState<number>();
+  const [focused, setFocused] = useState<number>();
+  const active = hovered ?? focused;
   const selected = data.hours.find(({ at }) => at === active);
   const max = scale(Math.max(...data.hours.map(({ tokens }) => total(tokens))));
   const sum = data.hours.reduce((count, { tokens }) => count + total(tokens), 0);
@@ -135,19 +137,19 @@ function Hourly({ data }: { readonly data: Data }) {
                   : `${number.format(total(tokens))} tokens · ${tokenLabel(tokens)}`
               }`}
               onPointerEnter={() => {
-                setActive(at);
+                setHovered(at);
               }}
               onPointerLeave={() => {
-                setActive(undefined);
+                setHovered(undefined);
               }}
               onFocus={() => {
-                setActive(at);
+                setFocused(at);
               }}
               onBlur={() => {
-                setActive(undefined);
+                setFocused(undefined);
               }}
               onClick={() => {
-                setActive(at);
+                setFocused(at);
               }}
             >
               {tokens === null || total(tokens) === 0 ? (

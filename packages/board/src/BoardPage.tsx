@@ -1,6 +1,6 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { Activity, useEffect, useSyncExternalStore } from "react";
 import { Analytics } from "./Analytics.tsx";
-import { App, type Drafts } from "./App.tsx";
+import { App } from "./App.tsx";
 
 const ANALYTICS = "#/analytics";
 const currentPage = (): string => location.hash;
@@ -15,7 +15,6 @@ function subscribe(notify: () => void): () => void {
 export function BoardPage() {
   const hash = useSyncExternalStore(subscribe, currentPage);
   const analytics = hash === ANALYTICS;
-  const [drafts, setDrafts] = useState<Drafts>(new Map());
   useEffect(() => {
     if (analytics) window.scrollTo(0, 0);
   }, [analytics]);
@@ -32,7 +31,10 @@ export function BoardPage() {
           </a>
         </nav>
       ) : null}
-      {analytics ? <Analytics /> : <App drafts={drafts} setDrafts={setDrafts} />}
+      <Activity mode={analytics ? "hidden" : "visible"}>
+        <App />
+      </Activity>
+      {analytics ? <Analytics /> : null}
     </>
   );
 }
