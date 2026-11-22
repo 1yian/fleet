@@ -29,6 +29,9 @@ export class Scratch {
       cpSync(join(REPO, file), join(this.root, file));
     }
     symlinkSync(join(REPO, "node_modules"), join(this.root, "node_modules"));
+    const browserModules = join("packages", "fleet-browser", "node_modules");
+    if (existsSync(join(REPO, browserModules)))
+      symlinkSync(join(REPO, browserModules), join(this.root, browserModules));
     git(this.root, "init", "-q", "-b", "main");
     git(this.root, "add", "-A");
     git(

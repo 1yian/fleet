@@ -148,7 +148,7 @@ function build(
   const built = attempt(() => bun(root, "run", "build"));
   return built.ok
     ? { ok: true, installed }
-    : { ok: false, step: "build the board", error: built.error };
+    : { ok: false, step: "build fleet packages", error: built.error };
 }
 
 type Step = { ok: true; pulled: Pulled; changed: string[]; installed: boolean } | HostUpdate;
@@ -195,7 +195,7 @@ export function updateHost(root: string): HostUpdate {
       };
     lanes.push(lane);
   }
-  const dependencies = updateDependencies();
+  const dependencies = updateDependencies(root);
   return {
     state: "updated",
     root,

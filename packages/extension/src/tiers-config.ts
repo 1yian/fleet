@@ -8,7 +8,7 @@ export const NO_MISTAKES_TEMPLATE = fileURLToPath(
   new URL("../templates/no-mistakes.yaml", import.meta.url),
 );
 
-function piAgentDir(): string {
+export function piAgentDir(): string {
   const set = process.env["PI_CODING_AGENT_DIR"];
   if (set === undefined || set === "") return join(homedir(), ".pi", "agent");
   return set === "~" || set.startsWith("~/") ? join(homedir(), set.slice(1)) : set;

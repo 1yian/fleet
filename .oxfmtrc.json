@@ -6,6 +6,7 @@
     "packages/board/src/vendor/",
     "packages/extension/vendor/",
     "packages/extension/prompts/",
+    "packages/fleet-browser/src/",
     "/AGENTS.md"
   ]
 }

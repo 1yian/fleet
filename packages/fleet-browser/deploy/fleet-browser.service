@@ -1,0 +1,21 @@
+[Unit]
+Description=fleet-browser agent browser daemon
+After=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+User=fleet-browser
+Group=fleet-browser
+Environment=FLEET_BROWSER_CONFIG=/etc/fleet-browser/config.json
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStartPre=+/usr/sbin/nft -f /etc/fleet-browser/fleet-browser.nft
+ExecStart=@NODE_BIN@ @APP_DIR@/dist/daemon/main.js
+RuntimeDirectory=fleet-browser
+RuntimeDirectoryMode=0755
+KillMode=mixed
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

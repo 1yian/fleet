@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { commitFork, initFork, routeFork } from "./fork-fixture.ts";
 import { tempDir } from "./run-root.ts";
@@ -41,6 +42,18 @@ writeFileSync(
 );
 process.env["SHELL"] = PANE_SHELL;
 
+function playwrightCache(): string | undefined {
+  const home = homedir();
+  const cache =
+    process.platform === "darwin"
+      ? join(home, "Library", "Caches", "ms-playwright")
+      : join(process.env["XDG_CACHE_HOME"] ?? join(home, ".cache"), "ms-playwright");
+  return existsSync(cache) ? cache : undefined;
+}
+
+const browsers = process.env["PLAYWRIGHT_BROWSERS_PATH"] ?? playwrightCache();
+if (browsers !== undefined) process.env["PLAYWRIGHT_BROWSERS_PATH"] = browsers;
+process.env["HOME"] = tempDir("home-");
 process.env["FLEET_TAILSCALE"] = "false";
 process.env["ELEMENT_HOME"] = tempDir("element-");
 process.env["PI_CODING_AGENT_DIR"] = tempDir("agent-");

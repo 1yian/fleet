@@ -14,13 +14,13 @@
     "format:check": "oxfmt --check",
     "format:files": "node format-files.js",
     "lint": "node lint.js",
-    "typecheck": "node typecheck.js",
+    "typecheck": "node typecheck.js && bun run --cwd packages/fleet-browser typecheck",
     "knip": "knip --treat-config-hints-as-errors",
     "deps": "depcruise .",
     "migrations:check": "node packages/cardd/scripts/check-migrations.ts",
     "test:e2e": "bun run build && node e2e/run.ts",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run knip && bun run deps && bun run migrations:check",
-    "build": "bun run --cwd packages/board build",
+    "build": "bun run --cwd packages/board build && bun run --cwd packages/fleet-browser build",
     "prepare": "node githooks.js install"
   },
   "devDependencies": {

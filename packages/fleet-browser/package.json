@@ -1,0 +1,32 @@
+{
+  "name": "fleet-browser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent browser service: persistent real-Chrome lanes, a web viewer, a credential broker and captcha handoff",
+  "bin": {
+    "fleet-browser": "bin/fleet-browser.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src"
+  },
+  "dependencies": {
+    "agent-browser": "0.43.0",
+    "axi-sdk-js": "0.1.14",
+    "imapflow": "2.12.1",
+    "mailparser": "3.14.5",
+    "ws": "8.23.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.8",
+    "@types/mailparser": "3.9.0",
+    "@types/node": "24.19.2",
+    "@types/ws": "8.18.2",
+    "typescript": "5.9.3"
+  }
+}

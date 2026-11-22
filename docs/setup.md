@@ -80,6 +80,8 @@ It prints one line for each step, then ends with `install: <host> is ready`. Whe
 - **Prerequisites.** Install ends by running the check of the Prerequisites section and reports what it finds.
 - **Update reminder.** See Daily update reminder below.
 
+Install also builds the `fleet-browser` CLI and links it to `~/.local/bin`, with its skill in Pi's agent directory (`~/.pi/agent/skills` by default). See the [browser package](../packages/fleet-browser/README.md) to install the Linux daemon on a browser host.
+
 Install builds the fork only when the host has none or the one it has is refused. Moving to a newer fork build is `update_fleet`'s job (section 7), not a mode of install.
 
 #### Tiers
@@ -833,6 +835,8 @@ After it moves the lane homes, `fleet update` brings this host's dependencies to
 - **Pi**: `pi update`, which updates Pi through the channel that owns it (npm, `PI_SELF_UPDATE_COMMAND`, or the `selfUpdateCommand` setting) and refuses when another package manager such as Nix provides it. The refusal is reported as not updated, and that host takes the update from its package manager.
 - **pi-tiers**: `pi update git:github.com/1yian/pi-tiers`, for that one package. `pi update --all` and `pi update --extensions` are never used, so no other Pi package is refreshed. A pi-tiers pinned to a tag or commit (`@v0.1.14`) is reported as pinned and left alone, because Pi never moves a pinned ref. A host without pi-tiers is told to run `fleet install`.
 - **no-mistakes**: the 1yian fork is rebuilt from its latest `main` when that commit differs from the installed one, into `~/.local/bin` by renaming over the old binary. The staged build is checked against the minimum build before it replaces anything. It never starts, stops, or restarts a daemon: a running daemon keeps its old build until main restarts it at a time when no pipeline runs. `no-mistakes update` is never the way, because it installs the upstream build and resets the shared daemon.
+
+- **fleet-browser**: built from the Fleet checkout, not a separate repository. The CLI and skill links are refreshed only on hosts where `fleet install` already linked the CLI, and other hosts are left alone with no line in the report. The Linux daemon is deployed separately so the update does not interrupt active browser sessions.
 
 Herdr, lavish-axi, and bws belong to their hosts' own installers, so `update_fleet` leaves them alone.
 

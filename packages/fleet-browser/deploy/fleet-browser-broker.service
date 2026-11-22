@@ -1,0 +1,24 @@
+[Unit]
+Description=fleet-browser credential broker
+After=network-online.target
+
+[Service]
+Type=simple
+User=fleet-browser-broker
+Group=fleet-browser
+Environment=FLEET_BROWSER_BROKER_CONFIG=/etc/fleet-browser-broker/config.json
+LoadCredential=op-token:/etc/fleet-browser-broker/op-token
+ExecStart=@NODE_BIN@ @APP_DIR@/dist/broker/main.js
+RuntimeDirectory=fleet-browser-broker
+RuntimeDirectoryMode=0755
+UMask=0007
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/fleet-browser-broker
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

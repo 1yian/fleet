@@ -1,0 +1,56 @@
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readlinkSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { piAgentDir } from "./tiers-config.ts";
+
+function link(source: string, target: string): void {
+  if (
+    lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink() &&
+    readlinkSync(target) === source
+  )
+    return;
+  const parent = dirname(target);
+  mkdirSync(parent, { recursive: true });
+  const staged = mkdtempSync(join(parent, ".fleet-browser-"));
+  try {
+    const next = join(staged, "link");
+    symlinkSync(source, next);
+    renameSync(next, target);
+  } finally {
+    rmSync(staged, { recursive: true, force: true });
+  }
+}
+
+const cliPath = (): string => join(homedir(), ".local", "bin", "fleet-browser");
+
+export const browserInstalled = (): boolean =>
+  lstatSync(cliPath(), { throwIfNoEntry: false }) !== undefined;
+
+function assertReplaceable(target: string): void {
+  const found = lstatSync(target, { throwIfNoEntry: false });
+  if (found !== undefined && !found.isSymbolicLink())
+    throw new Error(`${target} is not a link, so it was left intact: move it aside to link it`);
+}
+
+export function installBrowser(root: string): string {
+  const browser = join(root, "packages", "fleet-browser");
+  if (!existsSync(join(browser, "dist", "cli", "main.js")))
+    throw new Error(`the browser build is missing from ${browser}`);
+  const cli = cliPath();
+  const skill = join(piAgentDir(), "skills", "fleet-browser");
+  const source = join(browser, "skills", "fleet-browser");
+  assertReplaceable(skill);
+  assertReplaceable(cli);
+  link(source, skill);
+  link(join(browser, "bin", "fleet-browser.js"), cli);
+  return "CLI and skill linked";
+}

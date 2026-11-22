@@ -33,7 +33,8 @@
     "**/node_modules/",
     "**/dist/",
     "packages/board/src/vendor/",
-    "packages/extension/vendor/"
+    "packages/extension/vendor/",
+    "packages/fleet-browser/"
   ],
   "options": {
     "respectEslintDisableDirectives": false,

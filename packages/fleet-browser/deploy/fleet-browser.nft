@@ -1,0 +1,8 @@
+add table inet fleet_browser
+flush table inet fleet_browser
+table inet fleet_browser {
+  chain output {
+    type filter hook output priority 0; policy accept;
+    oifname "lo" tcp dport 9300-9399 meta skuid != { "fleet-browser", "root" } reject with tcp reset
+  }
+}
