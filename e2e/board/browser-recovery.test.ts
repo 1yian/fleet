@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { boundBoardFile } from "../support/board.ts";
-import { launch, nextFrames, screenClick, takeControl, until } from "../support/browser-lab.ts";
+import {
+  clickAndSettle,
+  launch,
+  nextFrames,
+  screenClick,
+  takeControl,
+  until,
+} from "../support/browser-lab.ts";
 
 boundBoardFile();
 
@@ -75,13 +82,16 @@ test("a release still queued when the stream drops is sent once from the acknowl
 test("a key-down still in flight when the viewer leaves is not released after the stream drops", async (t) => {
   const { endpoint, page, base } = await launch(t);
   await takeControl(page, endpoint, base);
-  await screenClick(page);
+  await clickAndSettle(page, endpoint);
   endpoint.hold();
   await page.keyboard.down("Shift");
-  await until(() => endpoint.activeInputs > 0);
+  await until(() => endpoint.order.includes("key:rawKeyDown:Shift"));
   await page.evaluate(() => {
     location.hash = "#/browser";
   });
+  await page.getByRole("heading", { name: "Lane browsers" }).waitFor();
+  assert.ok(endpoint.activeInputs > 0);
+  assert.ok(endpoint.order.includes("key:rawKeyDown:Shift"));
   const opens = endpoint.streamOpens;
   endpoint.startOutage();
   await until(() => endpoint.rejected > 0);
@@ -98,7 +108,7 @@ test("a key-down still in flight when the viewer leaves is not released after th
 test("a late acknowledgement from the old tab is not released onto the newly confirmed tab", async (t) => {
   const { endpoint, page, base } = await launch(t);
   await takeControl(page, endpoint, base);
-  await screenClick(page);
+  await clickAndSettle(page, endpoint);
   endpoint.hold();
   await page.keyboard.down("Shift");
   await until(() => endpoint.activeInputs > 0);
@@ -116,6 +126,25 @@ test("a late acknowledgement from the old tab is not released onto the newly con
   endpoint.release();
   await until(() => endpoint.activeInputs === 0);
   await page.getByText("You’re in control").waitFor();
+  assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
+  assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
+  await page.keyboard.up("Shift");
+});
+
+test("an input refusal during a pending tab change stops the change and the drain", async (t) => {
+  const { endpoint, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  endpoint.order.length = 0;
+  endpoint.hold();
+  endpoint.refuseNextInput();
+  await page.keyboard.down("Shift");
+  await until(() => endpoint.activeInputs > 0);
+  await page.getByRole("button", { name: "Workshop" }).click();
+  await page.locator('nav[aria-label="Remote tabs"] button:disabled').first().waitFor();
+  endpoint.release();
+  await page.getByText("Control ended. You’re watching again.").waitFor();
+  assert.equal(endpoint.order.includes("tab"), false);
   assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
   assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
   await page.keyboard.up("Shift");
