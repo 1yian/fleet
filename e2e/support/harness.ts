@@ -1,4 +1,5 @@
 import { type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -139,6 +140,17 @@ export class Pi {
       message,
       ...(whileRunning === undefined ? {} : { streamingBehavior: whileRunning }),
     });
+  }
+
+  async followUp(message: string): Promise<void> {
+    const id = randomUUID();
+    this.command({ type: "prompt", id, message, streamingBehavior: "followUp" });
+    const response = await poll(
+      () => this.responses.find((record) => record["id"] === id),
+      `Pi to accept the prompt: ${message}`,
+    );
+    if (response["success"] !== true)
+      throw new Error(`Pi refused ${message}: ${String(response["error"])}`);
   }
 
   compact(): void {
