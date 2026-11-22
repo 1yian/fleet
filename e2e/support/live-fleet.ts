@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { check, CardSchema, OPS, type BoardCard } from "@fleet/protocol";
 import { Cardd, type Session } from "./cardd.ts";
-import { Harness, type Turn } from "./harness.ts";
+import { COLD_START_WAIT_MS, Harness, type Turn } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { optionalString, records } from "./json.ts";
 import { addRemote, git, landOnRemote } from "./remote.ts";
@@ -187,6 +187,7 @@ export class LiveFleet {
       (event) => event["type"] === "fleet_connected",
       3,
       "main, ops and far to connect",
+      COLD_START_WAIT_MS,
     );
     return this.mainPane;
   }

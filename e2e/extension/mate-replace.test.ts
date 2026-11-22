@@ -88,6 +88,7 @@ async function until<T>(read: () => Promise<T | undefined>, what: string): Promi
 test("a second mate with a stale module is replaced on its own session, lane card and work, and verified by a real answer and action", async () => {
   const tree = `${here.root}.worktrees/lane-ops`;
   let failed = false;
+  let commented = false;
   let before: number | undefined;
   let cardsBefore = "";
   const opsTurn = (
@@ -110,6 +111,8 @@ test("a second mate with a stale module is replaced on its own session, lane car
     const user = lastUser(turns);
     if (turns.at(-1)?.role === "toolResult") return { text: "noted" };
     if (!user.includes("runtime failure")) {
+      if (commented) return { text: "noted" };
+      commented = true;
       writeFileSync(join(tree, "dirty.txt"), "uncommitted work\n");
       return { tool: "comment", args: { lane: "ops", text: MARK } };
     }
