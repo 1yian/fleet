@@ -16,11 +16,24 @@ export function registerFirstPassFlag(pi: ExtensionAPI): void {
   });
 }
 
+export const firstPassFlagValue = (hosts: readonly string[]): string => JSON.stringify(hosts);
+
+function parseHosts(given: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(given);
+    return Array.isArray(parsed) &&
+      parsed.length > 0 &&
+      parsed.every((host): host is string => typeof host === "string" && host !== "")
+      ? parsed
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export function firstPassHosts(pi: ExtensionAPI): string[] | undefined {
   const given = pi.getFlag(FIRST_PASS_FLAG);
-  if (typeof given !== "string") return undefined;
-  const hosts = given.split(",").filter((host) => host !== "");
-  return hosts.length === 0 ? undefined : hosts;
+  return typeof given === "string" ? parseHosts(given) : undefined;
 }
 
 export const announcedIdentity = (role: string): { process: string; host?: string } => ({

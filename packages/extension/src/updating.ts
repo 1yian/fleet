@@ -6,7 +6,7 @@ import { arrangeOn, tagWorkers } from "./arrange.ts";
 import { hostNamesOf } from "./first-pass.ts";
 import { HostUnreachable } from "./host.ts";
 import { LANE_FILE, readLaneConfig, type CarddConfig, type LaneConfig } from "./lane-config.ts";
-import { fleet, hostsOf, runningMates, soleHosts, withLanes } from "./lanes.ts";
+import { fleet, hostsOf, scopedMateHosts, withLanes } from "./lanes.ts";
 import type { Link } from "./link.ts";
 import {
   maintenanceReport,
@@ -237,7 +237,11 @@ function chooseTarget(config: LaneConfig, requested: readonly string[] | undefin
     throw new Error(
       "main runs on local, so a host list must include local: main restarts and reloads on its own host",
     );
-  if (config.cardd !== undefined && !hosts.includes(config.cardd.host))
+  if (config.cardd === undefined)
+    throw new Error(
+      `a scoped update needs a cardd entry in ${LANE_FILE} so cardd's host can be checked`,
+    );
+  if (!hosts.includes(config.cardd.host))
     throw new Error(
       `cardd runs on ${config.cardd.host}, so a host list must include ${config.cardd.host}: the update restarts cardd there`,
     );
@@ -304,11 +308,7 @@ async function updateFleet(config: LaneConfig, link: Link, target: Target): Prom
       ok: false,
       text: `Fleet update stopped: cardd does not run the new code, so no mate was restarted, and main keeps running.\nHosts:\n${hostLines}`,
     };
-  const placement: Placement = await runningMates(config, target.hosts).then(
-    (running) => ({ running }),
-    (error: unknown) => ({ failure: messageOf(error) }),
-  );
-  const tags = await tagWorkersOn(link, target.hosts, placement).catch((error: unknown) => [
+  const tags = await tagWorkersOn(config, link, target.hosts).catch((error: unknown) => [
     `Worker metadata not refreshed: ${messageOf(error)}`,
   ]);
   const lanes = await reloadLines(link, config, target);
@@ -325,8 +325,6 @@ async function updateFleet(config: LaneConfig, link: Link, target: Target): Prom
     ].join("\n"),
   };
 }
-
-type Placement = { readonly running: ReadonlyMap<string, string[]> } | { readonly failure: string };
 
 async function reloadLines(link: Link, config: LaneConfig, target: Target): Promise<string[]> {
   const scope: ReloadScope | undefined = target.scoped
@@ -354,15 +352,19 @@ async function arrangeAll(config: LaneConfig, hosts: readonly string[]): Promise
 }
 
 async function tagWorkersOn(
+  config: LaneConfig,
   link: Link,
   hosts: readonly string[],
-  placement: Placement,
 ): Promise<string[]> {
+  const failures: string[] = [];
+  const mates = await scopedMateHosts(config, hosts).catch((error: unknown) => {
+    failures.push(`Mate placement unchanged: ${messageOf(error)}`);
+    return new Map<string, string>();
+  });
   const cards = await link.call("board", {});
   const laneOfCard = new Map(cards.map((card) => [card.id, card.lane]));
-  const mates = "running" in placement ? soleHosts(placement.running) : new Map<string, string>();
   for (const host of hosts) await tagWorkers(host, laneOfCard, mates).catch(() => undefined);
-  return "failure" in placement ? [`Mate placement unchanged: ${placement.failure}`] : [];
+  return failures;
 }
 
 function changeLines(replies: readonly HostReply[], carddUpdated: boolean): string[] {
@@ -408,7 +410,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
     name: "update_fleet",
     label: "Update fleet",
     description:
-      "Updates the fleet to the latest origin/main, as /updatefleet does: checks every host first and stops before any change when a checkout or lane home has uncommitted changes or its own commits, or a host cannot be reached. Then it pulls each host's checkout, installs packages when the lockfile changed, builds the board, moves every lane home to the new commit, updates Pi, pi-tiers, and the 1yian/no-mistakes fork on each host to their latest remote (never restarting a no-mistakes daemon, never touching other Pi packages, and reporting a pinned pi-tiers, or a Pi that another package manager owns, as not updated), then updates cardd's checkout when config/lane.json has a cardd entry: when cardd's code changed, it backs up cardd's database, restarts cardd, and waits until cardd answers on the new code, and it stops without restarting any lane when cardd does not. Then it requests safe-point reloads of connected workers and second mates without interrupting their turns or long jobs, preserves stopped lanes and task waits, reports pending versus completed requests, reorders every host's herdr sidebar, and restarts main on its conversation when this turn ends. Main runs it right after every merged fleet change, without asking. With hosts, it updates only those hosts: the list is resolved once, an empty or unknown name is refused before any host is contacted, and no alias is inferred. A host that is not listed is never contacted, not even for the first check, and the report names it as not targeted, not checked. The list must include local, where main runs, and the host of cardd. Reload requests, worker metadata, and the sidebar then cover only workers whose host is listed and second mates whose own connection reports a listed host, and nobody is enrolled through an unscoped request when cardd cannot scope reloads. Main's restart after a scoped update starts its first supervision and clone pass on the listed hosts only. Without hosts, every host takes part.",
+      "Updates the fleet to the latest origin/main, as /updatefleet does: checks every host first and stops before any change when a checkout or lane home has uncommitted changes or its own commits, or a host cannot be reached. Then it pulls each host's checkout, installs packages when the lockfile changed, builds the board, moves every lane home to the new commit, updates Pi, pi-tiers, and the 1yian/no-mistakes fork on each host to their latest remote (never restarting a no-mistakes daemon, never touching other Pi packages, and reporting a pinned pi-tiers, or a Pi that another package manager owns, as not updated), then updates cardd's checkout when config/lane.json has a cardd entry: when cardd's code changed, it backs up cardd's database, restarts cardd, and waits until cardd answers on the new code, and it stops without restarting any lane when cardd does not. Then it requests safe-point reloads of connected workers and second mates without interrupting their turns or long jobs, preserves stopped lanes and task waits, reports pending versus completed requests, reorders every host's herdr sidebar, and restarts main on its conversation when this turn ends. Main runs it right after every merged fleet change, without asking. With hosts, it updates only those hosts: the list is resolved once, an empty or unknown name is refused before any host is contacted, and no alias is inferred. A host that is not listed is never contacted, not even for the first check, and the report names it as not targeted, not checked. The list must include local, where main runs, and the host of cardd, so config/lane.json needs a cardd entry for a list to be accepted. Reload requests, worker metadata, and the sidebar then cover only workers whose host is listed and second mates whose own connection reports a listed host, and nobody is enrolled through an unscoped request when cardd cannot scope reloads. Main's restart after a scoped update starts its first supervision and clone pass on the listed hosts only. Without hosts, every host takes part.",
     parameters: Type.Object({
       hosts: Type.Optional(
         Type.Array(Type.String({ minLength: 1 }), {
@@ -428,7 +430,7 @@ export function registerUpdate(pi: ExtensionAPI, home: string, link: Link): void
   });
   pi.registerCommand("updatefleet", {
     description:
-      "Update the fleet to the latest origin/main on every host and cardd, or only on the hosts named after the command (/updatefleet local p620; local and cardd's host are required, and other hosts are never contacted), update Pi, pi-tiers, and the no-mistakes fork on every host, restart cardd when its code changed, request safe-point reloads of workers and second mates, arrange every host's herdr sidebar, then restart main on its conversation.",
+      "Update the fleet to the latest origin/main on every host and cardd, or only on the hosts named after the command (/updatefleet local p620; local and cardd's host are required, a cardd entry in config/lane.json is required, and other hosts are never contacted), update Pi, pi-tiers, and the no-mistakes fork on every host, restart cardd when its code changed, request safe-point reloads of workers and second mates, arrange every host's herdr sidebar, then restart main on its conversation.",
     handler: async (args, ctx) => {
       const named = args.trim() === "" ? undefined : args.trim().split(/\s+/);
       if (ctx.hasUI)

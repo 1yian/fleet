@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { maintenanceLine, type Maintenance } from "@fleet/protocol";
 import { spawnDetached } from "./detached.ts";
-import { FIRST_PASS_ARG } from "./first-pass.ts";
+import { FIRST_PASS_ARG, firstPassFlagValue } from "./first-pass.ts";
 import { mateRelaunchArgs, readLaneConfig } from "./lane-config.ts";
 import type { Link } from "./link.ts";
 import { PROCESS_ARG } from "./process-id.ts";
@@ -46,7 +46,9 @@ export function relaunchSelf(
   const kept = lane === undefined ? running : mateRelaunchArgs(running, lane);
   const stale = staleAt === undefined ? kept : [...kept, `${STALE_RELOAD_ARG}${String(staleAt)}`];
   const args =
-    firstPass === undefined ? stale : [...stale, `${FIRST_PASS_ARG}${firstPass.join(",")}`];
+    firstPass === undefined
+      ? stale
+      : [...stale, `${FIRST_PASS_ARG}${firstPassFlagValue(firstPass)}`];
   const direnv = lane?.direnv;
   const helper = spawnDetached(
     process.execPath,

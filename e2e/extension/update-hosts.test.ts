@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -112,6 +113,11 @@ async function start(options: { cardd?: boolean; olderCardd?: boolean } = {}): P
       file,
       readFileSync(file, "utf8").replace('"maintenance.scoped": {', '"maintenance.older": {'),
     );
+    git(app.root, "commit", "-qam", "an older cardd without scoped reloads");
+    const olderRemote = join(app.parent, "app-older.git");
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", olderRemote]);
+    git(app.root, "remote", "set-url", "origin", olderRemote);
+    git(app.root, "push", "-q", "-u", "origin", "main");
   }
   const cardd = await Cardd.underKeepAlive(app.root);
   const p620Log = join(here.parent, "p620-calls");
@@ -345,8 +351,23 @@ test("a host list with an unknown or empty name, without local, or without cardd
   assert.deepEqual(tips(f), old);
 });
 
+test("a host list is refused before any host is contacted when config/lane.json has no cardd entry", async () => {
+  const f = await start({ cardd: false });
+  const before = [callsTo(f.p620Log).length, callsTo(f.vmLog).length];
+  const old = tips(f);
+
+  assert.match(
+    await toolRun(f, { hosts: ["local", "p620"] }),
+    /^a scoped update needs a cardd entry in config\/lane\.json so cardd's host can be checked/,
+  );
+
+  assert.deepEqual([callsTo(f.p620Log).length, callsTo(f.vmLog).length], before);
+  assert.deepEqual(tips(f), old);
+  assert.deepEqual(enrolled(f.cardd.db), []);
+});
+
 test("a host list enrolls no reload when cardd cannot scope enrollment, so an older cardd leaves every mate running", async () => {
-  const f = await start({ cardd: false, olderCardd: true });
+  const f = await start({ olderCardd: true });
   const excluded = callsTo(f.vmLog).length;
   landOnRemote(f.remote, "fleet-fix");
 

@@ -65,7 +65,7 @@ function placedName(host: string, row: Record<string, unknown>): string {
   return sidebarHostName(typeof row["host"] === "string" ? row["host"] : undefined);
 }
 
-export function soleHosts(runningHosts: ReadonlyMap<string, string[]>): Map<string, string> {
+function soleHosts(runningHosts: ReadonlyMap<string, string[]>): Map<string, string> {
   const found = new Map<string, string>();
   for (const [lane, hosts] of runningHosts) {
     const [host] = hosts;
@@ -89,14 +89,14 @@ async function collectRunning(
   }
 }
 
-export async function runningMates(
+export async function scopedMateHosts(
   config: LaneConfig,
   hosts: readonly string[],
-): Promise<Map<string, string[]>> {
+): Promise<Map<string, string>> {
   const here = sidebarHostName(process.env["FLEET_HOST"]);
   const runningHosts = new Map([[config.lane, [here]]]);
   for (const host of hosts) await collectRunning(config, host, runningHosts);
-  return runningHosts;
+  return soleHosts(runningHosts);
 }
 
 async function hostOfLane(config: LaneConfig, lane: string): Promise<string> {
