@@ -5,6 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { WebSocket } from "ws";
 import type { Access } from "./access.ts";
 import { boardAction, boardView, StaleCard, thread } from "./board.ts";
+import { answerBrowser, type BrowserUpstream } from "./browser.ts";
 import { reviewArtifactOrigin } from "./review-completion.ts";
 import { REVIEW_BODY_LIMIT } from "./review-page.ts";
 import { Reviews } from "./review-rounds.ts";
@@ -148,6 +149,7 @@ export class Web {
   private readonly db: DatabaseSync;
   private readonly flush: (session: string) => void;
   private readonly files: string | undefined;
+  private readonly browser: BrowserUpstream | undefined;
   private readonly timing: Timings;
 
   constructor(
@@ -156,6 +158,7 @@ export class Web {
     flush: (session: string) => void,
     files: string | undefined,
     access: Access | undefined,
+    browser: BrowserUpstream | undefined,
     reviewOrigins: ReadonlyMap<string, string>,
   ) {
     this.db = db;
@@ -163,6 +166,7 @@ export class Web {
     this.flush = flush;
     this.files = files === undefined ? undefined : resolve(files);
     this.access = access;
+    this.browser = browser;
     const artifactOrigin = reviewArtifactOrigin(
       process.env["CARDD_REVIEW_ARTIFACT_ORIGIN"],
       access?.host,
@@ -216,7 +220,9 @@ export class Web {
         });
         return;
       }
-      const path = new URL(request.url ?? "/", "http://board").pathname;
+      const url = new URL(request.url ?? "/", "http://board");
+      const path = url.pathname;
+      if (await this.browserRoute(request, response, channel, url)) return;
       const review = /^\/review\/(\d+)\/(\d+)$/.exec(path);
       if (review !== null) {
         if (channel !== "public") this.refuse(response);
@@ -228,13 +234,24 @@ export class Web {
         return;
       }
       const value = await this.route(request, channel);
-      if (value === undefined)
-        this.serveFile(new URL(request.url ?? "/", "http://board").pathname, response);
+      if (value === undefined) this.serveFile(path, response);
       else reply(response, 200, value);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       reply(response, error instanceof StaleCard ? 409 : 400, { ok: false, error: message });
     }
+  }
+
+  private async browserRoute(
+    request: IncomingMessage,
+    response: ServerResponse,
+    channel: Channel,
+    url: URL,
+  ): Promise<boolean> {
+    if (!url.pathname.startsWith("/api/browser/")) return false;
+    if (channel === "public") this.refuse(response);
+    else await answerBrowser(request, response, url, this.browser);
+    return true;
   }
 
   private async review(
@@ -262,11 +279,14 @@ export class Web {
 
   private read(path: string, channel: Channel): unknown {
     if (path === "/api/board")
-      return boardView(
-        this.db,
-        this.timing,
-        channel === "public" ? this.reviews.available() : undefined,
-      );
+      return {
+        ...boardView(
+          this.db,
+          this.timing,
+          channel === "public" ? this.reviews.available() : undefined,
+        ),
+        ...(channel === "tailnet" && this.browser !== undefined ? { browsers: true } : {}),
+      };
     if (path === "/api/version") return version(this.db);
     const card = /^\/api\/card\/(\d+)$/.exec(path)?.[1];
     return card === undefined ? undefined : thread(this.db, Number(card));

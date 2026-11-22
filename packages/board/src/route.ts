@@ -9,6 +9,14 @@ const subscribe = (notify: () => void): (() => void) => {
   };
 };
 const hash = (): string => location.hash;
+const BROWSER_ADDRESS = /^#\/browser(?:\/([a-z0-9][a-z0-9-]{0,31}))?$/;
+
+export function useBrowserRoute(
+  enabled: boolean | undefined,
+): { readonly lane: string | undefined } | undefined {
+  const match = BROWSER_ADDRESS.exec(useSyncExternalStore(subscribe, hash));
+  return !enabled || match === null ? undefined : { lane: match[1] };
+}
 
 export function useCardRoute(): {
   readonly card: number | undefined;
