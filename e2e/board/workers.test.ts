@@ -162,38 +162,47 @@ test("cached working rows are hidden promptly when cardd goes away", async (cont
   assert.equal(await page.getByRole("link", { name: task.title }).count(), 0);
 });
 
-test("going back to Active Workers restores the scroll position the tab was left at", async (context) => {
+test("Active Workers keeps the scroll position it was left at across links and browser history", async (context) => {
   const { cardd, main } = await startFleet({}, ["--board", BOARD]);
   context.after(() => cardd.stop());
   const page = await openBoardPage(context, browser);
   await page.setViewportSize({ width: 1000, height: 500 });
-  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
-  const tasks: Card[] = [];
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/"));
+  let last: Card | undefined;
   for (let n = 1; n <= 14; n++) {
-    const task = await newCard(main, `Prepare the release note ${String(n)}`);
-    await cardd.connect(await begin(main, task), [], true, true);
-    tasks.push(task);
+    last = await newCard(main, `Prepare the release note ${String(n)}`);
+    await cardd.connect(await begin(main, last), [], true, true);
   }
-  const last = tasks[tasks.length - 1];
   assert.ok(last !== undefined);
+  const nav = page.getByRole("navigation", { name: "Fleet views" });
+  await nav.getByRole("link", { name: "Active Workers" }).click();
   await row(page, "Working", last).getByText("Running", { exact: true }).waitFor();
 
-  await row(page, "Working", last).getByRole("link", { name: last.title }).click();
-  await page.getByRole("heading", { name: last.title }).waitFor();
-  await page.keyboard.press("Escape");
-  await page.getByRole("heading", { name: "Active Workers" }).waitFor();
-  await page.waitForFunction(() => window.scrollY > 0);
+  const scrollTo = async (y: number): Promise<void> => {
+    await page.evaluate((to) => {
+      window.scrollTo(0, to);
+    }, y);
+    await page.waitForFunction((to) => window.scrollY === to, y);
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
+  };
+  const scrolled = (y: number) =>
+    page.waitForFunction((to) => Math.abs(window.scrollY - to) <= 1, y, { timeout: 5000 });
 
-  await page.evaluate(() => {
-    window.scrollTo(0, 0);
-  });
-  await page
-    .getByRole("navigation", { name: "Fleet views" })
-    .getByRole("link", { name: "Board" })
-    .click();
+  await scrollTo(240);
+  await page.goBack();
+  await page.getByRole("heading", { name: "Active Workers" }).waitFor({ state: "detached" });
+  await page.goForward();
+  await page.getByRole("heading", { name: "Active Workers" }).waitFor();
+  await scrolled(240);
+
+  await scrollTo(120);
+  await nav.getByRole("link", { name: "Board" }).click();
+  await page.getByRole("heading", { name: "Active Workers" }).waitFor({ state: "detached" });
   await page.goBack();
   await page.getByRole("heading", { name: "Active Workers" }).waitFor();
-  await page.waitForFunction(() => window.scrollY === 0, undefined, { timeout: 3000 });
+  await scrolled(120);
 });
 
 test("a card opened from Active Workers returns there after back and forward history", async (context) => {
@@ -295,6 +304,20 @@ async function stallingServer(): Promise<Stalling> {
   };
 }
 
+async function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${what} did not happen within ${String(ms)} ms`));
+    }, ms);
+  });
+  try {
+    return await Promise.race([promise, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 test("a board response that stalls after a partial body is abandoned at the deadline and the next change is shown", async (context) => {
   const { cardd, main } = await startFleet({}, ["--board", BOARD]);
   context.after(() => cardd.stop());
@@ -310,13 +333,17 @@ test("a board response that stalls after a partial body is abandoned at the dead
     else await route.continue();
   });
   await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
-  await stalled.delivered;
+  await within(stalled.delivered, 10_000, "the first board read reaching the stall server");
 
   const task = await newCard(main, "Refresh the partner logos");
   await cardd.connect(await begin(main, task), [], true, true);
   await row(page, "Working", task)
     .getByText("Running", { exact: true })
     .waitFor({ timeout: 20_000 });
-  const elapsed = await stalled.abandoned;
+  const elapsed = await within(
+    stalled.abandoned,
+    15_000,
+    "the browser abandoning the stalled read",
+  );
   assert.ok(elapsed >= 9000, `the browser dropped the stalled body after ${String(elapsed)} ms`);
 });
