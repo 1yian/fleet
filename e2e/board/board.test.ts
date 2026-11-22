@@ -349,19 +349,24 @@ test("the board reloads after its live socket reconnects", async () => {
 });
 
 test("a board load that finishes late is followed by the queued newer one", async () => {
-  await question("Pick the API version", ["v1", "v2"]);
   let calls = 0;
+  let finished = 0;
+  let holding = false;
+  let heldCalls = Number.POSITIVE_INFINITY;
   let captured = (): void => undefined;
-  const firstCaptured = new Promise<void>((resolve) => {
+  const heldRead = new Promise<void>((resolve) => {
     captured = resolve;
   });
   let release = (): void => undefined;
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
+  page.on("requestfinished", (request) => {
+    if (request.url().endsWith("/api/board")) finished += 1;
+  });
   await page.route("**/api/board", async (route) => {
     calls += 1;
-    if (calls > 1) {
+    if (!holding || calls > heldCalls) {
       await route.continue();
       return;
     }
@@ -371,17 +376,30 @@ test("a board load that finishes late is followed by the queued newer one", asyn
     await route.fulfill({ response: stale });
   });
   await page.goto(http());
-  await firstCaptured;
+  await page.getByText("Nothing is on the board.").waitFor();
+  for (let waited = 0; finished < 2; waited += 20) {
+    assert.ok(waited < 5000, "the board never finished its startup and live-socket reads");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  heldCalls = calls + 1;
+  holding = true;
+  await question("Pick the API version", ["v1", "v2"]);
+  await heldRead;
 
   await question("Renew the certificate", ["now", "later"]);
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-  assert.equal(calls, 1, "the live change queues behind the held read instead of starting another");
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.equal(
+    calls,
+    heldCalls,
+    "the live change queues behind the held read instead of starting another",
+  );
   assert.equal(await page.getByText("Renew the certificate?").count(), 0);
 
   release();
   await page.getByText("Pick the API version?").waitFor();
   await page.getByText("Renew the certificate?").waitFor();
-  assert.equal(calls, 2);
+  assert.equal(calls, heldCalls + 1);
 });
 
 const UNREACHABLE = /The board could not reach cardd/;
