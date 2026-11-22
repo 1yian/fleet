@@ -29,7 +29,6 @@ export class BrowserEndpoint {
   arrivals = 0;
   private failing = false;
   private failingInput = false;
-  private timingOut = false;
   private frameHeld = false;
   readonly order: string[] = [];
   readonly events: Record<string, unknown>[] = [];
@@ -138,10 +137,6 @@ export class BrowserEndpoint {
     this.failingInput = true;
   }
 
-  timeOutNextInput(): void {
-    this.timingOut = true;
-  }
-
   get streams(): number {
     return this.viewers.size;
   }
@@ -215,8 +210,7 @@ export class BrowserEndpoint {
       response.writeHead(409).end("viewer does not hold control, send control first");
       return;
     } else {
-      await this.input(body, response);
-      if (response.headersSent) return;
+      await this.input(body);
       if (this.failingInput) {
         this.failingInput = false;
         response.writeHead(500).end();
@@ -242,7 +236,7 @@ export class BrowserEndpoint {
     if (command.t !== "control") this.publish();
   }
 
-  private async input(body: unknown, response: ServerResponse): Promise<void> {
+  private async input(body: unknown): Promise<void> {
     assert.ok(typeof body === "object" && body !== null && "events" in body);
     assert.ok(Array.isArray(body.events));
     this.activeInputs += 1;
@@ -252,10 +246,6 @@ export class BrowserEndpoint {
       const entry: Record<string, unknown> = { ...item };
       this.events.push(entry);
       this.order.push(`${String(entry["t"])}:${String(entry["type"])}:${String(entry["key"])}`);
-    }
-    if (this.timingOut) {
-      this.timingOut = false;
-      response.writeHead(500).end();
     }
     await this.gate;
     this.activeInputs -= 1;
