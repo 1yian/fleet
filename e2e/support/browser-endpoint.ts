@@ -141,6 +141,10 @@ export class BrowserEndpoint {
     return this.viewers.size;
   }
 
+  moveTab(): void {
+    this.tab = 1;
+  }
+
   withholdState(): void {
     this.withholding = true;
   }
