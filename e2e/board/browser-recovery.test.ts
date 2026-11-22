@@ -277,24 +277,58 @@ test("Done stays available when the stream confirms ownership with no open tab",
   assert.equal(endpoint.controlled, false);
 });
 
-test("a frame that arrives before its state is only a preview", async (t) => {
+test("a static tab whose only frame preceded its state regains input through one fresh screencast", async (t) => {
   const { endpoint, jpeg, page, base } = await launch(t);
   await takeControl(page, endpoint, base);
   await clickAndSettle(page, endpoint);
   endpoint.sendFrameBeforeState();
+  const acked = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/command"),
+  );
   await page.getByRole("button", { name: "Workshop" }).click();
+  await acked;
   await page
     .locator(`.browser-surface:not(.driving) img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
     .waitFor();
-  await page
-    .locator('nav[aria-label="Remote tabs"] button[aria-current="true"]', { hasText: "Workshop" })
-    .waitFor();
   await nextFrames(page);
   assert.equal(await page.locator(".browser-surface.driving").count(), 0);
-  endpoint.showFrame(1);
+  assert.equal(endpoint.commands.length, 2);
   await page
     .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
     .waitFor();
+  assert.deepEqual(endpoint.commands.slice(1), [
+    { t: "tab", action: "activate", id: "two" },
+    { t: "tab", action: "activate", id: "two" },
+  ]);
+  endpoint.order.length = 0;
+  await screenClick(page);
+  await until(() => endpoint.order.includes("key:keyUp:x"));
+  assert.equal(endpoint.commands.length, 3);
+});
+
+test("a frame sent before the first state of a reconnected stream is not trusted", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  endpoint.sendFrameBeforeState();
+  const opens = endpoint.streamOpens;
+  const arrived = endpoint.arrivals;
+  endpoint.hold();
+  endpoint.startOutage();
+  await page.getByText("Browser connection interrupted").waitFor();
+  endpoint.endOutage();
+  await until(() => endpoint.streamOpens > opens);
+  await page
+    .locator(`.browser-surface:not(.driving) img[src="data:image/jpeg;base64,${jpeg[0] ?? ""}"]`)
+    .waitFor();
+  await until(() => endpoint.arrivals === arrived + 1);
+  assert.equal(await page.locator(".browser-surface.driving").count(), 0);
+  assert.equal(endpoint.commands.length, 1);
+  endpoint.release();
+  await page
+    .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[0] ?? ""}"]`)
+    .waitFor();
+  assert.deepEqual(endpoint.commands.slice(1), [{ t: "tab", action: "activate", id: "one" }]);
 });
 
 test("a queued tab request does not make an old frame for that tab trusted", async (t) => {
@@ -338,7 +372,11 @@ test("an acknowledged activation does not promote an earlier frame to input auth
   await page
     .locator('nav[aria-label="Remote tabs"] button[aria-current="true"]', { hasText: "Workshop" })
     .waitFor();
+  const acked = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/command"),
+  );
   endpoint.release();
+  await acked;
   await page
     .locator(`.browser-surface:not(.driving) img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
     .waitFor();
