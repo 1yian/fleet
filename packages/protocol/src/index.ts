@@ -455,7 +455,6 @@ export const BoardSchema = Type.Object({
 export type Board = Static<typeof BoardSchema>;
 export const ThreadSchema = Type.Object({ card: CardSchema, entries: Type.Array(EntrySchema) });
 export type Thread = Static<typeof ThreadSchema>;
-
 export const PushedEntrySchema = Type.Object({
   entry: EntrySchema,
   name: Type.String(),
