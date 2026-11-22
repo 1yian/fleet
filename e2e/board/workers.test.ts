@@ -174,34 +174,31 @@ test("Active Workers keeps the scroll position it was left at across links and b
     await cardd.connect(await begin(main, last), [], true, true);
   }
   assert.ok(last !== undefined);
-  const nav = page.getByRole("navigation", { name: "Fleet views" });
-  await nav.getByRole("link", { name: "Active Workers" }).click();
+  await page
+    .getByRole("navigation", { name: "Fleet views" })
+    .getByRole("link", { name: "Active Workers" })
+    .click();
   await row(page, "Working", last).getByText("Running", { exact: true }).waitFor();
-
-  const scrollTo = async (y: number): Promise<void> => {
-    await page.evaluate((to) => {
-      window.scrollTo(0, to);
-    }, y);
-    await page.waitForFunction((to) => window.scrollY === to, y);
-    await page.evaluate(
-      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-    );
-  };
+  const heading = page.getByRole("heading", { name: "Active Workers" });
   const scrolled = (y: number) =>
     page.waitForFunction((to) => Math.abs(window.scrollY - to) <= 1, y, { timeout: 5000 });
 
-  await scrollTo(240);
-  await page.goBack();
-  await page.getByRole("heading", { name: "Active Workers" }).waitFor({ state: "detached" });
+  await page.evaluate(() => {
+    window.scrollTo(0, 240);
+    history.back();
+  });
+  await heading.waitFor({ state: "detached" });
   await page.goForward();
-  await page.getByRole("heading", { name: "Active Workers" }).waitFor();
+  await heading.waitFor();
   await scrolled(240);
 
-  await scrollTo(120);
-  await nav.getByRole("link", { name: "Board" }).click();
-  await page.getByRole("heading", { name: "Active Workers" }).waitFor({ state: "detached" });
+  await page.evaluate(() => {
+    window.scrollTo(0, 120);
+    document.querySelector<HTMLAnchorElement>('a[href="#/"]')?.click();
+  });
+  await heading.waitFor({ state: "detached" });
   await page.goBack();
-  await page.getByRole("heading", { name: "Active Workers" }).waitFor();
+  await heading.waitFor();
   await scrolled(120);
 });
 
