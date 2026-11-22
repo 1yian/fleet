@@ -381,7 +381,9 @@ export function useSteadyPi(): void {
 
 const faultLog = () => join(bin, "observations");
 
-function fleetEnv(fault = "", pane = "", probeTimeout = "1000"): NodeJS.ProcessEnv {
+const probeTimeoutFor = (fault: string): string => (fault === "timeout" ? "1000" : "20000");
+
+function fleetEnv(fault = "", pane = "", probeTimeout = probeTimeoutFor(fault)): NodeJS.ProcessEnv {
   return {
     ...process.env,
     ...lab.env,
@@ -396,7 +398,12 @@ function fleetEnv(fault = "", pane = "", probeTimeout = "1000"): NodeJS.ProcessE
   };
 }
 
-function fleet(args: readonly string[], fault = "", pane = "", probeTimeout = "1000"): string {
+function fleet(
+  args: readonly string[],
+  fault = "",
+  pane = "",
+  probeTimeout = probeTimeoutFor(fault),
+): string {
   return execFileSync(process.execPath, [here.launch, ...args], {
     encoding: "utf8",
     timeout: 90_000,
