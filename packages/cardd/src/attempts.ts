@@ -338,6 +338,19 @@ export function repinAttempt(
   return { previous };
 }
 
+export function restoreAttemptPin(
+  db: DatabaseSync,
+  card: number,
+  from: string | undefined,
+): boolean {
+  const live = liveAttempt(db, card);
+  if (live === undefined) return false;
+  const { changes } = db
+    .prepare("UPDATE attempts SET model = ?, updated_at = ? WHERE id = ?")
+    .run(from ?? null, Date.now(), live.id);
+  return Number(changes) > 0;
+}
+
 export function resumeAttempt(db: DatabaseSync, card: Card): Begun {
   const live = liveAttempt(db, card.id);
   if (live === undefined) throw new Error(`c-${String(card.id)} has no live attempt to restart`);

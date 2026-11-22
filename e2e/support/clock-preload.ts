@@ -18,18 +18,21 @@ if (file !== undefined) {
     }
     return skew;
   };
+  const epoch = process.env["FLEET_E2E_CLOCK_EPOCH"];
+  const now = Date.now.bind(Date);
+  const time = (): number => (epoch === undefined ? now() : Number(epoch)) + current();
   globalThis.Date = new Proxy(Date, {
     construct: (target, args: unknown[], newTarget): object => {
       const made: unknown = Reflect.construct(
         target,
-        args.length === 0 ? [target.now() + current()] : args,
+        args.length === 0 ? [time()] : args,
         newTarget,
       );
       if (typeof made !== "object" || made === null) throw new TypeError("Date did not construct");
       return made;
     },
     get: (target, key): unknown => {
-      if (key === "now") return () => target.now() + current();
+      if (key === "now") return time;
       const value: unknown = Reflect.get(target, key);
       return value;
     },

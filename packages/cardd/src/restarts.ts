@@ -1,7 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { OpArgs } from "@fleet/protocol";
-import { connected, liveAttemptModel, repinAttempt } from "./attempts.ts";
+import { connected, liveAttemptModel, repinAttempt, restoreAttemptPin } from "./attempts.ts";
 import { requireOpen } from "./change.ts";
+import { comment } from "./comments.ts";
+import { retireNoticeDeliveries } from "./delivery-states.ts";
+import { LIVE_REQUEST, noticeState, releaseRestartNotices, requestOf } from "./restart-requests.ts";
 import { AvoidRefused } from "./incident-escalation.ts";
 import { generationOf, incidentById, type Incident } from "./incident-store.ts";
 import { intentOf, type IncidentIntent } from "./incident-lifecycle.ts";
@@ -37,11 +40,13 @@ function targetOf(db: DatabaseSync, card: number, lane: string, mate: boolean): 
   return { actor: String(row["id"]), host: String(row["host"]), role: mate ? "mate" : "worker" };
 }
 
+const RESTARTED_NOTICE =
+  "Your session was restarted on the same card and conversation. Continue your task from where you stopped.";
+
 function restartsInLastHour(db: DatabaseSync, card: number): number {
   const row = db
     .prepare(
-      `SELECT count(*) AS n FROM entries
-       WHERE card = ? AND kind = 'note' AND json_extract(fields, '$.restartKey') IS NOT NULL AND created_at > ?`,
+      `SELECT count(*) AS n FROM entries e WHERE e.card = ? AND e.kind = 'note' AND ${LIVE_REQUEST} AND e.created_at > ?`,
     )
     .get(card, Date.now() - HOUR_MS);
   return Number(row?.["n"]);
@@ -50,7 +55,8 @@ function restartsInLastHour(db: DatabaseSync, card: number): number {
 function alreadyRequested(db: DatabaseSync, card: number, key: string): boolean {
   const row = db
     .prepare(
-      "SELECT 1 FROM entries WHERE card = ? AND kind = 'note' AND json_extract(fields, '$.restartKey') = ?",
+      `SELECT 1 FROM entries e WHERE e.card = ? AND e.kind = 'note' AND ${LIVE_REQUEST}
+       AND json_extract(e.fields, '$.restartKey') = ?`,
     )
     .get(card, key);
   return row !== undefined;
@@ -87,17 +93,53 @@ function refuseLaunchOption(args: OpArgs<"card.restart">, mate: boolean): void {
     );
 }
 
-function repin(db: DatabaseSync, lane: string, card: number, model: string): void {
+function repin(
+  db: DatabaseSync,
+  lane: string,
+  card: number,
+  model: string,
+  request: number | undefined,
+): void {
   const { previous } = repinAttempt(db, card, model);
-  if (previous === model) return;
+  if (previous === model && request === undefined) return;
   const was = previous ?? "the lane's normal model selection";
-  const body = `Model pin changed from ${was} to ${model}. Every restart keeps it.`;
-  addEntry(db, { card, author: `mate:${lane}`, kind: "note", body, fields: { model } }, []);
+  const body =
+    previous === model
+      ? `Model pin kept at ${model}. Every restart keeps it.`
+      : `Model pin changed from ${was} to ${model}. Every restart keeps it.`;
+  const fields = { model, pinFrom: previous ?? null, pinTo: model, pinRequest: request ?? null };
+  addEntry(db, { card, author: `mate:${lane}`, kind: "note", body, fields }, []);
 }
 
 interface Planned {
   readonly value: { readonly repeat: boolean };
   readonly notify: readonly string[];
+}
+
+function restorePin(db: DatabaseSync, lane: string, card: number, request: number): void {
+  const rows = db
+    .prepare(
+      `SELECT json_extract(fields, '$.pinFrom') AS "from", json_extract(fields, '$.pinTo') AS "to",
+         json_extract(fields, '$.pinRequest') AS request, json_extract(fields, '$.pinRefunded') AS refunded
+       FROM entries WHERE card = ? AND kind = 'note'
+         AND (json_type(fields, '$.pinTo') IS NOT NULL OR json_type(fields, '$.pinRefunded') IS NOT NULL)
+       ORDER BY id`,
+    )
+    .all(card);
+  if (!rows.some((row) => row["request"] === request && typeof row["to"] === "string")) return;
+  const refunded = new Set<unknown>([
+    request,
+    ...rows.map((row) => row["refunded"]).filter((value) => typeof value === "number"),
+  ]);
+  const pins = rows.filter((row) => typeof row["to"] === "string");
+  const first = pins[0];
+  const last = pins.findLast((row) => !refunded.has(row["request"]));
+  const pinned = last?.["to"] ?? first?.["from"];
+  const model = typeof pinned === "string" ? pinned : undefined;
+  restoreAttemptPin(db, card, model);
+  const body = `Model pin restored to ${model ?? "the lane's normal model selection"}: the restart that changed it did not run.`;
+  const fields = { model: model ?? null, pinRefunded: request };
+  addEntry(db, { card, author: `mate:${lane}`, kind: "note", body, fields }, []);
 }
 
 function refusedRestart(intent: IncidentIntent, connectedWorker: boolean): Error {
@@ -143,13 +185,17 @@ function ordinaryRestart(
       `c-${String(card.id)} was restarted ${String(RESTARTS_PER_HOUR)} times in the last hour`,
     );
   const generation = generationOf(db, target.actor);
-  if (!repeat) {
-    const body = resting
-      ? "Reconnect requested: the worker's process was disconnected. The card keeps its state and nothing is resumed."
-      : "Restart requested on the same conversation, branch, and work.";
-    const fields = { restartKey: key, generation };
-    addEntry(db, { card: card.id, author: `mate:${session.lane}`, kind: "note", body, fields }, []);
-  }
+  const body = resting
+    ? "Reconnect requested: the worker's process was disconnected. The card keeps its state and nothing is resumed."
+    : "Restart requested on the same conversation, branch, and work.";
+  const fields = { restartKey: key, actor: target.actor, generation };
+  const request = repeat
+    ? undefined
+    : addEntry(
+        db,
+        { card: card.id, author: `mate:${session.lane}`, kind: "note", body, fields },
+        [],
+      );
   const value = {
     ...target,
     card: card.id,
@@ -159,6 +205,7 @@ function ordinaryRestart(
     generation,
     replaced: false,
     repeat,
+    ...(mate || request === undefined ? {} : { request }),
     reconnect: resting,
   };
   return { value, notify: [] };
@@ -212,7 +259,52 @@ export function restartCard(
   requireDirectParent(session, card, mate);
   refuseLaunchOption(args, mate);
   const planned = planRestart(db, session, card, mate, args, timing);
-  if (args.model !== undefined && !planned.value.repeat)
-    repin(db, session.lane, card.id, args.model);
+  if (args.model !== undefined && !planned.value.repeat) {
+    const request = "request" in planned.value ? Number(planned.value.request) : undefined;
+    repin(db, session.lane, card.id, args.model, request);
+  }
   return planned;
+}
+
+export function restartFailed(
+  db: DatabaseSync,
+  session: Session,
+  args: OpArgs<"card.restart.failed">,
+): { readonly value: { readonly recorded: boolean }; readonly notify: readonly string[] } {
+  const card = getCard(db, args.card);
+  const mate = laneCardOf(db, card.lane) === card.id;
+  requireDirectParent(session, card, mate);
+  const request = mate ? undefined : requestOf(db, card.id, args.request);
+  if (request?.key !== args.key || generationOf(db, request.actor) > request.generation)
+    return { value: { recorded: false }, notify: [] };
+  restorePin(db, session.lane, card.id, args.request);
+  const body = `The restart did not run, so it does not count toward the ${String(RESTARTS_PER_HOUR)} an hour: its worker process could not be started.`;
+  const fields = { restartFailed: args.request };
+  addEntry(db, { card: card.id, author: `mate:${session.lane}`, kind: "note", body, fields }, []);
+  db.prepare(
+    retireNoticeDeliveries(`SELECT id, card FROM entries WHERE card = ? AND kind = 'comment'
+      AND json_extract(fields, '$.restartNotice') = ?`),
+  ).run(Date.now(), card.id, args.request);
+  return { value: { recorded: true }, notify: releaseRestartNotices(db, card.id, args.request) };
+}
+
+export function restartNotice(
+  db: DatabaseSync,
+  session: Session,
+  args: OpArgs<"card.restart.notice">,
+): { readonly value: { readonly posted: boolean }; readonly notify: readonly string[] } {
+  const card = getCard(db, args.card);
+  const mate = laneCardOf(db, card.lane) === card.id;
+  requireDirectParent(session, card, mate);
+  if (mate || noticeState(db, card.id, args.request) === "retired")
+    return { value: { posted: false }, notify: [] };
+  const existing = db
+    .prepare(
+      `SELECT 1 FROM entries WHERE card = ? AND kind = 'comment'
+      AND json_extract(fields, '$.restartNotice') = ? LIMIT 1`,
+    )
+    .get(card.id, args.request);
+  if (existing !== undefined) return { value: { posted: false }, notify: [] };
+  const done = comment(db, session, { card: card.id, text: RESTARTED_NOTICE }, args.request);
+  return { value: { posted: true }, notify: done.notify };
 }

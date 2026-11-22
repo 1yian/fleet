@@ -231,6 +231,44 @@ test("delivered startup fences do not advance card movement, but an executed job
   assert.equal((await pulseOf(card)).movedAt, result.createdAt);
 });
 
+test("a restart notice, even for a start that was refused, does not advance card movement, but a mate's comment does", async () => {
+  const card = await newCard(cleo, "Wait for the approval");
+  const worker = await fleet.cardd.connect(await begin(cleo, card));
+  await worker.call("report", { status: "working", text: "Waiting for the approval." });
+  ageCard(fleet.cardd, card, IDLE_LIMIT + MINUTE);
+  const before = await pulseOf(card);
+  assert.deepEqual([before.state, before.notice], ["idle", "main"]);
+
+  const key = "refused-start";
+  const { request } = check(
+    OPS["card.restart"].result,
+    await cleo.call("card.restart", { card: card.id, mode: "replace", key }),
+  );
+  assert.ok(request !== undefined);
+  assert.deepEqual(await cleo.call("card.restart.notice", { card: card.id, request }), {
+    posted: true,
+  });
+  const notice = await worker.waitForEntry(
+    (entry) => entry.fields["restartNotice"] === request,
+    "the restart notice",
+  );
+  assert.deepEqual(await cleo.call("card.restart.failed", { card: card.id, key, request }), {
+    recorded: true,
+  });
+  const still = await pulseOf(card);
+  assert.deepEqual(
+    [still.state, still.notice, still.movedAt],
+    ["idle", "main", before.movedAt],
+    "a refused restart is not worker progress",
+  );
+  assert.ok((await fleet.cardd.thread(card.id)).entries.some(({ id }) => id === notice.id));
+
+  await cleo.call("comment", { card: card.id, text: "Check the footer as well." });
+  const moved = await pulseOf(card);
+  assert.ok(moved.movedAt > before.movedAt, "an ordinary comment still moves the card");
+  assert.equal(moved.notice, "none");
+});
+
 test("a revival before a wrapper's no-start result does not advance card movement", async () => {
   const card = await newCard(cleo, "Run the suite");
   const worker = await fleet.cardd.connect(await begin(cleo, card));
