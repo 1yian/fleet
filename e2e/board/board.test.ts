@@ -351,6 +351,10 @@ test("the board reloads after its live socket reconnects", async () => {
 test("a board load that finishes late is followed by the queued newer one", async () => {
   await question("Pick the API version", ["v1", "v2"]);
   let calls = 0;
+  let captured = (): void => undefined;
+  const firstCaptured = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
   let release = (): void => undefined;
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -362,16 +366,22 @@ test("a board load that finishes late is followed by the queued newer one", asyn
       return;
     }
     const stale = await route.fetch();
+    captured();
     await held;
     await route.fulfill({ response: stale });
   });
   await page.goto(http());
+  await firstCaptured;
 
   await question("Renew the certificate", ["now", "later"]);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(calls, 1, "the live change queues behind the held read instead of starting another");
+  assert.equal(await page.getByText("Renew the certificate?").count(), 0);
+
   release();
   await page.getByText("Pick the API version?").waitFor();
   await page.getByText("Renew the certificate?").waitFor();
-  assert.equal(await page.getByText("Pick the API version?").isVisible(), true);
+  assert.equal(calls, 2);
 });
 
 const UNREACHABLE = /The board could not reach cardd/;
