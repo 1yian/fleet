@@ -166,8 +166,11 @@ test("every line of a multiline complaint stays inside the literal block", async
   const text = "Setup printed:\n![trace](https://example.test/trace.png)\n\n# heading";
   await worker.call("complaint.publish", { text });
   const [issue] = await filed(1);
-  const [block] = issue?.body.split("\n\n- Time: ") ?? [];
-  assert.equal(block, text.replace(/\n/g, "\n    ").replace(/^/, "    "));
+  const expectedBlock =
+    "    Setup printed:\n    ![trace](https://example.test/trace.png)\n    \n    # heading\n\n";
+  const attribution = /^- Time: \d{4}-\d\d-\d\dT[\d:.]+Z\n- Role: worker\n- Lane: `main`\n- Card: c-\d+\n- Project: `web`\n$/;
+  assert.ok(issue?.body.startsWith(expectedBlock), issue?.body);
+  assert.match(issue.body.slice(expectedBlock.length), attribution);
 });
 test("long, blank, or NUL-containing text is refused and files nothing", async () => {
   await assert.rejects(
