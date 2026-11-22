@@ -31,6 +31,12 @@ class BrowserEndpoint {
   private requested: string | undefined;
   private asking = false;
   private tab = 0;
+  private outage = false;
+  private active = 0;
+  readonly events: Record<string, unknown>[] = [];
+  readonly commands: unknown[] = [];
+  inputDelay = 0;
+  activeInputsAtTab = -1;
   readonly server = createServer((request, response) => {
     void this.answer(request, response).catch(() => {
       response.writeHead(500).end();
@@ -90,6 +96,15 @@ class BrowserEndpoint {
     this.publish();
   }
 
+  startOutage(): void {
+    this.outage = true;
+    for (const response of [...this.feeds, ...this.viewers.values()]) response.destroy();
+  }
+
+  endOutage(): void {
+    this.outage = false;
+  }
+
   private begin(response: ServerResponse): void {
     response.writeHead(200, { "content-type": "text/event-stream" });
     response.flushHeaders();
@@ -102,6 +117,10 @@ class BrowserEndpoint {
     }
     const url = new URL(request.url ?? "/", "http://fixture");
     const viewer = url.searchParams.get("viewer") ?? "";
+    if (this.outage && (url.pathname === "/v1/events" || url.pathname.endsWith("/stream"))) {
+      response.writeHead(503).end();
+      return;
+    }
     if (url.pathname === "/v1/events") {
       this.begin(response);
       this.feeds.add(response);
@@ -129,20 +148,38 @@ class BrowserEndpoint {
       if (typeof chunk === "string") raw += chunk;
     }
     const body: unknown = JSON.parse(raw);
-    if (url.pathname.endsWith("/command")) {
-      const command = check(BrowserCommandSchema, body);
-      if (command.t === "control") this.requested = command.on ? viewer : undefined;
-      else if (command.t === "tab") this.tab = TABS.findIndex((tab) => tab.id === command.id);
-      else {
-        this.asking = false;
-        this.holder = undefined;
-      }
-      if (command.t !== "control") this.publish();
-    } else if (this.holder !== viewer) {
+    if (url.pathname.endsWith("/command")) this.command(viewer, body);
+    else if (this.holder !== viewer) {
       response.writeHead(409).end("viewer does not hold control, send control first");
       return;
-    }
+    } else await this.input(body);
     response.writeHead(200).end();
+  }
+
+  private command(viewer: string, body: unknown): void {
+    const command = check(BrowserCommandSchema, body);
+    this.commands.push(command);
+    if (command.t === "tab") this.activeInputsAtTab = this.active;
+    if (command.t === "control") this.requested = command.on ? viewer : undefined;
+    else if (command.t === "tab") this.tab = TABS.findIndex((tab) => tab.id === command.id);
+    else {
+      this.asking = false;
+      this.holder = undefined;
+    }
+    if (command.t !== "control") this.publish();
+  }
+
+  private async input(body: unknown): Promise<void> {
+    assert.ok(typeof body === "object" && body !== null && "events" in body);
+    assert.ok(Array.isArray(body.events));
+    this.active += 1;
+    for (const raw of body.events) {
+      const item: unknown = raw;
+      assert.ok(typeof item === "object" && item !== null);
+      this.events.push({ ...item });
+    }
+    await new Promise((resolve) => setTimeout(resolve, this.inputDelay));
+    this.active -= 1;
   }
 }
 
@@ -153,6 +190,22 @@ async function renderedJpegs(page: Page): Promise<string[]> {
     images.push((await page.screenshot({ type: "jpeg" })).toString("base64"));
   }
   return images;
+}
+
+async function until(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100 && !condition(); attempt += 1)
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(condition());
+}
+
+function delivered(endpoint: BrowserEndpoint, match: Record<string, unknown>) {
+  return endpoint.events.filter((item) =>
+    Object.entries(match).every(([key, value]) => item[key] === value),
+  );
+}
+
+function near(value: unknown, expected: number): void {
+  assert.ok(typeof value === "number" && Math.abs(value - expected) <= 2, String(value));
 }
 
 async function screenClick(page: Page): Promise<void> {
@@ -168,6 +221,68 @@ async function screenClick(page: Page): Promise<void> {
         }),
       ),
   );
+}
+
+async function exerciseInput(page: Page, endpoint: BrowserEndpoint): Promise<void> {
+  await until(() => delivered(endpoint, { t: "key", type: "keyUp", key: "x" }).length === 1);
+  const [pressed] = delivered(endpoint, { t: "mouse", type: "mousePressed" });
+  assert.ok(pressed);
+  assert.equal(pressed["button"], "left");
+  assert.equal(pressed["clickCount"], 1);
+  near(pressed["x"], 240);
+  near(pressed["y"], 150);
+  const [released] = delivered(endpoint, { t: "mouse", type: "mouseReleased" });
+  assert.ok(released);
+  near(released["x"], 240);
+  near(released["y"], 150);
+  assert.equal(delivered(endpoint, { t: "key", type: "keyDown", key: "x", text: "x" }).length, 1);
+
+  endpoint.events.length = 0;
+  const rect = await page.getByRole("img", { name: "Live browser screen" }).boundingBox();
+  assert.ok(rect);
+  await page.waitForTimeout(600);
+  await page.mouse.dblclick(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  await until(() => delivered(endpoint, { t: "mouse", type: "mouseReleased" }).length === 2);
+  assert.deepEqual(
+    delivered(endpoint, { t: "mouse", type: "mousePressed" }).map((item) => item["clickCount"]),
+    [1, 2],
+  );
+  assert.deepEqual(
+    delivered(endpoint, { t: "mouse", type: "mouseReleased" }).map((item) => item["clickCount"]),
+    [1, 2],
+  );
+
+  endpoint.events.length = 0;
+  await page.keyboard.down("Shift");
+  await page.keyboard.press("Escape");
+  await page.keyboard.up("Shift");
+  await until(() => delivered(endpoint, { t: "key", type: "keyUp", key: "Shift" }).length === 1);
+  assert.equal(delivered(endpoint, { t: "key", type: "rawKeyDown", key: "Shift" }).length, 1);
+  assert.equal(delivered(endpoint, { t: "key", key: "Escape" }).length, 0);
+
+  endpoint.events.length = 0;
+  await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+  await page.mouse.down();
+  await page.locator(".browser-surface").dispatchEvent("pointercancel");
+  await until(() => delivered(endpoint, { t: "mouse", type: "mouseReleased" }).length === 1);
+  await page.mouse.up();
+  await screenClick(page);
+  await until(() => delivered(endpoint, { t: "key", type: "keyUp", key: "x" }).length === 1);
+  assert.equal(delivered(endpoint, { t: "mouse", type: "mousePressed" }).length, 2);
+  assert.equal(delivered(endpoint, { t: "mouse", type: "mouseReleased" }).length, 2);
+}
+
+async function exerciseOutage(page: Page, endpoint: BrowserEndpoint): Promise<void> {
+  const commands = endpoint.commands.length;
+  const batches = endpoint.events.length;
+  endpoint.startOutage();
+  await page.getByText("Browser connection interrupted").waitFor();
+  endpoint.endOutage();
+  await page.getByText("You’re in control").waitFor();
+  assert.equal(endpoint.commands.length, commands);
+  assert.equal(endpoint.events.length, batches);
+  await screenClick(page);
+  await until(() => endpoint.events.length > batches);
 }
 
 test("the board watches lanes and only drives after stream confirmation, until control is returned or lost", async (t) => {
@@ -229,7 +344,9 @@ test("the board watches lanes and only drives after stream confirmation, until c
   );
   await screenClick(page);
   assert.equal((await input).status(), 204);
-  assert.ok(sent.length > 0);
+  await exerciseInput(page, endpoint);
+  endpoint.inputDelay = 400;
+  await screenClick(page);
   await page.getByRole("button", { name: "Workshop" }).click();
   await page.waitForFunction(
     (next) =>
@@ -241,6 +358,10 @@ test("the board watches lanes and only drives after stream confirmation, until c
     await page.getByRole("button", { name: "Workshop" }).getAttribute("aria-current"),
     "true",
   );
+  assert.equal(endpoint.activeInputsAtTab, 0);
+  endpoint.inputDelay = 0;
+
+  await exerciseOutage(page, endpoint);
 
   await page.getByRole("button", { name: "Done" }).click();
   await page.getByText("Control returned to the agent.").waitFor();
