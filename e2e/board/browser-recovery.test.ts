@@ -438,3 +438,58 @@ test("a held key is released before input resumes when the fresh frame beats the
   assert.equal(endpoint.order.filter((entry) => entry === "key:keyUp:Shift").length, 1);
   await page.keyboard.up("Shift");
 });
+
+test("a refresh is dropped when a natural frame arrives while its drain waits", async (t) => {
+  const { endpoint, jpeg, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  endpoint.sendFrameBeforeState();
+  const opens = endpoint.streamOpens;
+  endpoint.hold();
+  await page.keyboard.press("a");
+  await until(() => endpoint.activeInputs > 0);
+  endpoint.startOutage();
+  await page.getByText("Browser connection interrupted").waitFor();
+  endpoint.endOutage();
+  await until(() => endpoint.streamOpens > opens);
+  await page.locator(".browser-surface").waitFor();
+  await new Promise((resolve) => setTimeout(resolve, 3500));
+  endpoint.showFrame(0);
+  await nextFrames(page);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  endpoint.release();
+  await page
+    .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[0] ?? ""}"]`)
+    .waitFor();
+  assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
+});
+
+test("a reply from an earlier stream is rejected before any held key is released", async (t) => {
+  const { endpoint, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  await clickAndSettle(page, endpoint);
+  await page.keyboard.down("Shift");
+  await until(() => endpoint.order.includes("key:rawKeyDown:Shift") && endpoint.activeInputs === 0);
+  await nextFrames(page);
+  endpoint.sendFrameBeforeState();
+  const first = endpoint.streamOpens;
+  const arrived = endpoint.arrivals;
+  endpoint.holdReply();
+  endpoint.startOutage();
+  await page.getByText("Browser connection interrupted").waitFor();
+  endpoint.endOutage();
+  await until(() => endpoint.streamOpens > first);
+  await until(() => endpoint.arrivals === arrived + 1);
+  const second = endpoint.streamOpens;
+  endpoint.startOutage();
+  await page.getByText("Browser connection interrupted").waitFor();
+  endpoint.endOutage();
+  await until(() => endpoint.streamOpens > second);
+  endpoint.showFrame(0);
+  await page.locator(".browser-surface").waitFor();
+  const third = endpoint.streamOpens;
+  endpoint.releaseReply();
+  await until(() => endpoint.streamOpens > third);
+  assert.equal(endpoint.order.includes("key:keyUp:Shift"), false);
+  await page.keyboard.up("Shift");
+});
