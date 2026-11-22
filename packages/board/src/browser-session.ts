@@ -229,6 +229,10 @@ class Viewer {
     if (completed) this.invalidateCommand();
     if (!owns && pending !== "take") this.issuedTake = false;
     if (lost || previous?.activeTab !== state.activeTab) this.events = [];
+    if (this.latest !== undefined && this.latest.meta.targetId !== state.activeTab) {
+      this.latest = undefined;
+      this.frame(undefined);
+    }
     const key = `${String(owns)}:${state.activeTab ?? ""}`;
     if (key !== this.confirmedKey) {
       this.confirmedKey = key;

@@ -146,9 +146,9 @@ class Gestures {
     return releases;
   }
 
-  key(event: KeyboardEvent<HTMLDivElement>, down: boolean): BrowserInput {
+  key(event: KeyboardEvent<HTMLDivElement>, down: boolean): BrowserInput | undefined {
     if (down) this.held.set(event.code, keyInput(event, false));
-    else this.held.delete(event.code);
+    else if (!this.held.delete(event.code)) return undefined;
     return keyInput(event, down);
   }
 
@@ -205,7 +205,8 @@ export function BrowserSurface({ frame, driving, input }: Props) {
       }
       if (event.nativeEvent.isComposing) return;
       event.preventDefault();
-      input(target, gestures.key(event, down));
+      const pressed = gestures.key(event, down);
+      if (pressed !== undefined) input(target, pressed);
     };
   return (
     <div
