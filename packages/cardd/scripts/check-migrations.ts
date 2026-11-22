@@ -33,7 +33,22 @@ function changedMigrations(base: string): string[] {
     ["diff", "--name-status", "--diff-filter=MDRT", `${base}...HEAD`, "--", MIGRATIONS_DIR],
     { encoding: "utf8" },
   );
-  return out.split("\n").filter((line) => line.trim() !== "");
+  const heldNames = readMigrations().map((migration) => migration.name);
+  return out
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .filter((line) => !repairsDuplicateNumber(line, heldNames));
+}
+
+function repairsDuplicateNumber(line: string, heldNames: string[]): boolean {
+  const [status, from, to] = line.split("\t");
+  if (status !== "R100" || from === undefined || to === undefined) return false;
+  const fromName = from.slice(from.lastIndexOf("/") + 1);
+  const toName = to.slice(to.lastIndexOf("/") + 1);
+  const fromNumber = /^(\d{3})-/.exec(fromName)?.[1];
+  const toNumber = /^(\d{3})-/.exec(toName)?.[1];
+  if (fromNumber === undefined || toNumber === undefined || toNumber <= fromNumber) return false;
+  return heldNames.some((name) => name !== toName && name.startsWith(`${fromNumber}-`));
 }
 
 const schema = freshSchema();
