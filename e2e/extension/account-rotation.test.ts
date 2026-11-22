@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import type { Card, Entry } from "@fleet/protocol";
 import { begin, newCard, startFleet, type Fleet } from "../support/fleet.ts";
 import { Harness, type Pi } from "../support/harness.ts";
+import { parseRecord } from "../support/json.ts";
 
 const EXTENSION = fileURLToPath(new URL("../../packages/extension/src/index.ts", import.meta.url));
 const MODEL = "claude-fable-5-2";
@@ -20,10 +21,9 @@ let h: Harness;
 let card: Card;
 const agent = (): string => join(h.dir, "agent");
 function grouped(accounts: readonly string[], cooldowns: Record<string, number> = {}): void {
-  writeFileSync(
-    join(agent(), "tiers.json"),
-    JSON.stringify({ accounts: { claude: accounts }, cooldowns }),
-  );
+  const file = join(agent(), "tiers.json");
+  const seeded = parseRecord(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify({ ...seeded, accounts: { claude: accounts }, cooldowns }));
 }
 const SECOND = 1000;
 const SLOW_ANSWER = 1.2 * SECOND;

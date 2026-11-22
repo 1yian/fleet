@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd, type Session } from "../support/cardd.ts";
+import { currentDependencies } from "../support/fork-fixture.ts";
 import { toolResults } from "../support/dispatch-lab.ts";
 import { Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
@@ -191,8 +192,8 @@ test("/updatefleet pulls origin's new commit into every home on every host and c
   assert.deepEqual(lines, [
     "[fleet] update: Fleet updated.",
     "Hosts:",
-    `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops`,
-    `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far`,
+    `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops; ${currentDependencies()}`,
+    `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far; ${currentDependencies()}`,
     `- local cardd (${app.root}): updated ${range}; board built; its code did not change, so it was not restarted`,
     "Reloads at each safe point (pending is not completed):",
     "Reloaded and verified:",
@@ -323,8 +324,8 @@ test("/updatefleet backs up cardd's database and restarts cardd on the new code 
     [
       "[fleet] update: Fleet updated.",
       "Hosts:",
-      `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops`,
-      `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far`,
+      `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops; ${currentDependencies()}`,
+      `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far; ${currentDependencies()}`,
       `- local cardd (${app.root}): updated ${range}; board built; database backed up to ${backup}; restarted and answers on ${fresh.slice(0, 7)}; schema ${String(SCHEMA)} -> ${String(SCHEMA + 1)}`,
     ].join("\n"),
   );
@@ -384,8 +385,8 @@ test("update_fleet stops before any lane restarts when cardd does not come back 
     [
       "Fleet update stopped: cardd does not run the new code, so no mate was restarted, and main keeps running.",
       "Hosts:",
-      `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops`,
-      `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far`,
+      `- local (${realpathSync(here.root)}): updated ${range}; board built; lane homes moved: ops; ${currentDependencies()}`,
+      `- p620 (${realpathSync(p620.root)}): updated ${range}; board built; lane homes moved: far; ${currentDependencies()}`,
       `- local cardd (${app.root}): updated ${range}; board built; database backed up to ${backup ?? ""}; restarted, but it did not answer on ${fresh.slice(0, 7)} within ${String(CARDD_DOWN_WAIT_S)} s`,
     ].join("\n"),
   );

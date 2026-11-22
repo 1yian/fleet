@@ -50,7 +50,9 @@ const SYSTEM_TOOLS = [
 ];
 const HOMEBREW_TOOLS = ["herdr", "zstd"];
 
-process.env["PATH"] = [PROBES, process.env["PATH"] ?? "", STUBS].join(delimiter);
+export const STUB_PATH = [PROBES, STUBS].join(delimiter);
+
+process.env["PATH"] = [STUB_PATH, process.env["PATH"] ?? ""].join(delimiter);
 
 function found(tool: string): string {
   const path = execFileSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();

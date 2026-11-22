@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { arrangeHere } from "./arrange.ts";
 import { homeTransport } from "./home-transport.ts";
+import { install } from "./install.ts";
 import {
   codeRoot,
   discoverLanes,
@@ -273,6 +274,12 @@ switch (command ?? "") {
         console.log(
           `${each.lane}: ${each.state}${each.reason === undefined ? "" : ` (${each.reason})`}`,
         );
+    break;
+  }
+  case "install": {
+    const lines = await install(root);
+    for (const { text, failed } of lines) (failed ? console.error : console.log)(text);
+    if (lines.some(({ failed }) => failed)) process.exit(1);
     break;
   }
   case "up": {

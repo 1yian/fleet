@@ -1,2 +1,3 @@
 #!/bin/sh
-echo "no-mistakes version v0.0.0 (e2e stand-in)"
+commit=${FAKE_NO_MISTAKES_COMMIT:-980a45cf}
+echo "no-mistakes version fork-$commit ($commit) 2026-11-18T03:52:20Z"

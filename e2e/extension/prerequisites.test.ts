@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -372,4 +379,97 @@ test("update_fleet stops before any change when a remote host lacks a tool, and 
     here.dispose();
     p620.dispose();
   }
+});
+
+const TIERS = [
+  "default",
+  "nm-default",
+  "nm-fixer",
+  "deep",
+  "research",
+  "visual",
+  "watch",
+  "quick",
+  "orchestrator",
+  "weaker-orchestrator",
+  "compact",
+  "reviewer",
+];
+
+function tiersRefusal(file: string, state: string, missing: readonly string[]): string {
+  const checkout = realpathSync(scratch.root);
+  const fix = `run ${checkout}/bin/fleet install, which writes ${checkout}/packages/extension/templates/tiers.json there when the file does not exist, or give each of them a tier with a non-empty chain in it`;
+  return `tiers are not configured on ${HOST}: ${file} ${state}. Missing tiers (${String(missing.length)}): ${missing.join(", ")}. Fix: ${fix}\n`;
+}
+
+test("fleet up starts no mate until every tier is configured, names each missing tier, and starts the mate once they are", () => {
+  const agent = join(h.dir, "no-tiers");
+  mkdirSync(agent);
+  const file = join(agent, "tiers.json");
+  const env = { PI_CODING_AGENT_DIR: agent };
+  assert.equal(refusal(["up"], env), tiersRefusal(file, "does not exist", TIERS));
+  assert.equal(status(), "cleo: down\n");
+
+  writeFileSync(file, "{");
+  assert.equal(refusal(["restart"], env), tiersRefusal(file, "is not valid JSON", TIERS));
+
+  const template = join(realpathSync(scratch.root), "packages/extension/templates/tiers.json");
+  const tiers: Record<string, { chain: string[] }> = {};
+  const unusable: Record<string, string[]> = { compact: [], deep: ["not-a-model"] };
+  for (const name of TIERS)
+    if (name !== "nm-fixer" && name !== "reviewer")
+      tiers[name] = { chain: unusable[name] ?? ["fake/scripted"] };
+  writeFileSync(file, JSON.stringify({ tiers }));
+  assert.equal(
+    refusal(["up"], env),
+    tiersRefusal(file, "does not declare every tier", ["nm-fixer", "deep", "compact", "reviewer"]),
+  );
+  assert.equal(status(), "cleo: down\n");
+
+  copyFileSync(template, file);
+  assert.equal(
+    scratch.fleet(["up"], { HERDR_SESSION: lab.name, ...env }),
+    "cleo: started in 2ndmate-cleo\n",
+  );
+});
+
+const NO_MISTAKES_FIX =
+  "install a build of 1yian/no-mistakes at fork-980a45cf (2026-11-18T03:52:20Z) or later: run bin/fleet install in the fleet checkout (it needs Go, builds into ~/.local/bin, and that folder must come first on the PATH)";
+
+function noMistakesPath(name: string, output: string): string {
+  const bin = join(h.dir, name);
+  mkdirSync(bin);
+  writeFileSync(join(bin, "no-mistakes"), `#!/bin/sh\necho '${output}'\n`, { mode: 0o755 });
+  return `${bin}:${pathWithout("no-mistakes")}`;
+}
+
+test("fleet up refuses a no-mistakes that is missing, too old, or not the 1yian fork, and starts the mate with the fork at the pinned version or later", () => {
+  assert.equal(
+    refusal(["up"], { PATH: pathWithout("no-mistakes") }),
+    `no-mistakes is missing on ${HOST}. Fix: ${NO_MISTAKES_FIX}\n`,
+  );
+  assert.equal(
+    refusal(["up"], {
+      PATH: noMistakesPath(
+        "nm-old",
+        "no-mistakes version fork-0123abcd (0123abcd) 2026-10-01T00:00:00Z",
+      ),
+    }),
+    `no-mistakes fork-0123abcd (2026-10-01T00:00:00Z) is too old on ${HOST}. Fix: ${NO_MISTAKES_FIX}\n`,
+  );
+  const upstream = "no-mistakes version v1.106.1 (abcdef12) 2026-11-17T00:00:00Z";
+  assert.equal(
+    refusal(["up"], { PATH: noMistakesPath("nm-upstream", upstream) }),
+    `no-mistakes reports "${upstream}", which is not a build of the 1yian/no-mistakes fork on ${HOST}. Fix: ${NO_MISTAKES_FIX}\n`,
+  );
+  assert.equal(status(), "cleo: down\n");
+
+  const PATH = noMistakesPath(
+    "nm-newer",
+    "no-mistakes version fork-880bf556 (880bf556) 2026-11-19T14:47:26Z",
+  );
+  assert.equal(
+    scratch.fleet(["up"], { HERDR_SESSION: lab.name, PATH }),
+    "cleo: started in 2ndmate-cleo\n",
+  );
 });

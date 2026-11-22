@@ -1,0 +1,14 @@
+agent: pi
+agent_config:
+  pi:
+    model: tier/nm-default
+    effort: medium
+review_agents:
+  reviewer:
+    agent: pi
+    model: tier/reviewer
+    effort: medium
+  fixer:
+    agent: pi
+    model: tier/nm-fixer
+    effort: high

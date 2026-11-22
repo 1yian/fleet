@@ -1,6 +1,7 @@
 import { abortWithoutMateContract, readPromptFile } from "./prompt-file.ts";
 import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
+import { hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -39,6 +40,7 @@ import { shimKillCommands } from "./shims.ts";
 import { registerLanes } from "./lanes.ts";
 import { registerPlan } from "./plan.ts";
 import { processId } from "./process-id.ts";
+import { tierProblems } from "./prerequisites.ts";
 import { reportActivity, trackRun } from "./progress.ts";
 import { MUTABLE_TAIL } from "./cache-ttl.ts";
 import { WORKER_PROMPT } from "./prompts.ts";
@@ -128,11 +130,11 @@ async function laneConfig(lane: LaneConfig): Promise<Config> {
   };
 }
 
-async function config(pi: ExtensionAPI): Promise<Config | undefined> {
+function credentials(pi: ExtensionAPI): (() => Promise<Config>) | undefined {
   const supplied = suppliedConfig(pi);
-  if (supplied !== undefined) return supplied;
+  if (supplied !== undefined) return () => Promise.resolve(supplied);
   const lane = readLaneConfig(HOME());
-  return lane === undefined ? undefined : laneConfig(lane);
+  return lane === undefined ? undefined : () => laneConfig(lane);
 }
 
 function announce(ctx: ExtensionContext, notes: readonly string[]): void {
@@ -140,6 +142,15 @@ function announce(ctx: ExtensionContext, notes: readonly string[]): void {
   const lines = notes.map((note) => `fleet: ${note}`);
   if (ctx.hasUI) ctx.ui.notify(lines.join("\n"), "info");
   else for (const line of lines) console.error(line);
+}
+
+function refuseWithoutTiers(ctx: ExtensionContext): boolean {
+  const problems = tierProblems(resolve(dirname(EXTENSION), "..", "..", ".."), hostname());
+  if (problems.length === 0) return false;
+  const lines = problems.map((problem) => `fleet: ${problem}`);
+  if (ctx.hasUI) ctx.ui.notify(lines.join("\n"), "error");
+  else for (const line of lines) console.error(line);
+  return true;
 }
 
 function charter(): string {
@@ -454,9 +465,16 @@ export default function fleet(pi: ExtensionAPI): void {
     extensionsLoaded();
   });
   pi.on("session_start", async (_event, ctx) => {
-    const found = await config(pi);
-    if (started || found === undefined) return;
+    const lookup = credentials(pi);
+    if (started || lookup === undefined || refuseWithoutTiers(ctx)) return;
     started = true;
+    let found: Config;
+    try {
+      found = await lookup();
+    } catch (error) {
+      started = false;
+      throw error;
+    }
     const applied =
       found.secrets === undefined
         ? []

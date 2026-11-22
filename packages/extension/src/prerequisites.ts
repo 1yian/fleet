@@ -1,17 +1,20 @@
 import { execFileSync, spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
+import { NO_MISTAKES_FIX, noMistakesRefusal } from "./dependencies.ts";
 import { HostUnread } from "./host.ts";
 import { ghLogin, type GhRun } from "./gh-login.ts";
 import { discoverLanes, type Discovery } from "./lane-homes.ts";
 import { isAbsent, isRecord, readLaneConfig, readRegular, verifyRegular } from "./lane-config.ts";
 import { remainingMs } from "./maintenance-budget.ts";
+import { declaredTiers, requiredTiers, TIERS_TEMPLATE, tiersConfigPath } from "./tiers-config.ts";
 
 interface Tool {
   readonly name: string;
   readonly version: readonly string[];
   readonly floor?: string;
+  readonly refuses?: (output: string) => string | undefined;
   readonly fix: string;
   readonly login?: { readonly fix: string };
 }
@@ -52,7 +55,8 @@ const TOOLS: readonly Tool[] = [
   {
     name: "no-mistakes",
     version: ["--version"],
-    fix: "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh",
+    refuses: noMistakesRefusal,
+    fix: NO_MISTAKES_FIX,
   },
   { name: "direnv", version: ["version"], fix: BREW_OR_APT("direnv") },
 ];
@@ -92,6 +96,8 @@ function probeProblem(
 }
 
 function versionProblem(tool: Tool, output: string, host: string): string | undefined {
+  const refusal = tool.refuses?.(output);
+  if (refusal !== undefined) return `${tool.name} ${refusal} on ${host}. Fix: ${tool.fix}`;
   const floor = versionParts(tool.floor ?? "");
   if (floor === undefined) return undefined;
   const found = versionParts(output);
@@ -178,6 +184,25 @@ export interface SweepSnapshot {
   readonly unreadable: Map<string, string>;
   readonly memory: Map<string, string>;
   readonly discovered: Discovery;
+}
+
+export function tierProblems(root: string, host: string): string[] {
+  const path = tiersConfigPath();
+  let config: unknown;
+  let state = "does not declare every tier";
+  try {
+    config = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    state =
+      Reflect.get(Object(error), "code") === "ENOENT" ? "does not exist" : "is not valid JSON";
+  }
+  const declared = declaredTiers(config);
+  const missing = requiredTiers().filter((name) => !declared.includes(name));
+  if (missing.length === 0) return [];
+  const fix = `run ${join(root, "bin", "fleet")} install, which writes ${TIERS_TEMPLATE} there when the file does not exist, or give each of them a tier with a non-empty chain in it`;
+  return [
+    `tiers are not configured on ${host}: ${path} ${state}. Missing tiers (${String(missing.length)}): ${missing.join(", ")}. Fix: ${fix}`,
+  ];
 }
 
 export const newSnapshot = (retained: string[], discovered: Discovery): SweepSnapshot => ({
@@ -319,6 +344,7 @@ export function hostProblems(
   const host = hostname();
   return [
     ...TOOLS.flatMap((tool) => toolProblem(tool, host, checkLogin, deadline) ?? []),
+    ...tierProblems(root, host),
     ...memoryProblems(root, host, snapshot),
   ];
 }

@@ -31,6 +31,7 @@ export interface LaneConfig {
   readonly workerArgs: readonly string[];
   readonly direnv?: string;
   readonly cardd?: CarddConfig;
+  readonly updateReminder?: boolean;
 }
 
 export const LANE_FILE = join("config", "lane.json");
@@ -70,6 +71,13 @@ function laneTier(file: string, value: unknown): { tier?: string } {
   if (typeof value !== "string" || value.trim() === "")
     throw new Error(`${file}: "tier" must be a model name such as ${MATE_MODEL}`);
   return { tier: value };
+}
+
+function reminderSetting(file: string, value: unknown): { updateReminder?: boolean } {
+  if (value === undefined) return {};
+  if (typeof value !== "boolean")
+    throw new Error(`${file}: "updateReminder" must be true or false`);
+  return { updateReminder: value };
 }
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -166,6 +174,7 @@ export function parseLaneConfig(file: string, config: unknown): LaneConfig {
     workerArgs: strings(config["workerArgs"]),
     ...(folder === undefined ? {} : { direnv: folder }),
     ...(cardd === undefined ? {} : { cardd }),
+    ...reminderSetting(file, config["updateReminder"]),
   };
 }
 
