@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { parseRecord, type JsonRecord } from "./json.ts";
@@ -17,8 +16,8 @@ process.stdin.on("end", () => {
   const envelope = JSON.parse(input);
   const call = {
     argv: process.argv.slice(2),
-    secretInEnv: Object.values(process.env).some((value) => sha(value) === process.env.FAKE_BROWSER_SECRET_SHA256),
-    secretInArgv: process.argv.some((value) => sha(value) === process.env.FAKE_BROWSER_SECRET_SHA256),
+    secretInEnv: Object.values(process.env).some((value) => String(value).includes(envelope.password)),
+    secretInArgv: process.argv.some((value) => value.includes(envelope.password)),
     stdinIsTty: process.stdin.isTTY === true,
     keys: Object.keys(envelope).sort(),
     lane: envelope.lane,
@@ -37,7 +36,7 @@ export class FakeBrowser {
   readonly log = join(this.dir, "calls.jsonl");
   readonly env: Record<string, string>;
 
-  constructor(secret: string, outcome = "done") {
+  constructor(outcome = "done") {
     const script = join(this.dir, "fleet-browser");
     writeFileSync(script, SCRIPT);
     chmodSync(script, 0o755);
@@ -45,9 +44,6 @@ export class FakeBrowser {
       PATH: [this.dir, process.env["PATH"] ?? ""].join(delimiter),
       FAKE_BROWSER_LOG: this.log,
       FAKE_BROWSER_OUTCOME: outcome,
-      FAKE_BROWSER_SECRET_SHA256: createHash("sha256")
-        .update(secret)
-        .digest("hex"),
     };
   }
 
