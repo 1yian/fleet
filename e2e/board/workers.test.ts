@@ -212,3 +212,22 @@ test("a slow board read still publishes while live changes keep arriving", async
     .getByText("Running", { exact: true })
     .waitFor({ timeout: 10_000 });
 });
+
+test("a board read that never answers is abandoned and the next change is shown", async (context) => {
+  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
+  context.after(() => cardd.stop());
+  const page = await openBoardPage(context, browser);
+  let reads = 0;
+  await page.route("**/api/board", async (route) => {
+    reads += 1;
+    if (reads === 1) return;
+    await route.continue();
+  });
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
+
+  const task = await newCard(main, "Archive the old campaign assets");
+  await cardd.connect(await begin(main, task), [], true, true);
+  await row(page, "Working", task)
+    .getByText("Running", { exact: true })
+    .waitFor({ timeout: 20_000 });
+});
