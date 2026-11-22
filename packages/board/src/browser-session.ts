@@ -19,6 +19,12 @@ import {
   type Status,
 } from "./browser-commands.ts";
 
+const FRESH_FRAME_MS = 3000;
+
+function looseCommand(pending: Pending, fresh: boolean): boolean {
+  return fresh || pending === "take";
+}
+
 class Viewer {
   private readonly suffix: string;
   private readonly stream: Stream;
@@ -34,7 +40,8 @@ class Viewer {
   private recovering = false;
   private latest: BrowserFrame | undefined;
   private trusted = false;
-  private stated = false;
+  private freshTimer = 0;
+  private attempted = "";
   private authority = 0;
   private frames = 0;
   private queuedStamp = "";
@@ -64,7 +71,6 @@ class Viewer {
     this.stream = openStream(this.url("stream"), {
       failed: () => {
         this.epoch += 1;
-        this.stated = false;
         this.latest = undefined;
         this.frame(undefined);
         this.events = [];
@@ -121,7 +127,7 @@ class Viewer {
   private accept(frame: BrowserFrame): void {
     const was = this.matched();
     this.latest = frame;
-    this.trusted = !this.stated || this.current.state?.activeTab === frame.meta.targetId;
+    this.trusted = this.current.state?.activeTab === frame.meta.targetId;
     this.frame(frame);
     const now = this.matched();
     if (was && !now) {
@@ -147,7 +153,6 @@ class Viewer {
 
   private reopen(notice: string | undefined): void {
     this.epoch += 1;
-    this.stated = false;
     this.latest = undefined;
     this.frame(undefined);
     this.discard();
@@ -197,7 +202,6 @@ class Viewer {
     if (completed) this.invalidateCommand();
     if (!owns && pending !== "take") this.issuedTake = false;
     if (lost || previous?.activeTab !== state.activeTab) this.events = [];
-    this.stated = true;
     if (this.latest !== undefined && this.latest.meta.targetId !== state.activeTab) {
       this.latest = undefined;
       this.frame(undefined);
@@ -215,6 +219,7 @@ class Viewer {
       notice: lost ? (pending === "done" ? "Control returned to the agent." : LOST) : notice,
     });
     this.resume();
+    this.wantFrame();
   }
 
   private async post(
@@ -234,17 +239,34 @@ class Viewer {
     }
   }
 
-  private canCommand(pending: Pending, state: BrowserState): boolean {
+  private canCommand(pending: Pending, state: BrowserState, loose: boolean): boolean {
     return (
-      !this.blocked() &&
+      (loose ? !this.mutating && !this.quarantined : !this.blocked()) &&
       this.current.pending === undefined &&
       state.viewer.controlling === (pending !== "take")
     );
   }
 
-  async command(pending: Pending): Promise<void> {
+  private wantFrame(): void {
     const state = this.current.state;
-    if (state === undefined || !this.canCommand(pending, state)) return;
+    if (this.closed || state === undefined || this.matched()) return;
+    if (!state.viewer.controlling || state.activeTab === null) return;
+    const stamp = `${String(this.epoch)}.${String(this.authority)}`;
+    if (this.attempted === stamp) return;
+    clearTimeout(this.freshTimer);
+    this.freshTimer = window.setTimeout(() => {
+      const tab = this.current.state?.activeTab;
+      const same = stamp === `${String(this.epoch)}.${String(this.authority)}`;
+      if (tab === undefined || tab === null || !same || this.matched()) return;
+      this.attempted = stamp;
+      void this.command({ tab }, true);
+    }, FRESH_FRAME_MS);
+  }
+
+  async command(pending: Pending, fresh = false): Promise<void> {
+    const state = this.current.state;
+    const loose = looseCommand(pending, fresh);
+    if (state === undefined || !this.canCommand(pending, state, loose)) return;
     this.set({ state, pending });
     const ticket = ++this.ticket;
     const stamp = this.stamp();
@@ -255,7 +277,7 @@ class Viewer {
       this.reopen(AMBIGUOUS);
       return;
     }
-    if (this.stamp() !== stamp || !this.matched()) {
+    if (this.stamp() !== stamp || (!loose && !this.matched())) {
       this.invalidateCommand();
       this.set({ state: this.current.state, notice: CHANGED });
       return;
@@ -414,6 +436,7 @@ class Viewer {
 
   close(): void {
     this.closed = true;
+    clearTimeout(this.freshTimer);
     this.invalidateCommand();
     cancelAnimationFrame(this.scheduled);
     void this.teardown();
