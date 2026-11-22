@@ -144,7 +144,7 @@ test("the captain's grant signs the lane's browser in without the worker seeing 
     announcement?.body ?? "",
     new RegExp(`^Sign-in grant ${ref}: one use, for lane main`),
   );
-  const browser = new FakeBrowser(MARKER);
+  const browser = new FakeBrowser();
 
   const results = await redeem(browser, [{ grant: ref, entry, url: SIGN_IN }]);
 
@@ -165,7 +165,7 @@ test("a captain-selected span, not the whole entry, is the password", async () =
   const ref = await grant(entry, {
     span: { start, end: start + MARKER.length },
   });
-  const browser = new FakeBrowser(MARKER);
+  const browser = new FakeBrowser();
 
   const results = await redeem(browser, [{ grant: ref, entry, url: SIGN_IN }]);
 
@@ -179,7 +179,7 @@ test("a grant is refused for another lane, entry, or site, and a refusal does no
   const other = await captainSays("a different entry");
   const forCleo = await grant(entry, { lane: "cleo" });
   const forMain = await grant(entry);
-  const browser = new FakeBrowser(MARKER);
+  const browser = new FakeBrowser();
 
   const results = await redeem(browser, [
     { grant: forCleo, entry, url: SIGN_IN },
@@ -205,7 +205,7 @@ test("a grant is refused for another lane, entry, or site, and a refusal does no
 test("a grant works once: a replay is refused and no second sign-in is sent", async () => {
   const entry = await captainSays(MARKER);
   const ref = await grant(entry);
-  const browser = new FakeBrowser(MARKER);
+  const browser = new FakeBrowser();
 
   const results = await redeem(browser, [
     { grant: ref, entry, url: SIGN_IN },
@@ -220,7 +220,7 @@ test("a grant works once: a replay is refused and no second sign-in is sent", as
 test("a sign-in the site does not confirm spends the grant, and the worker sees only a fixed outcome", async () => {
   const entry = await captainSays(MARKER);
   const ref = await grant(entry);
-  const browser = new FakeBrowser(MARKER, "stuck");
+  const browser = new FakeBrowser("stuck");
 
   const results = await redeem(browser, [
     { grant: ref, entry, url: SIGN_IN },
