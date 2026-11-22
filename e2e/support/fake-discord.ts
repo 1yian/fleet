@@ -82,6 +82,7 @@ export class FakeDiscord {
   rejected = 0;
   transcript = "";
   readsFail = false;
+  private holding = false;
   private nextId = FIRST_ID;
   private readonly stored: Stored[] = [];
   private readonly served = new Map<string, Buffer>();

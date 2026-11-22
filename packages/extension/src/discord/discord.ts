@@ -124,7 +124,10 @@ export class Discord {
 
   async newestId(): Promise<string | undefined> {
     const body = await this.get(`/channels/${this.channel}/messages?limit=1`);
-    if (!Array.isArray(body)) return this.polled(undefined);
+    if (!Array.isArray(body)) {
+      this.polled(undefined);
+      return undefined;
+    }
     const newest: unknown = body[0];
     if (newest === undefined) return this.polled(EMPTY_CHANNEL);
     return this.polled(
