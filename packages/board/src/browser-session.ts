@@ -7,7 +7,7 @@ import {
   type BrowserFrame,
   type BrowserState,
 } from "@fleet/protocol";
-import { jsonEvent } from "./browser-api.ts";
+import { jsonEvent, openStream } from "./browser-api.ts";
 
 export type BrowserInput =
   | {
@@ -29,8 +29,7 @@ export type BrowserInput =
       keyCode: number;
       text?: string;
       modifiers: number;
-    }
-  | { t: "text"; text: string };
+    };
 
 type Pending = "take" | "done" | { readonly tab: string };
 type Status = {
@@ -54,16 +53,9 @@ function commandError(pending: Pending): string {
   return "Couldn’t switch tabs. Try again.";
 }
 
-function orderTabs(state: BrowserState, previous: BrowserState | undefined): BrowserState {
-  const positions = new Map(previous?.snapshot.tabs.map((tab, index) => [tab.id, index]));
-  const position = (id: string): number => positions.get(id) ?? positions.size;
-  const tabs = state.snapshot.tabs.toSorted((a, b) => position(a.id) - position(b.id));
-  return { ...state, snapshot: { ...state.snapshot, tabs } };
-}
-
 class Viewer {
   private readonly suffix: string;
-  private readonly source: EventSource;
+  private readonly stop: () => void;
   private current: Status = {};
   private closed = false;
   private ticket = 0;
@@ -71,6 +63,7 @@ class Viewer {
   private events: BrowserInput[] = [];
   private scheduled = 0;
   private sending = false;
+  private inflight: Promise<void> = Promise.resolve();
 
   private readonly lane: string;
   private readonly show: (status: Status) => void;
@@ -82,21 +75,24 @@ class Viewer {
       byte.toString(16).padStart(2, "0"),
     ).join("");
     this.suffix = `?viewer=${viewer}`;
-    this.source = new EventSource(this.url("stream"));
-    this.source.onerror = () => {
-      this.invalidateCommand();
-      this.events = [];
-      this.set({ offline: true });
-    };
-    jsonEvent(
-      this.source,
-      "state",
-      (raw) => check(BrowserStateSchema, raw),
-      (state) => {
-        this.confirm(state);
+    this.stop = openStream(this.url("stream"), {
+      failed: () => {
+        this.invalidateCommand();
+        this.events = [];
+        this.set({ offline: true });
       },
-    );
-    jsonEvent(this.source, "frame", (raw) => check(BrowserFrameSchema, raw), frame);
+      wire: (source) => {
+        jsonEvent(
+          source,
+          "state",
+          (raw) => check(BrowserStateSchema, raw),
+          (state) => {
+            this.confirm(state);
+          },
+        );
+        jsonEvent(source, "frame", (raw) => check(BrowserFrameSchema, raw), frame);
+      },
+    });
   }
 
   private url(action: "stream" | "command" | "input"): string {
@@ -126,7 +122,7 @@ class Viewer {
     if (completed) this.invalidateCommand();
     if (lost || previous?.activeTab !== state.activeTab) this.events = [];
     this.set({
-      state: orderTabs(state, previous),
+      state,
       pending: completed ? undefined : pending,
       notice: lost ? (pending === "done" ? "Control returned to the agent." : LOST) : notice,
     });
@@ -165,6 +161,8 @@ class Viewer {
       this.invalidateCommand();
       this.set({ state: this.current.state, notice: commandError(pending) });
     };
+    await this.inflight;
+    if (this.ticket !== ticket) return;
     const code = await this.post("command", commandFor(pending));
     if (this.ticket !== ticket) return;
     if (code === 204) this.confirmationTimer = window.setTimeout(unconfirmed, 5000);
@@ -197,23 +195,24 @@ class Viewer {
     if (this.closed || this.sending || this.scheduled || this.events.length === 0) return;
     this.scheduled = requestAnimationFrame(() => {
       this.scheduled = 0;
-      void this.flush();
+      this.flush();
     });
   }
 
-  private async flush(): Promise<void> {
+  private flush(): void {
     if (!this.canDrive() || this.events.length === 0) return;
     this.sending = true;
     const ticket = this.ticket;
-    const code = await this.post("input", { events: this.events.splice(0, 40) });
-    this.sending = false;
-    if (code === 409 && this.ticket === ticket && this.canDrive()) {
-      this.events = [];
-      const state = this.current.state;
-      if (state !== undefined)
-        this.set({ state: { ...state, viewer: { controlling: false } }, notice: LOST });
-    }
-    this.schedule();
+    this.inflight = this.post("input", { events: this.events.splice(0, 40) }).then((code) => {
+      this.sending = false;
+      if (code === 409 && this.ticket === ticket && this.canDrive()) {
+        this.events = [];
+        const state = this.current.state;
+        if (state !== undefined)
+          this.set({ state: { ...state, viewer: { controlling: false } }, notice: LOST });
+      }
+      this.schedule();
+    });
   }
 
   close(): void {
@@ -222,10 +221,8 @@ class Viewer {
     this.events = [];
     cancelAnimationFrame(this.scheduled);
     if (this.current.state?.viewer.controlling) {
-      void this.post("command", { t: "control", on: false }).finally(() => {
-        this.source.close();
-      });
-    } else this.source.close();
+      void this.post("command", { t: "control", on: false }).finally(this.stop);
+    } else this.stop();
   }
 }
 
