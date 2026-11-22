@@ -167,3 +167,30 @@ test("main hears that a second mate left a Grok result unread without its text o
     cleo.entries.slice(1).every(({ entry, again }) => entry.body === secret && again === true),
   );
 });
+
+test("a private Grok result cannot be used as the source of a sign-in grant", async () => {
+  const started = await startFleet({ CARDD_GROK_REPORT_TOKEN: TOKEN });
+  fleet = started;
+  const cleo = await started.cardd.connect(started.cardd.addLane("cleo", "main"));
+  const card = await newCard(cleo, "Keep the password private");
+  const assignment = check(
+    OPS["grok.assign"].result,
+    await cleo.call("grok.assign", { card: card.id }),
+  );
+  const password = "hunter2-from-the-private-channel";
+  await tool(started, { ...assignment, text: password, sources: ["https://chat.example.test/p9"] });
+  const result = await cleo.waitForEntry(
+    (entry) => entry.author === "grok-bot",
+    "the result in the owning mate's inbox",
+  );
+  const refused = await started.cardd.refusal(card.id, {
+    kind: "signin-grant",
+    entry: result.id,
+    lane: "main",
+    url: "https://login.example.test/",
+  });
+  assert.equal(refused.status, 400);
+  assert.match(refused.error ?? "", /there is no entry/);
+  assert.ok(!JSON.stringify(refused.body).includes(password));
+  assert.ok(!JSON.stringify(await started.cardd.thread(card.id)).includes(password));
+});

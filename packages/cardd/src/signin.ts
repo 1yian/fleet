@@ -40,7 +40,10 @@ function selected(body: string, start: number | null, end: number | null): strin
 
 function bodyOf(db: DatabaseSync, entry: number, card?: number): string {
   const row = db
-    .prepare("SELECT body FROM entries WHERE id = ? AND (? IS NULL OR card = ?)")
+    .prepare(
+      `SELECT body FROM entries WHERE id = ? AND (? IS NULL OR card = ?)
+       AND NOT (author = 'grok-bot' AND json_extract(fields, '$.grok') = 'result')`,
+    )
     .get(entry, card ?? null, card ?? null);
   if (typeof row?.["body"] !== "string") throw new Error(`there is no entry ${String(entry)} here`);
   return row["body"];
