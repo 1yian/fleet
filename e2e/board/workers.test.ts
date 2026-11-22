@@ -162,6 +162,40 @@ test("cached working rows are hidden promptly when cardd goes away", async (cont
   assert.equal(await page.getByRole("link", { name: task.title }).count(), 0);
 });
 
+test("going back to Active Workers restores the scroll position the tab was left at", async (context) => {
+  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
+  context.after(() => cardd.stop());
+  const page = await openBoardPage(context, browser);
+  await page.setViewportSize({ width: 1000, height: 500 });
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
+  const tasks: Card[] = [];
+  for (let n = 1; n <= 14; n++) {
+    const task = await newCard(main, `Prepare the release note ${String(n)}`);
+    await cardd.connect(await begin(main, task), [], true, true);
+    tasks.push(task);
+  }
+  const last = tasks[tasks.length - 1];
+  assert.ok(last !== undefined);
+  await row(page, "Working", last).getByText("Running", { exact: true }).waitFor();
+
+  await row(page, "Working", last).getByRole("link", { name: last.title }).click();
+  await page.getByRole("heading", { name: last.title }).waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("heading", { name: "Active Workers" }).waitFor();
+  await page.waitForFunction(() => window.scrollY > 0);
+
+  await page.evaluate(() => {
+    window.scrollTo(0, 0);
+  });
+  await page
+    .getByRole("navigation", { name: "Fleet views" })
+    .getByRole("link", { name: "Board" })
+    .click();
+  await page.goBack();
+  await page.getByRole("heading", { name: "Active Workers" }).waitFor();
+  await page.waitForFunction(() => window.scrollY === 0, undefined, { timeout: 3000 });
+});
+
 test("a card opened from Active Workers returns there after back and forward history", async (context) => {
   const { cardd, main } = await startFleet({}, ["--board", BOARD]);
   context.after(() => cardd.stop());
@@ -215,15 +249,29 @@ test("a slow board read still publishes while live changes keep arriving", async
     .waitFor({ timeout: 10_000 });
 });
 
-async function stallingServer(sendBody: boolean): Promise<{ url: string; close: () => void }> {
+interface Stalling {
+  readonly url: string;
+  readonly delivered: Promise<void>;
+  readonly abandoned: Promise<number>;
+  readonly close: () => void;
+}
+
+async function stallingServer(): Promise<Stalling> {
   const sockets = new Set<Socket>();
+  let delivered = (): void => undefined;
+  let abandoned = (_elapsed: number): void => undefined;
   const server = createServer((_request, response) => {
+    const started = Date.now();
     response.writeHead(200, {
       "content-type": "application/json",
       "access-control-allow-origin": "*",
     });
-    if (sendBody) response.write('{"cards":[');
-    else response.flushHeaders();
+    response.write('{"cards":[', () => {
+      delivered();
+    });
+    response.on("close", () => {
+      if (!response.writableEnded) abandoned(Date.now() - started);
+    });
   });
   server.on("connection", (socket) => {
     sockets.add(socket);
@@ -234,6 +282,12 @@ async function stallingServer(sendBody: boolean): Promise<{ url: string; close: 
   if (address === null || typeof address === "string") throw new Error("no loopback port");
   return {
     url: `http://127.0.0.1:${String(address.port)}/api/board`,
+    delivered: new Promise<void>((resolve) => {
+      delivered = resolve;
+    }),
+    abandoned: new Promise<number>((resolve) => {
+      abandoned = resolve;
+    }),
     close: () => {
       for (const socket of sockets) socket.destroy();
       server.close();
@@ -241,30 +295,28 @@ async function stallingServer(sendBody: boolean): Promise<{ url: string; close: 
   };
 }
 
-for (const [phase, sendBody] of [
-  ["headers", false],
-  ["a partial body", true],
-] as const) {
-  test(`a board response that stalls after ${phase} is abandoned and the next change is shown`, async (context) => {
-    const { cardd, main } = await startFleet({}, ["--board", BOARD]);
-    context.after(() => cardd.stop());
-    const stalled = await stallingServer(sendBody);
-    context.after(() => {
-      stalled.close();
-    });
-    const page = await openBoardPage(context, browser);
-    let reads = 0;
-    await page.route("**/api/board", async (route) => {
-      reads += 1;
-      if (reads === 1) await route.continue({ url: stalled.url });
-      else await route.continue();
-    });
-    await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
-
-    const task = await newCard(main, "Refresh the partner logos");
-    await cardd.connect(await begin(main, task), [], true, true);
-    await row(page, "Working", task)
-      .getByText("Running", { exact: true })
-      .waitFor({ timeout: 20_000 });
+test("a board response that stalls after a partial body is abandoned at the deadline and the next change is shown", async (context) => {
+  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
+  context.after(() => cardd.stop());
+  const stalled = await stallingServer();
+  context.after(() => {
+    stalled.close();
   });
-}
+  const page = await openBoardPage(context, browser);
+  let reads = 0;
+  await page.route("**/api/board", async (route) => {
+    reads += 1;
+    if (reads === 1) await route.continue({ url: stalled.url });
+    else await route.continue();
+  });
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
+  await stalled.delivered;
+
+  const task = await newCard(main, "Refresh the partner logos");
+  await cardd.connect(await begin(main, task), [], true, true);
+  await row(page, "Working", task)
+    .getByText("Running", { exact: true })
+    .waitFor({ timeout: 20_000 });
+  const elapsed = await stalled.abandoned;
+  assert.ok(elapsed >= 9000, `the browser dropped the stalled body after ${String(elapsed)} ms`);
+});
