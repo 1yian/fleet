@@ -5,7 +5,9 @@ import { Kanban } from "./Board.tsx";
 import { CardDetail, NoCard } from "./CardDetail.tsx";
 import { useFacts } from "./facts.ts";
 import { deviceZone, questionsByCard } from "./format.ts";
-import { useCardRoute } from "./route.ts";
+import { useBrowserRoute, useCardRoute } from "./route.ts";
+import { useBrowserLanes } from "./browser-api.ts";
+import { BrowserBoardLinks, BrowserPage } from "./Browsers.tsx";
 
 const TICK_MS = 30_000;
 
@@ -127,6 +129,8 @@ export function App() {
   const [notice, setNotice] = useState<string | undefined>();
   const { board, refresh } = useBoard(changes, now, setNotice);
   const { card: open, open: openCard, close } = useCardRoute();
+  const browserRoute = useBrowserRoute(board?.browsers);
+  const browsers = useBrowserLanes(board?.browsers === true);
   const [drafts, setDrafts] = useState<ReadonlyMap<number, string>>(new Map());
   const facts = useFacts(board?.cards, now);
 
@@ -146,8 +150,9 @@ export function App() {
         <p className="empty">Loading…</p>
       </main>
     );
-  const shown = open === undefined ? undefined : board.cards.find((card) => card.id === open);
-  if (open !== undefined)
+  if (browserRoute !== undefined) return <BrowserPage lane={browserRoute.lane} {...browsers} />;
+  if (open !== undefined) {
+    const shown = board.cards.find((card) => card.id === open);
     return (
       <main className="board detail-page">
         {banner}
@@ -177,8 +182,10 @@ export function App() {
         )}
       </main>
     );
+  }
   return (
     <main className="kanban">
+      <BrowserBoardLinks enabled={board.browsers} {...browsers} />
       {banner}
       <Kanban
         board={board}

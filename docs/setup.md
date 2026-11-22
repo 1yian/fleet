@@ -180,6 +180,14 @@ For systemd, use `["systemctl", "--user", "restart", "cardd"]`. The command must
 
 `/updatefleet` updates and restarts it (section 7), once main's `config/lane.json` names it (section 4). `cardd` answers `GET /api/version` with the commit its code runs and its database's schema version, so the update knows whether it runs old code.
 
+### Lane browsers on the board
+
+Fleet can show the browsers managed by [fleet-browser](https://github.com/1yian/fleet-browser). On the cardd host, set `CARDD_BROWSER_ORIGIN` to the HTTP origin of the browser service's authenticated stream listener, not its agent listener. Set `CARDD_BROWSER_TOKEN_FILE` to the absolute path of a dedicated stream bearer token file readable only by the cardd account. Put both variables in the cardd service environment, not in the board build or the launch arguments.
+
+After restarting cardd, open **Browsers** on the tailnet board. An agent's open handoff also appears on the main board. Watching sends no input. **Take control** pauses agent input until **Done** returns control. The relay is not available on the public Cloudflare host.
+
+To make links in agent and phone handoff notifications open the same viewer, set fleet-browser's `handoff.linkTemplate` to `http://<cardd-tailnet-host>:7420/#/browser/{lane}` on the browser host. The board itself does not use the configured upstream link and does not need the retired viewer.
+
 ### A public link through Cloudflare Access
 
 The board has no login of its own, so a public link needs a gate in front of it. `cardd` can serve the board at a public host name when a Cloudflare tunnel carries it there and Cloudflare Access signs the owner in. It is off unless all four values are set, and tailnet use does not change.
