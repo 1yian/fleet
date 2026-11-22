@@ -14,7 +14,6 @@ const time = new Intl.DateTimeFormat("en", {
   hourCycle: "h23",
 });
 const HOUR = 3_600_000;
-const MINUTE = 60_000;
 const HIGHLIGHTS = [
   ["input", "Input"],
   ["cached", "Cached input"],
@@ -256,12 +255,8 @@ function useAnalytics(): Data | Error | undefined {
       }
     };
     void load();
-    const timer = setInterval(() => {
-      void load();
-    }, MINUTE);
     return () => {
       controller.abort();
-      clearInterval(timer);
     };
   }, []);
   return result;

@@ -54,7 +54,7 @@ function ledger(root: string, lane: string, lines: readonly string[]): string {
   return home;
 }
 
-async function historicalCloses(path: string, main: Session): Promise<void> {
+async function historicalCloses(path: string, main: Session): Promise<number> {
   const days = ["01", "02", "02", "04", "04", "04", "04", "04"];
   const cards = await Promise.all(
     days.map((_, i) =>
@@ -77,6 +77,7 @@ async function historicalCloses(path: string, main: Session): Promise<void> {
   } finally {
     db.close();
   }
+  return check(CardSchema, cards[0]).id;
 }
 
 async function shoot(page: Page, file: string): Promise<void> {
@@ -121,7 +122,7 @@ test("analytics reconciles readable ledger usage and successful closes in the re
   context.after(() => main.close());
   cardd.addLane("cleo", "main", secondHome);
   cardd.addLane("unavailable", "main", join(root, "absent"));
-  await historicalCloses(cardd.db, main);
+  const cardId = await historicalCloses(cardd.db, main);
 
   const browser = await chromium.launch();
   context.after(() => browser.close());
@@ -178,4 +179,20 @@ test("analytics reconciles readable ledger usage and successful closes in the re
     .getByRole("button", { name: /^May 4, 12:00 to 12:30 UTC \(partial\): 23,300 tokens/ })
     .focus();
   await shoot(page, "analytics-mobile.png");
+
+  await page.getByRole("link", { name: "Board", exact: true }).click();
+  await page.evaluate((id) => {
+    location.hash = `/c-${String(id)}`;
+  }, cardId);
+  const composer = page.getByRole("textbox", { name: "Comment" });
+  await composer.fill("Unsent reply across views");
+  await page.evaluate(() => {
+    location.hash = "/";
+  });
+  await page.getByRole("link", { name: "Analytics" }).click();
+  await hourly.getByText("363,600", { exact: true }).waitFor();
+  await page.evaluate((id) => {
+    location.hash = `/c-${String(id)}`;
+  }, cardId);
+  assert.equal(await composer.inputValue(), "Unsent reply across views");
 });
