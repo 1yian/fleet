@@ -434,6 +434,9 @@ const COOKIE_COMPLAINTS = [
 ];
 
 const CURL_DATA_COMPLAINTS = [
+  "curl --config - https://localhost <<'EOF'\nuser = \"demo:paper canoe\"\nEOF",
+  "curl -K - https://localhost <<'EOF'\nuser = \"demo:paper canoe\"\nEOF",
+  "echo 'proxy-user = demo:paper' | curl --config=- https://localhost",
   "curl --data-urlencode 'password=paper canoe' https://localhost",
   "curl --cert client.pem --pass paper https://localhost",
   "curl --key client.key --pass=paper https://localhost",
@@ -481,6 +484,11 @@ const ESCAPED_KEY_COMPLAINTS = [
   String.raw`{"password":\u0022paper canoe\u0022,"next":"yes"}`,
   String.raw`{"token"\u0020:\u0020"paper canoe"}`,
   String.raw`{"password"\x3a "paper canoe"}`,
+  String.raw`{"log":"{password\u003a 'paper canoe', next: yes}"}`,
+  String.raw`{"log":"{password\u003a paper canoe, next: yes}"}`,
+  String.raw`{"log":"{pass\u0077ord: paper canoe, next: yes}"}`,
+  "PASSWORD=paper canoe",
+  "export API_KEY=paper canoe\nnext line",
   String.raw`{"to\u006Ben": "paper canoe"}`,
   String.raw`{"api\u0020key":"paper canoe"}`,
   String.raw`{"pass\x77ord": "paper canoe"}`,

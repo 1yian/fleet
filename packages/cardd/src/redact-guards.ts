@@ -20,6 +20,8 @@ const ESCAPED_KEY = new RegExp(
   String.raw`(?=(\\*["']|${QUOTE_ESCAPE})((?:(?!${QUOTE_ESCAPE})(?:[^"'\\\n]|\\+[^"'\\\n]))+)(\\*["']|${QUOTE_ESCAPE})((?:\s|${ESCAPED_CHAR})*(?::|${COLON_ESCAPE}))((?:\s|${ESCAPED_CHAR})*(?:\\{2,}(?=["']))?))`,
   "gi",
 );
+const HEX_ESCAPE = /\\+(?:u\{([\da-f]+)\}|u([\da-f]{4})|x([\da-f]{2})|U([\da-f]{8}))/gi;
+const KEY_SEPARATOR = new RegExp(String.raw`(?<![\w-])${RECORD_NAME}[ \t]*:`, "gi");
 const PLAIN_QUOTE = /^\\?["']$/;
 const KEY_ESCAPE =
   /\\+(?:u\{([\da-fA-F]+)\}|u([\da-fA-F]{4})|x([\da-fA-F]{2})|U([\da-fA-F]{8})|[^\\\n])/g;
@@ -144,6 +146,16 @@ function decodeKeyEscapes(key: string): string {
   });
 }
 
+function decodeHexEscapes(text: string): string {
+  return text.replace(HEX_ESCAPE, (escape: string, ...groups: (string | undefined)[]) => {
+    const hex = groups.slice(0, 4).find((group) => group !== undefined) ?? "";
+    const code = Number.parseInt(hex, 16);
+    return code < 0x20 || code > 0x10ffff ? escape : String.fromCodePoint(code);
+  });
+}
+
+const keySeparators = (text: string): number => Array.from(text.matchAll(KEY_SEPARATOR)).length;
+
 export function hasEscapedCredentialKey(text: string): boolean {
   for (const [, open = "", key = "", close = "", separator = "", value = ""] of text.matchAll(
     ESCAPED_KEY,
@@ -153,7 +165,8 @@ export function hasEscapedCredentialKey(text: string): boolean {
       !PLAIN_QUOTE.test(open) || !PLAIN_QUOTE.test(close) || (separator + value).includes("\\");
     if ((decoded !== key || escaped) && RECORD_KEY.test(decoded)) return true;
   }
-  return false;
+  const unescaped = decodeHexEscapes(text);
+  return unescaped !== text && keySeparators(unescaped) > keySeparators(text);
 }
 
 export function hasExplicitCredentialKey(text: string): boolean {

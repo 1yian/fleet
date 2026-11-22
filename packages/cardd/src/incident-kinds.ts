@@ -39,6 +39,10 @@ const SHELL_SECRET = new RegExp(
   "gi",
 );
 const CURL_WITHHELD = "[curl withheld: credential boundaries unclear]";
+const DOTENV_TAIL = new RegExp(
+  String.raw`^[ \t]*(?:export[ \t]+)?${SECRET_NAME}[ \t]*=[ \t]*(?!(?:Basic|Bearer)\b|\[hidden\])[^\s"'\u0060\\]+[ \t]+(?![^\s=]+=)[^\s#]`,
+  "im",
+);
 const CURL_COMMAND = /(?<![\w-])curl(?![\w.-])/i;
 const CURL_CREDENTIAL_OPTION =
   /(?<=\s)(?:--(?:proxy-)?user(?![\w-])|--oauth2-bearer(?![\w-])|--cookie(?![\w-])|--(?:proxy-)?(?:pass|tlspassword|cert)(?![\w-])|-[^-\s]*[uUbE])/;
@@ -52,7 +56,9 @@ const CURL_PROVEN_HEADER = new RegExp(
 );
 const CURL_PROXY_LOGIN = /(?<=\s)(?:--(?:pre)?proxy|--socks|-[^-\s]*x\s*\S*@)/;
 const CURL_UNPROVEN_USERINFO = /(?<=\s)[^\s@/]+:[^\s@/]*@/;
+const CURL_STDIN_CONFIG = /(?<=\s)(?:--config(?:=|\s+)|-[^-\s]*K\s*)-(?=\s|$)/;
 const CURL_CHECKS = [
+  CURL_STDIN_CONFIG,
   CURL_CREDENTIAL_OPTION,
   CURL_CREDENTIAL_HEADER,
   CURL_PROXY_LOGIN,
@@ -326,7 +332,11 @@ function withheldCommand(text: string): string | undefined {
 function redactNormalized(source: string, scope: "public" | "diagnostic"): string {
   const views = [source, logicalView(source)];
   const unclear = views.some(
-    (v) => hasCredentialCollection(v) || hasEscapedCredentialKey(v) || hasExplicitCredentialKey(v),
+    (v) =>
+      hasCredentialCollection(v) ||
+      hasEscapedCredentialKey(v) ||
+      hasExplicitCredentialKey(v) ||
+      DOTENV_TAIL.test(v),
   );
   if (unclear || yamlSplicesDisagree(source) || SCHEME_CONTINUATION.test(views[1] ?? ""))
     return YAML_WITHHELD;
