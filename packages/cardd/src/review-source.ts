@@ -264,6 +264,7 @@ const same = (a: Binding | undefined, b: Binding | undefined): boolean =>
 export class SourceReviews {
   private readonly candidates = new Set<number>();
   private readonly watching = new Map<number, { binding: Binding; socket: WebSocket }>();
+  private readonly claims = new Map<string, { card: number; requests: string }>();
   private cursor = 0;
 
   private readonly db: DatabaseSync;
@@ -297,18 +298,23 @@ export class SourceReviews {
     for (const card of this.candidates) this.refreshCard(card);
   }
 
-  private binding(card: number): Binding | undefined {
+  private held(card: number, now: number) {
     const entries = cardEntries(this.db, card);
     const hold = factsFrom(entries).hold;
     if (hold?.review === undefined) {
       this.candidates.delete(card);
       return undefined;
     }
-    const source = reviewPreview(hold, this.origins, Date.now());
+    const source = reviewPreview(hold, this.origins, now);
     if (source === undefined || !reviewDecision(entries, hold)) return undefined;
+    return { hold, source, session: hold.review, requests: hold.reviewRequests ?? [] };
+  }
+
+  private binding(card: number): Binding | undefined {
+    const held = this.held(card, Date.now());
     const worker = workerOf(this.db, card);
-    if (worker === undefined) return undefined;
-    const requests = hold.reviewRequests ?? [];
+    if (held === undefined || worker === undefined) return undefined;
+    const { hold, source, session, requests } = held;
     return {
       card,
       identity: JSON.stringify([source.href, requests]),
@@ -318,20 +324,30 @@ export class SourceReviews {
       requests,
       worker,
       source,
-      session: hold.review,
+      session,
     };
   }
 
-  private owned(card: number, { source }: Binding): boolean {
-    return [...this.watching].some(
-      ([other, { binding }]) => other !== card && binding.source.href === source.href,
-    );
+  private owns(card: number): boolean {
+    const held = this.held(card, Infinity);
+    for (const [href, claim] of this.claims)
+      if (
+        claim.card === card &&
+        (held === undefined ||
+          href !== held.source.href ||
+          claim.requests !== JSON.stringify(held.requests))
+      )
+        this.claims.delete(href);
+    if (held === undefined) return false;
+    const claim = this.claims.get(held.source.href);
+    if (claim === undefined)
+      this.claims.set(held.source.href, { card, requests: JSON.stringify(held.requests) });
+    return (claim?.card ?? card) === card;
   }
 
   private refreshCard(card: number): void {
-    const found = this.binding(card);
     const watching = this.watching.get(card);
-    const binding = found !== undefined && this.owned(card, found) ? undefined : found;
+    const binding = this.owns(card) ? this.binding(card) : undefined;
     if (same(watching?.binding, binding)) return;
     this.watching.delete(card);
     watching?.socket.terminate();

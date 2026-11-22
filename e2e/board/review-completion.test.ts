@@ -215,6 +215,11 @@ async function refusals(lab: Lab, target: Round, deferred: Round): Promise<void>
 async function startWorker(lab: Lab, target: Round, direct: Round): Promise<void> {
   const { mate, cardd, h } = lab;
   await target.worker.call("report", { status: "resolved", key: "draft", text: WORDS });
+  for (const round of [target, direct])
+    await round.worker.waitForEntry(
+      (entry) => entry.fields["fleetReview"] === true,
+      "the takeover before submitting to the source",
+    );
   await submitStock(target.session, false);
   await target.worker.waitForEntry(
     (entry) => entry.kind === "review-feedback" && entry.fields["sessionEnded"] === false,

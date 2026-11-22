@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { check, OPS } from "@fleet/protocol";
-import { begin, newCard } from "../support/fleet.ts";
+import { ageDated, begin, newCard } from "../support/fleet.ts";
 import { Lavish } from "../support/lavish.ts";
 import { labFor, post, reviewSource, verdictOf } from "../support/review-source-lab.ts";
 import { tempDir } from "../support/run-root.ts";
@@ -132,6 +132,41 @@ test("one stock session is owned by one card at a time and never leaks to the ot
   );
   assert.deepEqual(
     second.entries.filter(({ entry }) => entry.kind === "review-feedback"),
+    [],
+  );
+});
+
+test("a deferred card keeps its source and gets its own verdict when it returns", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const { cardd, main, card, token, review, bind } = await labFor(t, key, origin.origin, "Owner");
+  const first = await cardd.connect(token);
+  await bind(first, "review-owner");
+  await first.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the owner notice");
+  const view = async () => check(OPS.card.result, await main.call("card", { card: card.id }));
+  const hold = (await view()).hold;
+  assert.ok(hold);
+  const later = { kind: "hold", hold: hold.entry, said: "in 3 hours", zone: "UTC" } as const;
+  assert.equal(await cardd.act(card.id, later), 200);
+  const other = await newCard(main, "Competitor", "scout");
+  const second = await cardd.connect(await begin(main, other));
+  await second.call("report", {
+    status: "needs-decision",
+    key: "review-competitor",
+    text: `Ready: ${review}`,
+  });
+  await main.call("hold", { card: other.id, to: "captain", question: "competitor", review });
+  await post(origin, `/api/${key}/prompts`, verdictOf("Sent while the owner was deferred"));
+  ageDated(cardd, [card], 4 * 60 * 60 * 1000);
+  await view();
+  await first.waitForEntry(
+    (entry) =>
+      entry.kind === "review-feedback" && entry.body === "Sent while the owner was deferred",
+    "the verdict on the returning owner",
+  );
+  assert.deepEqual(
+    second.entries.filter(
+      ({ entry }) => entry.fields["fleetReview"] === true || entry.kind === "review-feedback",
+    ),
     [],
   );
 });

@@ -134,15 +134,8 @@ function formatSourceReview(entry: Entry, card: string): string {
     : "";
   const noted = "this does not approve or resolve the Fleet hold";
   const ended = entry.fields["sessionEnded"];
-  const prompts = entry.fields["sourcePrompts"];
-  if (ended === true && Array.isArray(prompts) && prompts.length === 0)
-    return `[fleet] Lavish session ended on ${card} [${keys}] with no new feedback (${noted}).`;
-  const state =
-    ended === true
-      ? "Lavish session ended"
-      : ended === false
-        ? "Lavish session still open"
-        : "Lavish session state unknown";
+  if (ended === true) return `[fleet] Lavish session ended on ${card} [${keys}] (${noted}).`;
+  const state = ended === false ? "Lavish session still open" : "Lavish session state unknown";
   return `[fleet] Lavish feedback on ${card} [${keys}] (${state}; ${noted}):\n${entry.body}`;
 }
 
