@@ -34,8 +34,6 @@ function changedMigrations(base: string): string[] {
   const out = execFileSync(
     "git",
     [
-      "-c",
-      "diff.renames=true",
       "diff",
       "--name-status",
       "--find-renames=100%",
