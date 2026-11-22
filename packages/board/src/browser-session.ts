@@ -283,21 +283,27 @@ class Viewer {
     const ticket = ++this.ticket;
     const stamp = this.stamp();
     await this.settle();
-    if (this.ticket !== ticket) return;
-    if (this.quarantined) {
-      this.invalidateCommand();
-      this.reopen(AMBIGUOUS);
-      return;
-    }
-    if (this.stamp() !== stamp || (!loose && !this.matched())) {
-      this.invalidateCommand();
-      this.set({ state: this.current.state, notice: CHANGED });
-      return;
-    }
+    if (this.ticket !== ticket || this.abandon(stamp, fresh, loose)) return;
     if (pending === "take") this.issuedTake = true;
     const epoch = this.epoch;
     const code = await this.mutate(pending, fresh);
     this.resolve(pending, ticket, epoch, code);
+    this.resume();
+    this.wantFrame();
+  }
+
+  private abandon(stamp: string, fresh: boolean, loose: boolean): boolean {
+    if (this.quarantined) {
+      this.invalidateCommand();
+      this.reopen(AMBIGUOUS);
+    } else if (fresh && this.matched()) {
+      this.invalidateCommand();
+      this.set({ ...this.current, pending: undefined });
+    } else if (this.stamp() !== stamp || (!loose && !this.matched())) {
+      this.invalidateCommand();
+      this.set({ state: this.current.state, notice: fresh ? this.current.notice : CHANGED });
+    } else return false;
+    return true;
   }
 
   private async mutate(pending: Pending, fresh: boolean): Promise<number> {
@@ -308,8 +314,6 @@ class Viewer {
     const code = await posting;
     this.mutating = false;
     if (code !== 204 && code !== 409) this.quarantined = true;
-    this.resume();
-    this.wantFrame();
     return code;
   }
 
