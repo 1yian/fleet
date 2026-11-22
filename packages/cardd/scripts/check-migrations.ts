@@ -30,7 +30,8 @@ function sqlText(value: unknown): string {
   return value;
 }
 
-function changedMigrations(base: string): string[] {
+function changedMigrations(ref: string): string[] {
+  const base = execFileSync("git", ["merge-base", ref, "HEAD"], { encoding: "utf8" }).trim();
   const out = execFileSync(
     "git",
     [

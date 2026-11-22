@@ -58,7 +58,6 @@ test("local maintenance never starts from a failed, blank, partial, or timed-out
 });
 
 test("missing nested pane or process fields neither start nor hold a lane", () => {
-  useSteadyPi();
   assert.deepEqual(maintain(), action("ops", "started"));
   const home = `${here.root}.worktrees/lane-ops`;
   const startsFile = join(home, "state", "starts");
@@ -155,6 +154,7 @@ test("explicit legacy operations cannot mistake absent cwd for a different home"
 });
 
 test("home matching needs the mate's cwd, not the cwd of an unrelated split", async () => {
+  useSteadyPi();
   const home = `${here.root}.worktrees/lane-ops`;
   const created = await lab.run([
     "workspace",

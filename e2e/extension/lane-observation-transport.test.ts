@@ -352,6 +352,7 @@ test("refused and failed pane runs are not recorded or retried", () => {
 });
 
 test("an incomplete run acknowledgement neither records a start nor lifts a hold", () => {
+  useSteadyPi();
   const home = `${here.root}.worktrees/lane-ops`;
   const starts = join(home, "state", "starts");
   const stopped = join(home, "state", "stopped");
