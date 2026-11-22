@@ -6,7 +6,7 @@ export const BrowserLaneSchema = Type.Object({
   lane: BrowserLaneName,
   status: Type.Enum(["stopped", "starting", "ready", "failed"]),
   control: Type.Object({ kind: Type.Enum(["agent", "human"]) }),
-  tabs: Type.Array(Type.Object({ id: Type.String(), title: Type.String(), url: Type.String() })),
+  tabs: Type.Array(Type.Object({ id: Type.String(), title: Type.String() })),
   credentialStep: Type.Boolean(),
   captchaStep: Type.Boolean(),
   handoff: Type.Union([
