@@ -114,7 +114,7 @@ test("a connected worker with stale running activity is never shown as working",
   await row(page, "Disconnected or stale", task).waitFor({ state: "detached", timeout: 5000 });
 });
 
-test("a running worker whose merge is authorized is shown as working", async (context) => {
+test("a worker whose merge is authorized is waiting until it runs, then working", async (context) => {
   const { cardd, main } = await startFleet({}, ["--board", BOARD]);
   context.after(() => cardd.stop());
   const page = await openBoardPage(context, browser);
@@ -126,6 +126,7 @@ test("a running worker whose merge is authorized is shown as working", async (co
   const url = "https://github.com/acme/web/pull/7";
   cardd.gh.setPr(url, "OPEN");
   await worker.call("report", { status: "done", text: "PR green and ready", pr: url });
+  worker.send({ t: "activity", state: "idle" });
   await row(page, "Waiting", task).waitFor();
 
   await main.call("release", {
@@ -134,6 +135,26 @@ test("a running worker whose merge is authorized is shown as working", async (co
     source: "chat",
     choice: "Approve & merge",
   });
+  await page.getByText("No workers are working now.").waitFor();
+  await row(page, "Waiting", task).getByText("Merging", { exact: true }).waitFor();
+
+  worker.send({ t: "activity", state: "running" });
   await row(page, "Working", task).getByText("Merging", { exact: true }).waitFor();
   await row(page, "Waiting", task).waitFor({ state: "detached" });
+});
+
+test("cached working rows are hidden promptly when cardd goes away", async (context) => {
+  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
+  context.after(() => cardd.stop());
+  const page = await openBoardPage(context, browser);
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
+  const task = await newCard(main, "Tidy the onboarding emails");
+  await cardd.connect(await begin(main, task), [], true, true);
+  await row(page, "Working", task).getByText("Running", { exact: true }).waitFor();
+
+  await cardd.stop();
+  await page
+    .getByText("Worker status is unavailable until cardd reconnects.")
+    .waitFor({ timeout: 10_000 });
+  assert.equal(await page.getByRole("link", { name: task.title }).count(), 0);
 });
