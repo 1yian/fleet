@@ -4,6 +4,9 @@ import { openDatabase, readMigrations, schemaVersion } from "../src/db.ts";
 
 const SCHEMA_FILE = new URL("../schema.sql", import.meta.url);
 const MIGRATIONS_DIR = "packages/cardd/migrations";
+const PLACED_HOST_041 = `${MIGRATIONS_DIR}/041-placed-host.sql`;
+const SIGNIN_GRANTS_041 = `${MIGRATIONS_DIR}/041-signin-grants.sql`;
+const SIGNIN_GRANTS_RENAME = `R100\t${SIGNIN_GRANTS_041}\t${MIGRATIONS_DIR}/042-signin-grants.sql`;
 
 function freshSchema(): string {
   const db = openDatabase(":memory:");
@@ -30,30 +33,18 @@ function sqlText(value: unknown): string {
 function changedMigrations(base: string): string[] {
   const out = execFileSync(
     "git",
-    ["diff", "--name-status", "--diff-filter=MDRT", `${base}...HEAD`, "--", MIGRATIONS_DIR],
+    ["diff", "--name-status", "--diff-filter=MDRT", base, "HEAD", "--", MIGRATIONS_DIR],
     { encoding: "utf8" },
   );
-  const baseNames = execFileSync("git", ["ls-tree", "--name-only", base, `${MIGRATIONS_DIR}/`], {
+  const baseFiles = execFileSync("git", ["ls-tree", "--name-only", base, "--", `${MIGRATIONS_DIR}/`], {
     encoding: "utf8",
-  })
-    .split("\n")
-    .map((path) => path.slice(path.lastIndexOf("/") + 1));
+  }).split("\n");
+  const baseHasDuplicate041 =
+    baseFiles.includes(PLACED_HOST_041) && baseFiles.includes(SIGNIN_GRANTS_041);
   return out
     .split("\n")
     .filter((line) => line.trim() !== "")
-    .filter((line) => !repairsDuplicateNumber(line, baseNames));
-}
-
-function repairsDuplicateNumber(line: string, baseNames: string[]): boolean {
-  const [status, from, to] = line.split("\t");
-  if (status !== "R100" || from === undefined || to === undefined) return false;
-  const fromMatch = /^(\d{3})-(.+)$/.exec(from.slice(from.lastIndexOf("/") + 1));
-  const toMatch = /^(\d{3})-(.+)$/.exec(to.slice(to.lastIndexOf("/") + 1));
-  if (fromMatch === null || toMatch === null) return false;
-  const [, fromNumber, fromRest] = fromMatch;
-  const [, toNumber, toRest] = toMatch;
-  if (fromRest !== toRest || (toNumber ?? "") <= (fromNumber ?? "")) return false;
-  return baseNames.filter((name) => name.startsWith(`${fromNumber ?? ""}-`)).length >= 2;
+    .filter((line) => !(baseHasDuplicate041 && line === SIGNIN_GRANTS_RENAME));
 }
 
 const schema = freshSchema();
