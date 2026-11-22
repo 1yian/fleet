@@ -60,6 +60,7 @@ export async function loseGoneJobs(
     silent.map(async (wrapper) => ({ wrapper, gone: await wrapperIsGone(hosts, wrapper) })),
   );
   const confirmed = probed.filter(({ gone }) => gone);
+  if (confirmed.length === 0) return [];
   return transaction(db, () =>
     confirmed.flatMap(({ wrapper }) => lose(loseGoneWrapper(db, wrapper))),
   );
