@@ -359,4 +359,29 @@ test("an unconfirmed change leaves the viewer watching until the page is reloade
   await nextFrames(page);
   assert.equal(endpoint.events.length, 0);
   assert.equal(await page.getByRole("button", { name: "Garden" }).isDisabled(), true);
+  await page.getByText("Control held · Input paused").waitFor();
+  await page.getByText("Input is paused. Press Done to return control to the agent.").waitFor();
+  assert.equal(await page.getByText("You’re in control").count(), 0);
+});
+
+test("a typing request that cannot be confirmed blocks a queued tab change", async (t) => {
+  const { endpoint, page, base } = await launch(t);
+  await page.goto(`${base}#/browser/garden`);
+  await page.getByText("Watching · Read only").waitFor();
+  await page.getByRole("button", { name: "Take control" }).click();
+  await until(() => endpoint.commands.length === 1);
+  endpoint.confirm();
+  await page.getByText("You’re in control").waitFor();
+  endpoint.hold();
+  endpoint.failNextInput();
+  await screenClick(page);
+  await until(() => endpoint.activeInputs > 0);
+  await page.getByRole("button", { name: "Workshop" }).click();
+  await page.locator('nav[aria-label="Remote tabs"] button:disabled').first().waitFor();
+  assert.equal(endpoint.commands.length, 1);
+  endpoint.release();
+  await page.getByText(/reload this page before taking control again/).waitFor();
+  await page.getByText("Control held · Input paused").waitFor();
+  assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
+  assert.equal(endpoint.order.includes("tab"), false);
 });
