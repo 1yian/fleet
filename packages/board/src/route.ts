@@ -12,23 +12,24 @@ const hash = (): string => location.hash;
 
 export function useCardRoute(): {
   readonly card: number | undefined;
+  readonly workers: boolean;
   readonly open: (card: number) => void;
   readonly close: () => void;
 } {
-  const card = ADDRESS.exec(useSyncExternalStore(subscribe, hash))?.[1];
+  const address = useSyncExternalStore(subscribe, hash);
+  const workers = address === "#/workers";
+  const card = ADDRESS.exec(address)?.[1];
   const id = card === undefined ? undefined : Number(card);
-  const scrolled = useRef(0);
-  const fromBoard = useRef(false);
+  const origin = useRef<{ from: string; to: string; scroll: number } | undefined>(undefined);
 
   const open = useCallback((next: number) => {
-    scrolled.current = window.scrollY;
-    fromBoard.current = true;
-    location.hash = `/c-${String(next)}`;
+    const to = `#/c-${String(next)}`;
+    origin.current = { from: location.hash, to, scroll: window.scrollY };
+    location.hash = to;
   }, []);
   const close = useCallback(() => {
     if (!ADDRESS.test(location.hash)) return;
-    if (fromBoard.current) {
-      fromBoard.current = false;
+    if (origin.current?.to === location.hash) {
       history.back();
       return;
     }
@@ -37,8 +38,10 @@ export function useCardRoute(): {
   }, []);
 
   useEffect(() => {
-    window.scrollTo(0, id === undefined ? scrolled.current : 0);
-  }, [id]);
+    const previous = origin.current;
+    window.scrollTo(0, previous?.from === address ? previous.scroll : 0);
+    if (previous?.to !== address && previous?.from !== address) origin.current = undefined;
+  }, [address]);
 
-  return { card: id, open, close };
+  return { card: id, workers, open, close };
 }
