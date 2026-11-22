@@ -57,7 +57,7 @@ test("the Grok connector discovers just one tool and records a correlated result
     name: "fleet_report_result",
     arguments: {
       ...assignment,
-      text: "Two reference entries were confirmed.",
+      text: "Two reference entries were confirmed \u{1F4DA}.",
       sources: ["https://example.test/references#two"],
     },
   };
@@ -70,6 +70,14 @@ test("the Grok connector discovers just one tool and records a correlated result
     await tool(started, { ...params.arguments, sources: [] }),
     receipt("invalid-result"),
   );
+  for (const lone of [
+    { text: "Clipped \ud83d" },
+    { sources: ["https://example.test/ok", "https://example.test/\ude00"] },
+  ])
+    assert.deepEqual(
+      await tool(started, { ...params.arguments, ...lone }),
+      receipt("invalid-result"),
+    );
   assert.deepEqual(
     await tool(started, { ...params.arguments, assignment: randomUUID() }),
     receipt("uncorrelated"),

@@ -34,6 +34,8 @@ function reportServer(db: DatabaseSync, notify: (recipient: string) => void): Mc
     let args: GrokReportArgs;
     try {
       args = check(GrokReportArgs, params.arguments);
+      const stored = [args.text, ...(args.sources === "unavailable" ? [] : args.sources)];
+      if (!stored.every((each) => each.isWellFormed())) throw new Error("unpaired surrogate");
     } catch {
       return toolReceipt({ receipt: "invalid-result" });
     }
