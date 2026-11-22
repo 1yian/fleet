@@ -231,7 +231,11 @@ function released(tally: Tally, entry: Entry): void {
 
 function commented(tally: Tally, entry: Entry): void {
   if (entry.author === "captain") {
-    if (tally.hold?.holder === "captain" && tally.hold.reviewRequests === undefined)
+    if (
+      tally.hold?.holder === "captain" &&
+      tally.hold.reviewRequests === undefined &&
+      entry.fields["signinGrant"] !== true
+    )
       tally.hold = { ...tally.hold, holder: "owner" };
     return;
   }

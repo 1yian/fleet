@@ -44,6 +44,7 @@ import { normalizeReport, reverifyAtClose } from "./merged-report.ts";
 import { requireOwedBy, workerOwedIds } from "./replies.ts";
 import type { Timings } from "./timing.ts";
 import { listSchedules, removeSchedule, setSchedule } from "./schedules.ts";
+import { redeemGrant } from "./signin.ts";
 import { scriptWake } from "./wakes.ts";
 import {
   addCard,
@@ -212,6 +213,10 @@ const HANDLERS: Record<Exclude<OpName, "project.personal">, Handler> = {
       throw new Error(`c-${String(card)} is in another lane; ask main`);
     return { value: cardView(db, card, session.lane, timing), notify: [] };
   },
+  "signin.redeem": (db, session, raw, timing) => ({
+    value: redeemGrant(db, session, raw, timing.wall()),
+    notify: [],
+  }),
   "project.yolo": (db, session, raw) => {
     if (session.lane !== mainLane(db))
       throw new Error("only main can change a project's yolo flag");

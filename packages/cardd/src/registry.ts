@@ -90,6 +90,7 @@ export function removeLane(db: DatabaseSync, lane: string): string {
       .prepare("DELETE FROM schedules WHERE owner = ? OR recipient = ?")
       .run(lane, lane).changes;
     db.prepare("DELETE FROM deliveries WHERE session = ?").run(lane);
+    db.prepare("DELETE FROM signin_grants WHERE lane = ?").run(lane);
     db.prepare("UPDATE lanes SET card = NULL WHERE name = ?").run(lane);
     db.prepare("DELETE FROM cards WHERE lane = ?").run(lane);
     dropMaintenance(db, lane);
