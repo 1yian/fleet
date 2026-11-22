@@ -8,30 +8,8 @@ import {
   type BrowserState,
 } from "@fleet/protocol";
 import { jsonEvent, openStream, type Stream } from "./browser-api.ts";
+import { commandError, commandFor, type BrowserInput, type Pending } from "./browser-commands.ts";
 
-export type BrowserInput =
-  | {
-      t: "mouse";
-      type: "mouseMoved" | "mousePressed" | "mouseReleased";
-      x: number;
-      y: number;
-      button: string;
-      buttons: number;
-      clickCount: number;
-      modifiers: number;
-    }
-  | { t: "wheel"; x: number; y: number; deltaX: number; deltaY: number; modifiers: number }
-  | {
-      t: "key";
-      type: "keyDown" | "rawKeyDown" | "keyUp";
-      key: string;
-      code: string;
-      keyCode: number;
-      text?: string;
-      modifiers: number;
-    };
-
-type Pending = "take" | "done" | { readonly tab: string };
 type Status = {
   readonly state?: BrowserState | undefined;
   readonly pending?: Pending | undefined;
@@ -41,22 +19,11 @@ type Status = {
   readonly halted?: boolean | undefined;
 };
 
+const FRAME_WAIT_MS = 3000;
 const LOST = "Control ended. You’re watching again.";
 const CHANGED = "The remote browser changed before your request went through. Try again.";
 const AMBIGUOUS =
   "The last change may not have finished, so input and control changes are off. You can keep watching. Leave this page to hand control back to the agent.";
-
-function commandFor(pending: Pending): BrowserCommand {
-  if (pending === "take") return { t: "control", on: true };
-  if (pending === "done") return { t: "done" };
-  return { t: "tab", action: "activate", id: pending.tab };
-}
-
-function commandError(pending: Pending): string {
-  if (pending === "take") return "Couldn’t take control. You’re still watching.";
-  if (pending === "done") return "Couldn’t return control. Try Done again.";
-  return "Couldn’t switch tabs. Try again.";
-}
 
 class Viewer {
   private readonly suffix: string;
@@ -72,6 +39,9 @@ class Viewer {
   private quarantined = false;
   private recovering = false;
   private latest: BrowserFrame | undefined;
+  private trusted = false;
+  private stated = false;
+  private frameTimer = 0;
   private authority = 0;
   private frames = 0;
   private queuedStamp = "";
@@ -101,6 +71,8 @@ class Viewer {
     this.stream = openStream(this.url("stream"), {
       failed: () => {
         this.epoch += 1;
+        clearTimeout(this.frameTimer);
+        this.stated = false;
         this.latest = undefined;
         this.frame(undefined);
         this.events = [];
@@ -145,7 +117,7 @@ class Viewer {
 
   private matched(): boolean {
     const state = this.current.state;
-    return state !== undefined && this.latest?.meta.targetId === state.activeTab;
+    return state !== undefined && this.trusted && this.latest?.meta.targetId === state.activeTab;
   }
 
   private blocked(): boolean {
@@ -155,8 +127,10 @@ class Viewer {
   private accept(frame: BrowserFrame): void {
     const was = this.matched();
     this.latest = frame;
+    this.trusted = !this.stated || this.current.state?.activeTab === frame.meta.targetId;
     this.frame(frame);
     const now = this.matched();
+    if (now) clearTimeout(this.frameTimer);
     if (was && !now) {
       this.frames += 1;
       this.events = [];
@@ -178,8 +152,17 @@ class Viewer {
     });
   }
 
+  private awaitFrame(): void {
+    clearTimeout(this.frameTimer);
+    this.frameTimer = window.setTimeout(() => {
+      if (!this.closed && !this.matched()) this.reopen(this.current.notice);
+    }, FRAME_WAIT_MS);
+  }
+
   private reopen(notice: string | undefined): void {
     this.epoch += 1;
+    clearTimeout(this.frameTimer);
+    this.stated = false;
     this.latest = undefined;
     this.frame(undefined);
     this.discard();
@@ -229,10 +212,13 @@ class Viewer {
     if (completed) this.invalidateCommand();
     if (!owns && pending !== "take") this.issuedTake = false;
     if (lost || previous?.activeTab !== state.activeTab) this.events = [];
-    if (this.latest !== undefined && this.latest.meta.targetId !== state.activeTab) {
+    const moved = this.stated && previous?.activeTab !== state.activeTab;
+    this.stated = true;
+    if (this.latest !== undefined && (moved || this.latest.meta.targetId !== state.activeTab)) {
       this.latest = undefined;
       this.frame(undefined);
     }
+    if (moved) this.awaitFrame();
     const key = `${String(owns)}:${state.activeTab ?? ""}`;
     if (key !== this.confirmedKey) {
       this.confirmedKey = key;
@@ -445,6 +431,7 @@ class Viewer {
   close(): void {
     this.closed = true;
     this.invalidateCommand();
+    clearTimeout(this.frameTimer);
     cancelAnimationFrame(this.scheduled);
     void this.teardown();
   }
