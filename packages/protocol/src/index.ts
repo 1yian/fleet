@@ -12,6 +12,7 @@ import { PERSONAL_OPS } from "./personal.ts";
 import { PulseSchema } from "./pulse.ts";
 import { ReportStatus } from "./report.ts";
 import { SCHEDULE_OPS, ScheduleSchema } from "./schedules.ts";
+import { SIGNIN_OPS } from "./signin.ts";
 import { Shown, STANDING_OPS, Status } from "./standing.ts";
 import { PlanSchema } from "./wakes.ts";
 import { DatedWaitSchema, HOLD_WAIT_ARGS, RemainingStepSchema } from "./waits.ts";
@@ -370,6 +371,7 @@ export const OPS = {
   ...INCIDENT_OPS,
   ...JOB_OPS,
   ...MAINTENANCE_OPS,
+  ...SIGNIN_OPS,
   report: {
     roles: ["worker"],
     args: Type.Object({

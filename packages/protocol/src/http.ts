@@ -1,5 +1,6 @@
 import Type, { type Static } from "typebox";
 import { LaterFields } from "./later.ts";
+import { SigninGrantAction } from "./signin.ts";
 
 export const BoardActionSchema = Type.Object({
   card: Type.Integer(),
@@ -12,6 +13,7 @@ export const BoardActionSchema = Type.Object({
     }),
     Type.Object({ kind: Type.Literal("comment"), text: Type.String({ minLength: 1 }) }),
     Type.Object({ kind: Type.Literal("hold"), hold: Type.Integer(), ...LaterFields }),
+    SigninGrantAction,
   ]),
 });
 export type BoardAction = Static<typeof BoardActionSchema>;
