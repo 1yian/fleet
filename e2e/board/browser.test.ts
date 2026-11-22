@@ -160,6 +160,8 @@ async function exerciseReconnectDuringTab(
   endpoint: BrowserEndpoint,
   jpeg: readonly string[],
 ): Promise<void> {
+  await until(() => endpoint.activeInputs === 0);
+  await nextFrames(page);
   endpoint.order.length = 0;
   const batches = endpoint.events.length;
   const arrived = endpoint.arrivals;

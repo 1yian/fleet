@@ -75,6 +75,7 @@ async function relay(
   token: string,
   body: string | undefined,
 ): Promise<void> {
+  if (response.destroyed) return;
   const abort = new AbortController();
   const close = (): void => abort.abort();
   const timer = setTimeout(close, 10_000);
