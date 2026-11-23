@@ -8,7 +8,7 @@ import { Cardd } from "./cardd.ts";
 import { Harness } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { isRecord, records, type JsonRecord } from "./json.ts";
-import { configureMain, mateArgs, Scratch } from "./scratch.ts";
+import { configureMain, mateArgs, Scratch, type ObservationTiming } from "./scratch.ts";
 
 const NODE_BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 
@@ -396,11 +396,22 @@ function fleetEnv(fault = "", pane = "", probeTimeout = "20000"): NodeJS.Process
   };
 }
 
-function fleet(args: readonly string[], fault = "", pane = "", probeTimeout?: string): string {
+const hangingTiming: ObservationTiming = {
+  FLEET_LANE_OBSERVATION_MS: "8000",
+  FLEET_MAINTENANCE_SWEEP_MS: "51000",
+};
+
+function fleet(
+  args: readonly string[],
+  fault = "",
+  pane = "",
+  probeTimeout?: string,
+  timing?: ObservationTiming,
+): string {
   return execFileSync(process.execPath, [here.launch, ...args], {
     encoding: "utf8",
     timeout: 90_000,
-    env: fleetEnv(fault, pane, probeTimeout),
+    env: { ...fleetEnv(fault, pane, probeTimeout), ...timing },
   });
 }
 
@@ -475,6 +486,7 @@ export {
   faultLog,
   fleet,
   fleetEnv,
+  hangingTiming,
   legacyMaintenance,
   typedMaintenance,
   maintenanceOutcomes,

@@ -18,6 +18,7 @@ import { tempDir } from "../support/run-root.ts";
 
 const READINESS = fileURLToPath(new URL("../support/readiness-transport.ts", import.meta.url));
 const CHECKOUT = fileURLToPath(new URL("../..", import.meta.url));
+const SHORT_RESTART_WAIT = { FLEET_RESTART_SHELL_WAIT_MS: "5000" };
 const DISPATCH = {
   tool: "dispatch",
   args: {
@@ -72,6 +73,7 @@ test("a restart that finds a foreign Pi in the fresh pane before any start comma
   const dir = tempDir("start-foreign-shell-");
   const armed = join(dir, "armed");
   parts = await startDispatchLab({
+    mate: SHORT_RESTART_WAIT,
     hosts: { far: ["node", READINESS, armed] },
     roots: { far: CHECKOUT },
   });
@@ -110,6 +112,7 @@ test("a refunded restart leaves the worker's model pin as it was, so the same ke
   const dir = tempDir("start-refund-pin-");
   const armed = join(dir, "armed");
   parts = await startDispatchLab({
+    mate: SHORT_RESTART_WAIT,
     hosts: { far: ["node", READINESS, armed] },
     roots: { far: CHECKOUT },
   });

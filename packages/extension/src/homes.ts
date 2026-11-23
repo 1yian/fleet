@@ -167,7 +167,12 @@ function recentStarts(home: string, now: number): number[] {
   return recentStartsOf(readState(startsFile(home), "state/starts"), now);
 }
 
-const LANE_OBSERVATION_MS = 18_000;
+const DEFAULT_LANE_OBSERVATION_MS = 18_000;
+const laneObservation = Number(process.env["FLEET_LANE_OBSERVATION_MS"]);
+const LANE_OBSERVATION_MS =
+  Number.isSafeInteger(laneObservation) && laneObservation > 0
+    ? Math.min(laneObservation, DEFAULT_LANE_OBSERVATION_MS)
+    : DEFAULT_LANE_OBSERVATION_MS;
 const SHELL_WAIT_MS = 20_000;
 const LAUNCH_WAIT_MS = 10_000;
 const START_RECORD_MS = 1_000;

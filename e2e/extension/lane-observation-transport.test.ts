@@ -12,6 +12,7 @@ import {
   addLane,
   faultLog,
   fleet,
+  hangingTiming,
   legacyMaintenance,
   typedMaintenance,
   maintenanceOutcomes,
@@ -236,7 +237,9 @@ test("maintenance returns a completed start alongside a later lifecycle failure"
 });
 
 const hangingSweep = (panes: string[]) =>
-  maintenanceOutcomes(fleet(typedMaintenance, "hanging-panes", panes.join(","), "60000"));
+  maintenanceOutcomes(
+    fleet(typedMaintenance, "hanging-panes", panes.join(","), "60000", hangingTiming),
+  );
 
 test("an early hanging observation does not starve a later healthy lane", async () => {
   useSteadyPi();
@@ -295,7 +298,7 @@ test("automatic sweeps rotate past repeated hangs and reap their probes", async 
   await idlePane("ops", `${here.root}.worktrees/lane-ops`);
   writeFileSync(`${faultLog()}.targets`, `${panes.join(",")}\n`);
   h.onModel(() => ({ text: "noted" }), "mate");
-  await startMain(lab, here, h);
+  await startMain(lab, here, h, false, undefined, hangingTiming);
   const deadline = Date.now() + 140_000;
   for (;;) {
     const rows = records(JSON.parse(fleet(["status", "--json"])));

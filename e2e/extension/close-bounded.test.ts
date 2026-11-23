@@ -148,8 +148,8 @@ test("close on a host where ps stalls stops at the scan limit, leaves the card o
 
 test("close that runs past its overall limit stops at the step in flight and leaves the card open", async () => {
   await closeOnLoadedHost(
-    { FLEET_CLOSE_DEADLINE_MS: "15000" },
-    "ran past close's overall limit of 15 s",
+    { FLEET_CLOSE_DEADLINE_MS: "8000" },
+    "ran past close's overall limit of 8 s",
     false,
   );
 });
