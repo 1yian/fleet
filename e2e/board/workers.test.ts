@@ -248,6 +248,78 @@ test("worker rows cached before Analytics hid the board are not shown as live af
   assert.equal(await page.getByRole("link", { name: task.title }).count(), 0);
 });
 
+test("a board read queued before Analytics hid the board cannot bring its workers back", async (context) => {
+  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
+  context.after(() => cardd.stop());
+  const page = await openBoardPage(context, browser);
+  let mode: "pass" | "hold" | "stall" = "pass";
+  let reads = 0;
+  let frames = 0;
+  let captured = (): void => undefined;
+  const heldRead = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  let release = (): void => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let finish = (): void => undefined;
+  const ended = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  context.after(finish);
+  page.on("websocket", (socket) => {
+    socket.on("framereceived", () => {
+      frames += 1;
+    });
+  });
+  await page.route("**/api/board", async (route) => {
+    reads += 1;
+    if (mode === "stall") {
+      await ended;
+      await route.abort().catch(() => undefined);
+      return;
+    }
+    if (mode === "pass") {
+      await route.continue();
+      return;
+    }
+    mode = "pass";
+    const stale = await route.fetch();
+    captured();
+    await held;
+    await route.fulfill({ response: stale }).catch(() => undefined);
+  });
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
+  const task = await newCard(main, "Rewrite the shipping policy page");
+  await cardd.connect(await begin(main, task), [], true, true);
+  await row(page, "Working", task).getByText("Running", { exact: true }).waitFor();
+
+  mode = "hold";
+  await newCard(main, "Plan the holiday campaign");
+  await within(heldRead, 5000, "a board read starting before Analytics opened");
+  const seen = frames;
+  await newCard(main, "Review the partner contract");
+  for (let waited = 0; frames === seen; waited += 20) {
+    assert.ok(waited < 5000, "the second change never reached the browser as a live notification");
+    await delay(20);
+  }
+  const nav = page.getByRole("navigation", { name: "Fleet views" });
+  await nav.getByRole("link", { name: "Analytics" }).click();
+  await page.waitForFunction(() => location.hash === "#/analytics");
+  release();
+  await delay(750);
+  const readsBefore = reads;
+  await cardd.stop();
+  mode = "stall";
+  await nav.getByRole("link", { name: "Active Workers" }).click();
+  await page
+    .getByText("Worker status is unavailable until cardd reconnects.")
+    .waitFor({ timeout: 5000 });
+  assert.equal(await page.getByRole("link", { name: task.title }).count(), 0);
+  assert.ok(reads > readsBefore, "returning to the board starts a fresh read");
+});
+
 test("Active Workers keeps the scroll position it was left at across links and browser history", async (context) => {
   const { cardd, main } = await startFleet({}, ["--board", BOARD]);
   context.after(() => cardd.stop());
