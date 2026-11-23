@@ -221,6 +221,8 @@ export interface CardQuery {
 const ENTRY_LIMIT = 10;
 
 function kindOf(entry: Entry): string {
+  if (entry.author === "fleet" && entry.kind === "note" && entry.fields["fleetReview"] === true)
+    return "note/takeover";
   const detail = entry.fields[entry.kind === "hold" ? "holder" : "status"];
   return typeof detail === "string" && detail !== "" ? `${entry.kind}/${detail}` : entry.kind;
 }

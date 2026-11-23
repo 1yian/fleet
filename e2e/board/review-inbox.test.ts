@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { check, OPS } from "@fleet/protocol";
+import { check, OPS, type Entry } from "@fleet/protocol";
+import type { Cardd } from "../support/cardd.ts";
 import { begin, newCard, startFleet, status } from "../support/fleet.ts";
 import { Site } from "../support/public-host.ts";
 import {
@@ -38,6 +39,25 @@ const rounds = [
     end: true,
   },
 ];
+
+async function assertTakeoverNotesPrivate(
+  cardd: Cardd,
+  card: number,
+  upstream: string,
+  seen: readonly Entry[],
+): Promise<void> {
+  const board = await cardd.thread(card);
+  const shown = JSON.stringify(board);
+  assert.ok(!shown.includes(upstream));
+  assert.ok(!shown.includes("fleetReview"));
+  assert.ok(!shown.includes("review-feedback"));
+  const notes = seen.filter(
+    (entry) => entry.author === "fleet" && entry.fields["fleetReview"] === true,
+  );
+  assert.equal(notes.length, 3);
+  assert.ok(board.entries.some((entry) => entry.kind === "hold"));
+  assert.ok(board.entries.every((entry) => !notes.some(({ id }) => id === entry.id)));
+}
 
 test("successive stock Lavish submissions reach the Fleet worker inbox once per review key", async (t) => {
   const { origin, key } = await reviewSource(t);
@@ -130,10 +150,7 @@ test("successive stock Lavish submissions reach the Fleet worker inbox once per 
       .map(({ entry }) => entry.id),
     receipts.map(({ id }) => id),
   );
-  const shown = JSON.stringify(await cardd.thread(card.id));
-  assert.ok(!shown.includes(origin.origin));
-  assert.ok(!shown.includes("fleetReview"));
-  assert.ok(!shown.includes("review-feedback"));
+  await assertTakeoverNotesPrivate(cardd, card.id, origin.origin, (await view()).entries);
 });
 
 test("an empty Send & End is one live session end that a later round never inherits", async (t) => {
