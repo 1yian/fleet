@@ -213,6 +213,41 @@ test("a board read begun before cardd went away cannot bring its workers back", 
   assert.equal(await page.getByRole("link", { name: task.title }).count(), 0);
 });
 
+test("worker rows cached before Analytics hid the board are not shown as live after cardd went away", async (context) => {
+  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
+  context.after(() => cardd.stop());
+  const page = await openBoardPage(context, browser);
+  let stall = false;
+  let finish = (): void => undefined;
+  const ended = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  context.after(finish);
+  await page.route("**/api/board", async (route) => {
+    if (!stall) {
+      await route.continue();
+      return;
+    }
+    await ended;
+    await route.abort().catch(() => undefined);
+  });
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
+  const task = await newCard(main, "Refresh the help center articles");
+  await cardd.connect(await begin(main, task), [], true, true);
+  await row(page, "Working", task).getByText("Running", { exact: true }).waitFor();
+
+  const nav = page.getByRole("navigation", { name: "Fleet views" });
+  await nav.getByRole("link", { name: "Analytics" }).click();
+  await page.waitForFunction(() => location.hash === "#/analytics");
+  await cardd.stop();
+  stall = true;
+  await nav.getByRole("link", { name: "Active Workers" }).click();
+  await page
+    .getByText("Worker status is unavailable until cardd reconnects.")
+    .waitFor({ timeout: 5000 });
+  assert.equal(await page.getByRole("link", { name: task.title }).count(), 0);
+});
+
 test("Active Workers keeps the scroll position it was left at across links and browser history", async (context) => {
   const { cardd, main } = await startFleet({}, ["--board", BOARD]);
   context.after(() => cardd.stop());
