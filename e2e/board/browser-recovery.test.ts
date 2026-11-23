@@ -316,9 +316,7 @@ test("a late frame for the old tab on a static tab regains input through one fre
     .waitFor();
   const before = endpoint.commands.length;
   endpoint.showFrame(0);
-  await page
-    .locator(`.browser-surface:not(.driving) img[src="data:image/jpeg;base64,${jpeg[0] ?? ""}"]`)
-    .waitFor();
+  await page.getByText("Waiting for the browser screen…").waitFor();
   await page
     .locator(`.browser-surface.driving img[src="data:image/jpeg;base64,${jpeg[1] ?? ""}"]`)
     .waitFor();
