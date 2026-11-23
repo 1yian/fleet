@@ -12,6 +12,13 @@ on:
       rounds:
         description: Rounds per shard
         default: "3"
+      lavish:
+        description: The locked Lavish release to install, 0.1.90 for the extension tests and 0.1.97 for the board tests
+        type: choice
+        options:
+          - 0.1.90
+          - 0.1.97
+        default: 0.1.90
 
 permissions:
   contents: read
@@ -19,6 +26,7 @@ permissions:
 env:
   TESTS: ${{ inputs.tests || 'e2e/extension/**/*.test.ts' }}
   ROUNDS: ${{ inputs.rounds || '3' }}
+  LAVISH: ${{ inputs.lavish || '0.1.90' }}
 
 jobs:
   shard:
@@ -40,11 +48,11 @@ jobs:
       - name: Install direnv
         uses: ./.github/actions/install-direnv
         timeout-minutes: 5
-      - name: Install Lavish for the extension review tests
+      - name: Install Lavish for the review tests
         uses: ./.github/actions/install-lavish
         timeout-minutes: 5
         with:
-          version: 0.1.90
+          version: ${{ env.LAVISH }}
       - name: Run the tests ${{ env.ROUNDS }} times
         run: |
           set -o pipefail
