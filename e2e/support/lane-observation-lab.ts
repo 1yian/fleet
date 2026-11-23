@@ -437,6 +437,16 @@ async function untilRunning(lane: string): Promise<void> {
   assert.fail(`${lane} never became running`);
 }
 
+async function settledStatus(lane: string): Promise<unknown> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const rows: unknown = JSON.parse(fleet(["status", "--json"]));
+    if (records(rows).some((row) => row["lane"] === lane && row["state"] !== "unknown"))
+      return rows;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  assert.fail(`${lane} stayed unknown`);
+}
+
 const action = (lane: string, value: string) => [{ lane, action: value }];
 
 async function idlePane(lane: string, home: string, title = `2ndmate-${lane}`): Promise<string> {
@@ -470,6 +480,7 @@ export {
   maintain,
   workspace,
   untilRunning,
+  settledStatus,
   action,
   idlePane,
 };

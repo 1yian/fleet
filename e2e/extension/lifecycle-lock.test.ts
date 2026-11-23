@@ -8,6 +8,7 @@ import { Cardd } from "../support/cardd.ts";
 import { Harness } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { records } from "../support/json.ts";
+import { until } from "../support/live-fleet.ts";
 import { LifecycleHolder } from "../support/lifecycle-holder.ts";
 import { mateArgs, Scratch } from "../support/scratch.ts";
 
@@ -83,7 +84,10 @@ test("four fleet up processes at once start the mate once and find it running th
     "ops: started in 2ndmate-ops\n",
   ]);
   assert.deepEqual(await workspaceLabels(), ["2ndmate-ops"]);
-  const status = await fleet(["status"]);
+  const status = await until(async () => {
+    const read = await fleet(["status"]);
+    return read.stdout.startsWith("ops: unknown") ? undefined : read;
+  }, "ops to read as something other than unknown");
   assert.equal(status.stdout, "ops: running\n");
 });
 

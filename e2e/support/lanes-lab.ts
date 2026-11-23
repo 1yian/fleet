@@ -61,11 +61,18 @@ async function until<T>(
   read: () => T | undefined | Promise<T | undefined>,
   what: string,
   detail?: () => string | Promise<string>,
+  progress?: () => unknown,
 ): Promise<T> {
-  const deadline = Date.now() + WAIT_MS;
+  let deadline = Date.now() + WAIT_MS;
+  let advanced = progress?.();
   for (;;) {
     const value = await read();
     if (value !== undefined) return value;
+    const now = progress?.();
+    if (now !== advanced) {
+      advanced = now;
+      deadline = Date.now() + WAIT_MS;
+    }
     if (Date.now() > deadline) {
       const why = await Promise.resolve()
         .then(() => detail?.() ?? "")

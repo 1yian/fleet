@@ -20,11 +20,12 @@ const current = () => ({ fleet, h, lab, env, jobDir, card });
 beforeEach(async () => {
   jl = await JobLab.start();
   ({ fleet, h, lab, env, jobDir, card } = jl);
+  pastStartup();
 });
 afterEach(async (t) => {
   await jl.stop(t);
 });
-const { worker, findings, commandAwaitingGo, wrapperOf } = jobHelpers(current);
+const { worker, findings, commandAwaitingGo, wrapperOf, pastStartup } = jobHelpers(current);
 
 test("a job whose wrapper died is lost once: the mate and the worker are told", async () => {
   const first = commandAwaitingGo(1);
