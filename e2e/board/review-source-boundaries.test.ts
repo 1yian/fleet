@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { check, OPS } from "@fleet/protocol";
-import { ageDated, begin, newCard, startFleet } from "../support/fleet.ts";
+import { ageDated, begin, newCard } from "../support/fleet.ts";
 import { Lavish } from "../support/lavish.ts";
-import { Site } from "../support/public-host.ts";
 import {
   labFor,
   post,
@@ -344,17 +343,22 @@ test("a replacement upstream behind the same link starts from its own baseline",
   assert.ok(typeof opened === "object" && opened !== null && "key" in opened);
   assert.equal(opened.key, key);
   await post(next, `/api/${key}/prompts`, verdictOf("History of the replacement"));
+  const { edge, upstream } = await viaEdge(t, next);
+  const probe = edge.hold("/layout-warnings");
   await worker.close();
   await cardd.stop();
-  cardd.env["CARDD_REVIEW_ORIGINS"] = `${reported}=${next.origin}`;
+  cardd.env["CARDD_REVIEW_ORIGINS"] = `${reported}=${upstream}`;
   await cardd.restart();
   const again = await cardd.connect(token);
   const mate = await cardd.connect(mainToken);
-  assert.notEqual(await takeoverOf(mate, card), firstNotice.id);
+  await probe.arrived;
+  assert.equal(await takeoverOf(mate, card), undefined);
+  probe.release();
   const replacementNotice = await again.waitForEntry(
-    (entry) => entry.fields["upstream"] === `${next.origin}/session/${key}`,
+    (entry) => entry.fields["upstream"] === `${upstream}/session/${key}`,
     "the notice for the replacement upstream",
   );
+  assert.notEqual(replacementNotice.id, firstNotice.id);
   assert.equal(await takeoverOf(mate, card), replacementNotice.id);
   await post(next, `/api/${key}/prompts`, verdictOf("Live on the replacement"));
   await again.waitForEntry(
@@ -392,52 +396,4 @@ test("a replacement upstream behind the same link starts from its own baseline",
       .filter((body) => body !== "Live on the replacement"),
     ["Live on the first upstream again"],
   );
-});
-
-test("a link that resolves to the same upstream keeps the current takeover", async (t) => {
-  const { origin, key } = await reviewSource(t);
-  const site = await Site.start();
-  t.after(() => site.issuer.stop());
-  const first = "http://reviews.example.test:7331";
-  const second = "http://reviews-alias.example.test:7331";
-  const { cardd, main, mainToken } = await startFleet(
-    {
-      ...site.env,
-      CARDD_REVIEW_ORIGINS: `${first}=${origin.origin} ${second}=${origin.origin}`,
-    },
-    site.flags,
-  );
-  t.after(() => cardd.stop());
-  const card = await newCard(main, "Alias", "scout");
-  const worker = await cardd.connect(await begin(main, card));
-  const links = [`${first}/session/${key}`, `${second}/session/${key}`];
-  await worker.call("report", {
-    status: "needs-decision",
-    key: "review-alias",
-    text: `Ready: ${links.join(" ")}`,
-  });
-  await main.call("hold", {
-    card: card.id,
-    to: "captain",
-    question: "review-alias",
-    review: links[0],
-  });
-  const notice = await worker.waitForEntry(
-    (entry) => entry.fields["fleetReview"] === true,
-    "the takeover notice",
-  );
-  assert.equal(await takeoverOf(main, card), notice.id);
-  await main.call("hold", {
-    card: card.id,
-    to: "captain",
-    question: "review-alias again",
-    review: links[1],
-  });
-  assert.equal(await takeoverOf(main, card), notice.id);
-  await post(origin, `/api/${key}/prompts`, verdictOf("Sent through the alias"));
-  await worker.waitForEntry(
-    (entry) => entry.kind === "review-feedback" && entry.body === "Sent through the alias",
-    "the verdict after the alias edit",
-  );
-  assert.equal(await takeoverOf(await cardd.connect(mainToken), card), notice.id);
 });

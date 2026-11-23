@@ -265,7 +265,9 @@ export function thread(db: DatabaseSync, id: number): Thread {
       ...entry,
       body: withoutPaths(entry.body, paths),
       fields: Object.fromEntries(
-        Object.entries(entry.fields).filter(([key]) => key !== "evidence"),
+        Object.entries(entry.fields).filter(
+          ([key]) => key !== "evidence" && key !== "reviewUpstream",
+        ),
       ),
     })),
   };

@@ -50,6 +50,7 @@ async function assertTakeoverNotesPrivate(
   const board = await cardd.thread(card);
   const shown = JSON.stringify(board);
   assert.ok(!shown.includes(upstream));
+  assert.ok(!shown.includes("reviewUpstream"));
   assert.ok(!shown.includes("fleetReview"));
   assert.ok(!shown.includes("review-feedback"));
   const notes = seen.filter(

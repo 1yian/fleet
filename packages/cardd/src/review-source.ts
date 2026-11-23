@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { check, type Entry } from "@fleet/protocol";
 import Type, { type Static } from "typebox";
 import { WebSocket } from "ws";
-import { reviewDecision, reviewPreview } from "./review-completion.ts";
+import { recordedUpstream, reviewDecision, reviewPreview } from "./review-completion.ts";
 import { lavishRequest } from "./review-session.ts";
 import { factsFrom, type Hold } from "./status.ts";
 import { addEntry, cardEntries, transaction, workerOf } from "./store.ts";
@@ -101,7 +101,8 @@ function bound(
 ): boolean {
   return (
     hold !== undefined &&
-    reviewPreview(hold, origins, Infinity)?.href === source.href &&
+    (recordedUpstream(hold) === source.href ||
+      reviewPreview(hold, origins, Infinity)?.href === source.href) &&
     JSON.stringify(hold.reviewRequests ?? []) === JSON.stringify(requests)
   );
 }

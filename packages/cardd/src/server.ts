@@ -23,6 +23,7 @@ import { adoptProcess } from "./incidents.ts";
 import { sanitize } from "./incident-kinds.ts";
 import { expireJobStarts } from "./jobs.ts";
 import { performOp } from "./ops.ts";
+import { setReviewOrigins } from "./review-completion.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { findSession, setSessionState, transaction, type Session } from "./store.ts";
 import { Access, type AccessConfig } from "./access.ts";
@@ -115,6 +116,7 @@ class Hub {
     this.db = db;
     this.timing = timing;
     this.hosts = hosts;
+    setReviewOrigins(reviewOrigins);
     this.web = new Web(
       db,
       timing,
