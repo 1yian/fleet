@@ -216,16 +216,16 @@ jobs:
         uses: ./.github/actions/install-herdr
       - name: Install direnv
         uses: ./.github/actions/install-direnv
-        timeout-minutes: 5
+        timeout-minutes: 7
       - name: Install Lavish for the extension review tests
         uses: ./.github/actions/install-lavish
-        timeout-minutes: 5
+        timeout-minutes: 7
         with:
           version: 0.1.90
       - run: bun run build
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
-        timeout-minutes: 15
+        timeout-minutes: 23
       - run: node e2e/run.ts --shard=${{ matrix.shard }}/9 "e2e/extension/**/*.test.ts"
 
   e2e-board:
@@ -239,10 +239,10 @@ jobs:
       - run: bun run build
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
-        timeout-minutes: 15
+        timeout-minutes: 23
       - name: Install Lavish for the authenticated browser review
         uses: ./.github/actions/install-lavish
-        timeout-minutes: 5
+        timeout-minutes: 7
         with:
           version: 0.1.97
       - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/board/**/*.test.ts"
