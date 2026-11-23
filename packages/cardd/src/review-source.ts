@@ -3,9 +3,9 @@ import type { DatabaseSync } from "node:sqlite";
 import { check, type Entry } from "@fleet/protocol";
 import Type, { type Static } from "typebox";
 import { WebSocket } from "ws";
-import { recordedUpstream, reviewDecision, reviewPreview } from "./review-completion.ts";
+import { heldUpstream, reviewDecision, reviewPreview } from "./review-completion.ts";
 import { lavishRequest } from "./review-session.ts";
-import { factsFrom, type Hold } from "./status.ts";
+import { factsFrom } from "./status.ts";
 import { addEntry, cardEntries, transaction, workerOf } from "./store.ts";
 
 const AUTHOR = "lavish";
@@ -95,15 +95,19 @@ interface Identity {
 }
 
 function bound(
-  hold: Hold | undefined,
+  entries: readonly Entry[],
   { source, requests }: Identity,
   origins: ReadonlyMap<string, string>,
 ): boolean {
+  const hold = factsFrom(entries).hold;
+  if (hold === undefined) return false;
+  const confirmed = entries.findLast(
+    ({ id, author, kind, fields }) =>
+      id > hold.entry && author === "fleet" && kind === "note" && fields["fleetReview"] === true,
+  )?.fields["upstream"];
   return (
-    hold !== undefined &&
-    (recordedUpstream(hold) === source.href ||
-      reviewPreview(hold, origins, Infinity)?.href === source.href) &&
-    JSON.stringify(hold.reviewRequests ?? []) === JSON.stringify(requests)
+    heldUpstream(hold, typeof confirmed === "string" ? confirmed : undefined, origins) ===
+      source.href && JSON.stringify(hold.reviewRequests ?? []) === JSON.stringify(requests)
   );
 }
 
@@ -119,10 +123,7 @@ function epochNotices(
       kind === "note" &&
       fields["fleetReview"] === true &&
       fields["upstream"] !== identity.source.href;
-    if (
-      elsewhere ||
-      (HOLD_KINDS.has(kind) && !bound(factsFrom(entries.slice(0, at + 1)).hold, identity, origins))
-    )
+    if (elsewhere || (HOLD_KINDS.has(kind) && !bound(entries.slice(0, at + 1), identity, origins)))
       start = id;
   });
   return entries.filter(

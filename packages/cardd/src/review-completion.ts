@@ -135,6 +135,12 @@ function reviewRequests(
   return requests.map((request) => request.id);
 }
 
+function carriedReview(open: Hold | undefined) {
+  const carried = { review: open?.review, reviewRequests: open?.reviewRequests };
+  const reviewUpstream = open?.review === undefined ? undefined : resolvedUpstream(open.review);
+  return { fields: { ...carried, reviewUpstream }, compare: carried };
+}
+
 export function boundReview(
   db: DatabaseSync,
   session: Session,
@@ -144,12 +150,7 @@ export function boundReview(
   protectedWork: boolean,
   review: string | false | undefined,
 ) {
-  const carried = {
-    review: open?.review,
-    reviewRequests: open?.reviewRequests,
-    reviewUpstream: open?.reviewUpstream,
-  };
-  if (review === undefined) return { fields: carried, compare: carried };
+  if (review === undefined) return carriedReview(open);
   const second = parentOf(db, session.lane) !== null;
   if (target !== (second ? "main" : "captain") || (review !== false && protectedWork))
     throw new Error("only a hold on its way to the captain can be bound for review alone");
@@ -204,6 +205,11 @@ export function reviewPreview(
   return upstream === undefined ? undefined : new URL(reported.pathname, upstream);
 }
 
-export function recordedUpstream(hold: Hold): string | undefined {
-  return reviewLink(hold, Infinity) === undefined ? undefined : hold.reviewUpstream;
+export function heldUpstream(
+  hold: Hold,
+  confirmed: string | undefined,
+  origins: ReadonlyMap<string, string>,
+): string | undefined {
+  if (reviewLink(hold, Infinity) === undefined) return undefined;
+  return confirmed ?? hold.reviewUpstream ?? reviewPreview(hold, origins, Infinity)?.href;
 }

@@ -37,6 +37,21 @@ export async function reviewSource(t: TestContext) {
   return { origin, key, file };
 }
 
+export async function secondSource(
+  t: TestContext,
+  file: string,
+  key: string | undefined,
+): Promise<URL> {
+  const lavish = await Lavish.start(tempDir("fleet-review-second-"));
+  t.after(() => lavish.stop());
+  const origin = new URL(`http://127.0.0.1:${lavish.env["LAVISH_AXI_PORT"] ?? ""}`);
+  if (key === undefined) return origin;
+  const opened = await post(origin, "/api/sessions", { file });
+  assert.ok(typeof opened === "object" && opened !== null && "key" in opened);
+  assert.equal(opened.key, key);
+  return origin;
+}
+
 export async function labFor(t: TestContext, key: string, upstream: string, title: string) {
   const site = await Site.start();
   t.after(() => site.issuer.stop());
