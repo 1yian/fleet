@@ -56,6 +56,7 @@ export function useChanges(onLost: () => void): number {
     let socket: WebSocket | undefined;
     let stopped = false;
     const open = (): void => {
+      if (stopped) return;
       socket = new WebSocket(
         `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/live`,
       );
