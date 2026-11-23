@@ -130,6 +130,10 @@ test("successive stock Lavish submissions reach the Fleet worker inbox once per 
       .map(({ entry }) => entry.id),
     receipts.map(({ id }) => id),
   );
+  const shown = JSON.stringify(await cardd.thread(card.id));
+  assert.ok(!shown.includes(origin.origin));
+  assert.ok(!shown.includes("fleetReview"));
+  assert.ok(!shown.includes("review-feedback"));
 });
 
 test("an empty Send & End is one live session end that a later round never inherits", async (t) => {
