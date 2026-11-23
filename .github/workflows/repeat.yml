@@ -47,7 +47,7 @@ jobs:
         uses: ./.github/actions/install-herdr
       - name: Install direnv
         uses: ./.github/actions/install-direnv
-        timeout-minutes: 5
+        timeout-minutes: 7
       - name: Install Lavish for the review tests
         uses: ./.github/actions/install-lavish
         timeout-minutes: 5
