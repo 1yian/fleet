@@ -1,0 +1,17 @@
+name: Install Node
+description: Installs the pinned and verified Node release, including npm, into the job's PATH.
+runs:
+  using: composite
+  steps:
+    - id: download
+      uses: ./.github/actions/download
+      with:
+        url: https://nodejs.org/dist/v24.22.3/node-v24.22.3-linux-x64.tar.xz
+        sha256: 4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb
+    - shell: bash
+      env:
+        ASSET: ${{ steps.download.outputs.path }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/node"
+        tar -xJf "$ASSET" -C "$RUNNER_TEMP/node" --strip-components=1
+        echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"

@@ -12,6 +12,13 @@ on:
       rounds:
         description: Rounds per shard
         default: "3"
+      lavish:
+        description: The locked Lavish release to install, 0.1.90 for the extension tests and 0.1.97 for the board tests
+        type: choice
+        options:
+          - 0.1.90
+          - 0.1.97
+        default: 0.1.90
 
 permissions:
   contents: read
@@ -19,6 +26,7 @@ permissions:
 env:
   TESTS: ${{ inputs.tests || 'e2e/extension/**/*.test.ts' }}
   ROUNDS: ${{ inputs.rounds || '3' }}
+  LAVISH: ${{ inputs.lavish || '0.1.90' }}
 
 jobs:
   shard:
@@ -29,25 +37,22 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: ./.github/actions/install
       - run: bun run build
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
         timeout-minutes: 15
       - name: Install herdr
-        env:
-          HERDR_VERSION: 0.9.5
-          HERDR_SHA256: 14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d
-        run: |
-          curl -fsSL -o herdr "https://github.com/herdrdev/herdr/releases/download/v${HERDR_VERSION}/herdr-linux-x86_64"
-          echo "${HERDR_SHA256}  herdr" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/bin"
-          chmod +x herdr && mv herdr "$RUNNER_TEMP/bin/herdr"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+        uses: ./.github/actions/install-herdr
       - name: Install direnv
         uses: ./.github/actions/install-direnv
         timeout-minutes: 5
+      - name: Install Lavish for the review tests
+        uses: ./.github/actions/install-lavish
+        timeout-minutes: 5
+        with:
+          version: ${{ env.LAVISH }}
       - name: Run the tests ${{ env.ROUNDS }} times
         run: |
           set -o pipefail

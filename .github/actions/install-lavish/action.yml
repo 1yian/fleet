@@ -1,0 +1,29 @@
+name: Install Lavish
+description: Installs a Lavish release and its whole dependency graph from the committed lockfile for that version, with bounded npm fetch retries.
+inputs:
+  version:
+    description: Lavish release version, which must have a directory beside this action holding its package.json and package-lock.json
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/fleet-npm
+        key: lavish-npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('.github/actions/install-lavish/{0}/package-lock.json', inputs.version)) }}
+    - shell: bash
+      env:
+        LOCKED: ${{ github.action_path }}/${{ inputs.version }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/lavish"
+        cp "$LOCKED/package.json" "$LOCKED/package-lock.json" "$RUNNER_TEMP/lavish/"
+        npm ci --prefix "$RUNNER_TEMP/lavish" --cache "$RUNNER_TEMP/fleet-npm" \
+          --ignore-scripts --no-audit --no-fund --prefer-offline \
+          --fetch-retries=2 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=3000 --fetch-timeout=30000
+        echo "$RUNNER_TEMP/lavish/node_modules/.bin" >> "$GITHUB_PATH"
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/fleet-npm
+        key: ${{ steps.cache.outputs.cache-primary-key }}

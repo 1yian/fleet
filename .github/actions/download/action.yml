@@ -1,0 +1,71 @@
+name: Download verified release
+description: Restores or downloads a pinned release asset and checks its SHA-256 before use.
+inputs:
+  url:
+    description: Release asset URL
+    required: true
+  sha256:
+    description: Expected SHA-256
+    required: true
+  fallback-url:
+    description: Optional second URL for the same asset, tried when the first URL fails to deliver bytes matching the SHA-256
+    default: ""
+  retries:
+    description: Retries after a failed attempt
+    default: "3"
+  retry-delay:
+    description: Seconds between retries, where 0 lets curl back off exponentially
+    default: "0"
+  max-time:
+    description: Seconds allowed for one transfer attempt
+    default: "45"
+  retry-max-time:
+    description: Seconds after which no further attempt starts
+    default: "60"
+outputs:
+  path:
+    description: Path to the verified asset
+    value: ${{ steps.asset.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/fleet-downloads/${{ inputs.sha256 }}
+        key: release-${{ runner.os }}-${{ runner.arch }}-${{ inputs.sha256 }}
+    - id: asset
+      shell: bash
+      env:
+        URL: ${{ inputs.url }}
+        SHA256: ${{ inputs.sha256 }}
+        FALLBACK_URL: ${{ inputs.fallback-url }}
+        RETRIES: ${{ inputs.retries }}
+        RETRY_DELAY: ${{ inputs.retry-delay }}
+        MAX_TIME: ${{ inputs.max-time }}
+        RETRY_MAX_TIME: ${{ inputs.retry-max-time }}
+        CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        dir="$RUNNER_TEMP/fleet-downloads/$SHA256"
+        file="$dir/${URL##*/}"
+        if [[ "$CACHE_HIT" != true ]]; then
+          mkdir -p "$dir"
+          fetched=false
+          for candidate in "$URL" ${FALLBACK_URL:+"$FALLBACK_URL"}; do
+            if curl -fsSL --retry "$RETRIES" --retry-all-errors --retry-delay "$RETRY_DELAY" --connect-timeout 10 --max-time "$MAX_TIME" --retry-max-time "$RETRY_MAX_TIME" -o "$file.part" "$candidate" \
+              && printf '%s  %s\n' "$SHA256" "$file.part" | sha256sum --check; then
+              fetched=true
+              break
+            fi
+            echo "::warning title=download::$candidate did not deliver the pinned asset"
+          done
+          [[ "$fetched" == true ]] || exit 1
+          mv "$file.part" "$file"
+        fi
+        printf '%s  %s\n' "$SHA256" "$file" | sha256sum --check
+        echo "path=$file" >> "$GITHUB_OUTPUT"
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ runner.temp }}/fleet-downloads/${{ inputs.sha256 }}
+        key: ${{ steps.cache.outputs.cache-primary-key }}

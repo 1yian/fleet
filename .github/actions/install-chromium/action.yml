@@ -1,14 +1,51 @@
 name: Install Chromium
-description: Installs the Chromium that Playwright drives, from a cache when it can, and then only the system packages that the runner lacks.
+description: Stages the Chromium, headless shell, and ffmpeg builds that the locked Playwright package expects from SHA-256 verified archives so its installer downloads nothing, then only the system packages that the runner lacks.
 runs:
   using: composite
   steps:
     - id: playwright
       shell: bash
-      run: echo "version=$(bunx playwright --version | awk '{ print $NF }')" >> "$GITHUB_OUTPUT"
-    - uses: actions/cache@v6
+      run: |
+        version="$(bunx --no-install playwright --version)"
+        if [[ "$version" != "Version 1.64.1" ]]; then
+          echo "::error title=install-chromium::The locked Playwright is ${version#Version }, but the pinned Chromium archives belong to Playwright 1.64.1 (Chromium 156.0.8078.4, revision 1248, ffmpeg revision 1013). Update the archives, their SHA-256 values, and that revision in this action together."
+          exit 1
+        fi
+        echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/fleet-chromium" >> "$GITHUB_ENV"
+    - id: chrome
+      uses: ./.github/actions/download
       with:
-        path: ~/.cache/ms-playwright
-        key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+        url: https://cdn.playwright.dev/builds/cft/156.0.8078.4/linux64/chrome-linux64.zip
+        sha256: 43fd31766c7533a02dda2ded5ad50c2f861cd5400be7509c0abad71129f79d79
+        max-time: "150"
+        retry-max-time: "240"
+    - id: headless-shell
+      uses: ./.github/actions/download
+      with:
+        url: https://cdn.playwright.dev/builds/cft/156.0.8078.4/linux64/chrome-headless-shell-linux64.zip
+        sha256: c3e50596aef52c58f8fda3c6b3411c33d34c88b177b3ed1c2243359fd3b8ba20
+        max-time: "150"
+        retry-max-time: "240"
+    - id: ffmpeg
+      uses: ./.github/actions/download
+      with:
+        url: https://cdn.playwright.dev/builds/ffmpeg/1013/ffmpeg-linux.zip
+        fallback-url: https://playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/ffmpeg/1013/ffmpeg-linux.zip
+        sha256: ee986434d158f74fb5d9c5ff1092026ceedb63f324fe90b5be89460926b7b679
     - shell: bash
-      run: ${{ github.action_path }}/install.sh
+      env:
+        CHROME: ${{ steps.chrome.outputs.path }}
+        HEADLESS_SHELL: ${{ steps.headless-shell.outputs.path }}
+        FFMPEG: ${{ steps.ffmpeg.outputs.path }}
+      run: |
+        root="$RUNNER_TEMP/fleet-chromium"
+        mkdir -p "$root/chromium-1248" "$root/chromium_headless_shell-1248" "$root/ffmpeg-1013"
+        unzip -q -o "$CHROME" -d "$root/chromium-1248"
+        unzip -q -o "$HEADLESS_SHELL" -d "$root/chromium_headless_shell-1248"
+        unzip -q -o "$FFMPEG" -d "$root/ffmpeg-1013"
+        chmod 755 "$root/chromium-1248/chrome-linux64/chrome" "$root/chromium_headless_shell-1248/chrome-headless-shell-linux64/chrome-headless-shell" "$root/ffmpeg-1013/ffmpeg-linux"
+        touch "$root/chromium-1248/INSTALLATION_COMPLETE" "$root/chromium_headless_shell-1248/INSTALLATION_COMPLETE" "$root/ffmpeg-1013/INSTALLATION_COMPLETE"
+    - shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: "$ACTION_PATH/install.sh"
