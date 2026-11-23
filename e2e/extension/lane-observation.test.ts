@@ -58,6 +58,7 @@ test("local maintenance never starts from a failed, blank, partial, or timed-out
 });
 
 test("missing nested pane or process fields neither start nor hold a lane", () => {
+  useSteadyPi();
   assert.deepEqual(maintain(), action("ops", "started"));
   const home = `${here.root}.worktrees/lane-ops`;
   const startsFile = join(home, "state", "starts");
@@ -96,6 +97,7 @@ test("a workspace omitted once neither restarts nor crash-holds a running mate",
 });
 
 test("status, placement, restart and stop confirm a one-off workspace omission", async () => {
+  useSteadyPi();
   assert.deepEqual(maintain(), action("ops", "started"));
   const original = (await workspace("ops"))?.["workspace_id"];
   assert.ok(typeof original === "string");
@@ -225,6 +227,7 @@ test("an idle split workspace is unread until only one pane remains", async () =
 });
 
 test("restart-all restarts a held current-title mate in a non-first pane", async () => {
+  useSteadyPi();
   const home = `${here.root}.worktrees/lane-ops`;
   const root = await idlePane("ops", home);
   const before = (await workspace("ops"))?.["workspace_id"];
