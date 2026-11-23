@@ -42,7 +42,7 @@ jobs:
       - run: bun run build
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
-        timeout-minutes: 15
+        timeout-minutes: 23
       - name: Install herdr
         uses: ./.github/actions/install-herdr
       - name: Install direnv

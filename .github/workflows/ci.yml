@@ -225,7 +225,7 @@ jobs:
       - run: bun run build
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
-        timeout-minutes: 15
+        timeout-minutes: 23
       - run: node e2e/run.ts --shard=${{ matrix.shard }}/9 "e2e/extension/**/*.test.ts"
 
   e2e-board:
@@ -239,7 +239,7 @@ jobs:
       - run: bun run build
       - name: Install Chromium
         uses: ./.github/actions/install-chromium
-        timeout-minutes: 15
+        timeout-minutes: 23
       - name: Install Lavish for the authenticated browser review
         uses: ./.github/actions/install-lavish
         timeout-minutes: 5
