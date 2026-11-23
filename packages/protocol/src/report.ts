@@ -15,6 +15,5 @@ export const REPORT_STATUSES = [
 ] as const;
 export const ReportStatus = Type.Enum(REPORT_STATUSES);
 export type ReportStatus = Static<typeof ReportStatus>;
-export const ReportPr = Type.Optional(
-  Type.String({ pattern: "^https://github\\.com/[^/\\s]+/[^/\\s]+/pull/[0-9]+$" }),
-);
+export const PR_PATTERN = "^https://github\\.com/[^/\\s]+/[^/\\s]+/pull/[0-9]+$";
+export const ReportPr = Type.Optional(Type.String({ pattern: PR_PATTERN }));

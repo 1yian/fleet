@@ -337,7 +337,8 @@ test("a hold is released with the captain's words, or with a mate's own decision
   await cleo.call("hold", ask(card));
 
   await assert.rejects(cleo.call("release", { card: card.id }), {
-    message: "clearing a hold needs the captain's exact words, or your own note, and not both",
+    message:
+      "clearing a hold needs exactly one of the captain's exact words, your own note, or retire with its evidence",
   });
   await fleet.main.call("release", { card: card.id, note: "The spec covers this. Decide it." });
   assert.equal(await status(cleo, card), "with-mate");

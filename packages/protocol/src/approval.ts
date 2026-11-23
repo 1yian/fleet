@@ -1,4 +1,5 @@
 import Type from "typebox";
+import { PR_PATTERN } from "./report.ts";
 
 export const APPROVE_MERGE = "Approve & merge";
 export const REQUEST_CHANGES = "Request changes";
@@ -10,6 +11,20 @@ export const ApprovesArg = Type.Optional(
       "Only on a card's open merge question: which of your options approve the merge, each one of options. The captain picking one approves it. Required when you rewrite its options: [] when none approves. His own words and any other option come to you to judge",
   }),
 );
+
+export const RetireReason = Type.String({
+  pattern: "\\S",
+  description:
+    "With supersededBy, on clear: why the hold no longer matters. It is not a decision and never approves anything",
+});
+export const SupersededBy = Type.Union(
+  [Type.Integer({ minimum: 1 }), Type.String({ pattern: PR_PATTERN })],
+  {
+    description:
+      "The card number or the full PR URL that replaced the gated action. A card must exist, differ from this one, and not be dropped. A PR must be recorded on another card",
+  },
+);
+export const RetireArg = Type.Object({ reason: RetireReason, supersededBy: SupersededBy });
 
 type Fields = Readonly<Record<string, unknown>>;
 
