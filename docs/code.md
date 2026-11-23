@@ -277,6 +277,10 @@ A scout closes Done only when the close names what happens next (`next-step.ts`)
 - A Pi that lacks one of the members makes the patch print `Fleet context limit: unavailable` and the worker keeps Pi's own limit. `e2e/extension/context-policy.test.ts` pins the behavior on the Pi version in [e2e/package.json](../e2e/package.json), so a Pi bump that moves a member fails it.
 - The footer's percentage still counts against the real window.
 
+### Lane browser relay
+
+Cardd exposes the browser directory feed, lane screencast and specific control operations through same-origin routes on the tailnet board. It forwards requests only to the configured fleet-browser stream listener, with a server-side token. The browser service still owns Chrome, agent exclusion and handoff state. The board waits for stream confirmation before it sends input.
+
 ### Historical browser compatibility
 
 Migration 029 drops the old `browser_tabs` table. Historical browser migrations remain append-only. `serve` still ignores a leftover `--browser` with a warning so old launch commands can start cardd.

@@ -22,6 +22,7 @@ export * from "./approval.ts";
 export { laidOut } from "./question.ts";
 export { CAPTAIN, howToReply } from "./reply.ts";
 export * from "./branch.ts";
+export * from "./browser.ts";
 export * from "./health.ts";
 export * from "./http.ts";
 export * from "./next.ts";
@@ -49,7 +50,6 @@ export {
   type JobLife,
   type JobState,
 } from "./jobs.ts";
-
 export const HOLDERS = ["owner", "main", "captain"] as const;
 const Holder = Type.Enum(HOLDERS);
 export type Holder = Static<typeof Holder>;
@@ -436,6 +436,7 @@ const ClientMessage = Type.Union([
 export type ClientMessage = Static<typeof ClientMessage>;
 
 export const BoardSchema = Type.Object({
+  browsers: Type.Optional(Type.Boolean()),
   cards: Type.Array(BoardCardSchema),
   holds: Type.Array(
     Type.Object({
@@ -454,7 +455,6 @@ export const BoardSchema = Type.Object({
 export type Board = Static<typeof BoardSchema>;
 export const ThreadSchema = Type.Object({ card: CardSchema, entries: Type.Array(EntrySchema) });
 export type Thread = Static<typeof ThreadSchema>;
-
 export const PushedEntrySchema = Type.Object({
   entry: EntrySchema,
   name: Type.String(),
