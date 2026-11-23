@@ -472,7 +472,7 @@ Clones keep up with their remote the way Firstmate's `fm-spawn.sh` and `fm-fleet
 
 ## Board
 
-- `App.tsx` reloads the board on every change and every 30 seconds, because a card's notice depends on the clock. It keeps only the newest load. It keeps what the captain started to write on each card when he goes back to the board.
+- `App.tsx` reloads the board on every change and every 30 seconds, because a card's notice depends on the clock. It runs one board read at a time, with a 10-second deadline, and queues a single follow-up read for changes that arrive meanwhile. It keeps what the captain started to write on each card when he goes back to the board.
 - `route.ts`: each card has its own address, `#/c-21`. Opening a card adds a history entry, so Back returns to the board where it was scrolled.
 - `ActiveWorkers.tsx` is the Active Workers tab at `#/workers`. It lists each worker card's current attempt from `activity`, across all lanes, in three groups: Working, Waiting, and Disconnected or stale (not yet connected, exited or lost, or running with no activity since `workerStaleBefore`, which `/api/board` sets to the stall limit before now). Mate and schedule-log cards are not listed. Leaving a list for a card or the other tab saves its scroll position, and Back or Forward restores it.
 - `format.ts` is pure. A card with a question for the captain needs him, whatever its status. The second mates' lane cards are the Mates group, not work.
