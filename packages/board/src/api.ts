@@ -15,8 +15,10 @@ export const unreachable = (error: unknown): string =>
 
 const BOARD_DEADLINE_MS = 10_000;
 
-export async function loadBoard(): Promise<Board> {
-  const response = await fetch("/api/board", { signal: AbortSignal.timeout(BOARD_DEADLINE_MS) });
+export async function loadBoard(cancel: AbortSignal): Promise<Board> {
+  const response = await fetch("/api/board", {
+    signal: AbortSignal.any([cancel, AbortSignal.timeout(BOARD_DEADLINE_MS)]),
+  });
   return check(BoardSchema, await response.json());
 }
 

@@ -20,16 +20,20 @@ function useBoard(tick: number, setNotice: (notice: string | undefined) => void)
   const loadFailed = useRef(false);
   const [available, setAvailable] = useState(false);
   const observing = useRef(false);
+  const inflight = useRef<AbortController | undefined>(undefined);
   const lose = useCallback(() => {
     epoch.current += 1;
+    inflight.current?.abort();
     setAvailable(false);
   }, []);
   const changes = useChanges(lose);
   const read = useCallback(async () => {
     if (!observing.current) return;
     const started = epoch.current;
+    const cancel = new AbortController();
+    inflight.current = cancel;
     try {
-      const loaded = await loadBoard();
+      const loaded = await loadBoard(cancel.signal);
       if (started !== epoch.current) return;
       setBoard(loaded);
       setAvailable(true);
@@ -53,7 +57,7 @@ function useBoard(tick: number, setNotice: (notice: string | undefined) => void)
       while (again) {
         queued.current = false;
         await read();
-        again = queued.current && observing.current;
+        again = queued.current;
       }
       reading.current = false;
     })();
