@@ -53,7 +53,7 @@ test("a paused report shows the card as paused with its time, and the next worki
 
 test("a paused report whose time has passed shows the card as working again", async () => {
   const { card, worker } = await working("short pause");
-  await worker.call("report", { status: "paused", text: "a moment", until: Date.now() + 300 });
+  await worker.call("report", { status: "paused", text: "a moment", until: Date.now() + 3000 });
   assert.equal((await onBoard(card)).status, "paused");
   const resumed = await settled(card, (each) => each.status === "working");
   assert.equal(resumed.until, null);
