@@ -120,8 +120,8 @@ test("a worker started in a workspace that already exists still runs under its a
   await waitUntilNamed("c-1-a1");
 
   assert.equal(typeof created, "string", "the fixture workspace id");
-  const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]).filter(
-    (each) => String(each["label"]).includes("run-the-tests"),
+  const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]).filter((each) =>
+    String(each["label"]).includes("run-the-tests"),
   );
   assert.deepEqual(
     workspaces.map((each) => each["workspace_id"]),
