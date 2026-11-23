@@ -158,6 +158,7 @@ export const CardViewSchema = Type.Object({
       model: Nullable(Type.String()),
     }),
   ),
+  takeover: Type.Optional(Type.Integer()),
   entries: Type.Array(EntrySchema),
 });
 export type CardView = Static<typeof CardViewSchema>;

@@ -54,6 +54,20 @@ export function reviewOrigins(
   return origins;
 }
 
+let known: ReadonlyMap<string, string> = new Map();
+
+export function setReviewOrigins(origins: ReadonlyMap<string, string>): void {
+  known = origins;
+}
+
+function resolvedUpstream(review: string | false): string | undefined {
+  const reported = review === false ? undefined : stockSession(review);
+  const upstream = reported === undefined ? undefined : known.get(reported.origin);
+  return reported === undefined || upstream === undefined
+    ? undefined
+    : new URL(reported.pathname, upstream).href;
+}
+
 export function reviewArtifactOrigin(
   raw: string | undefined,
   boardHost: string | undefined,
@@ -121,6 +135,12 @@ function reviewRequests(
   return requests.map((request) => request.id);
 }
 
+function carriedReview(open: Hold | undefined) {
+  const carried = { review: open?.review, reviewRequests: open?.reviewRequests };
+  const reviewUpstream = open?.review === undefined ? undefined : resolvedUpstream(open.review);
+  return { fields: { ...carried, reviewUpstream }, compare: carried };
+}
+
 export function boundReview(
   db: DatabaseSync,
   session: Session,
@@ -130,18 +150,15 @@ export function boundReview(
   protectedWork: boolean,
   review: string | false | undefined,
 ) {
-  const carried = { review: open?.review, reviewRequests: open?.reviewRequests };
-  if (review === undefined) return { fields: carried, compare: carried, notifyWorker: false };
+  if (review === undefined) return carriedReview(open);
   const second = parentOf(db, session.lane) !== null;
   if (target !== (second ? "main" : "captain") || (review !== false && protectedWork))
     throw new Error("only a hold on its way to the captain can be bound for review alone");
   const requests = reviewRequests(entries, open, review);
   const compare = { review: review === false ? undefined : review, reviewRequests: requests };
-  const fleetReview = review === false ? {} : { fleetReview: true };
   return {
-    fields: { review, reviewRequests: requests, ...fleetReview },
+    fields: { review, reviewRequests: requests, reviewUpstream: resolvedUpstream(review) },
     compare,
-    notifyWorker: review !== false,
   };
 }
 
@@ -165,11 +182,7 @@ export function reviewDecision(entries: readonly Entry[], hold: Hold) {
   );
 }
 
-export function reviewPreview(
-  hold: Hold,
-  origins: ReadonlyMap<string, string>,
-  now: number,
-): URL | undefined {
+function reviewLink(hold: Hold, now: number): URL | undefined {
   if (
     hold.review === undefined ||
     hold.holder !== "captain" ||
@@ -178,8 +191,25 @@ export function reviewPreview(
     holdDeferred(hold, now)
   )
     return undefined;
-  const reported = stockSession(hold.review);
+  return stockSession(hold.review);
+}
+
+export function reviewPreview(
+  hold: Hold,
+  origins: ReadonlyMap<string, string>,
+  now: number,
+): URL | undefined {
+  const reported = reviewLink(hold, now);
   if (reported === undefined) return undefined;
   const upstream = origins.get(reported.origin);
   return upstream === undefined ? undefined : new URL(reported.pathname, upstream);
+}
+
+export function heldUpstream(
+  hold: Hold,
+  confirmed: string | undefined,
+  origins: ReadonlyMap<string, string>,
+): string | undefined {
+  if (reviewLink(hold, Infinity) === undefined) return undefined;
+  return confirmed ?? hold.reviewUpstream ?? reviewPreview(hold, origins, Infinity)?.href;
 }

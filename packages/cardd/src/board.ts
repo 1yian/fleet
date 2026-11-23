@@ -81,8 +81,10 @@ function requireCaptainsHold(db: DatabaseSync, card: Card, seen: number): Hold {
 }
 
 const MATES_ONLY: ReadonlySet<string> = new Set(["job-result", "finding", "review-feedback"]);
+const takeoverNote = (entry: Entry): boolean =>
+  entry.author === "fleet" && entry.kind === "note" && entry.fields["fleetReview"] === true;
 const inThread = (entry: Entry): boolean =>
-  !MATES_ONLY.has(entry.kind) && entry.fields["maintenance"] !== "batch";
+  !MATES_ONLY.has(entry.kind) && entry.fields["maintenance"] !== "batch" && !takeoverNote(entry);
 
 const forCaptain = (entry: Entry, laneCard: boolean): boolean =>
   inThread(entry) &&
@@ -263,7 +265,9 @@ export function thread(db: DatabaseSync, id: number): Thread {
       ...entry,
       body: withoutPaths(entry.body, paths),
       fields: Object.fromEntries(
-        Object.entries(entry.fields).filter(([key]) => key !== "evidence"),
+        Object.entries(entry.fields).filter(
+          ([key]) => key !== "evidence" && key !== "reviewUpstream",
+        ),
       ),
     })),
   };

@@ -8,6 +8,7 @@ import { boardAction, boardView, StaleCard, thread } from "./board.ts";
 import { reviewArtifactOrigin } from "./review-completion.ts";
 import { REVIEW_BODY_LIMIT } from "./review-page.ts";
 import { Reviews } from "./review-rounds.ts";
+import { SourceReviews } from "./review-source.ts";
 import { getCard, transaction } from "./store.ts";
 import type { Timings } from "./timing.ts";
 import { version } from "./version.ts";
@@ -149,6 +150,7 @@ export class Web {
   private readonly flush: (session: string) => void;
   private readonly files: string | undefined;
   private readonly timing: Timings;
+  private readonly sourceReviews: SourceReviews;
 
   constructor(
     db: DatabaseSync,
@@ -169,6 +171,8 @@ export class Web {
       reviewOrigins,
     );
     this.reviews = new Reviews(db, reviewOrigins, artifactOrigin);
+    this.sourceReviews = new SourceReviews(db, reviewOrigins, flush);
+    this.sourceReviews.refresh();
   }
 
   async answerArtifact(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
@@ -183,8 +187,17 @@ export class Web {
     socket.on("close", () => this.live.delete(socket));
   }
 
+  takeover(card: number): number | undefined {
+    return this.sourceReviews.takeover(card);
+  }
+
+  refreshReviews(): void {
+    this.sourceReviews.refresh();
+  }
+
   changed(urgent = false): void {
     this.reviews.retire();
+    this.refreshReviews();
     if (this.quiet !== undefined && !urgent) {
       this.pending = true;
       return;

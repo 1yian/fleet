@@ -1,0 +1,399 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { check, OPS } from "@fleet/protocol";
+import { ageDated, begin, newCard } from "../support/fleet.ts";
+import { Lavish } from "../support/lavish.ts";
+import {
+  labFor,
+  post,
+  reviewSource,
+  takeoverOf,
+  verdictOf,
+  viaEdge,
+} from "../support/review-source-lab.ts";
+import { tempDir } from "../support/run-root.ts";
+
+test("a verdict queued before a bind or between rounds never crosses to a new review key", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const { cardd, main, card, token, bind } = await labFor(t, key, origin.origin, "Boundary");
+  const worker = await cardd.connect(token);
+  await post(origin, `/api/${key}/prompts`, verdictOf("Before any bind"));
+  await bind(worker, "review-one");
+  await worker.waitForEntry((entry) => entry.fields["fleetReview"] === true, "review-one notice");
+  await post(origin, `/api/${key}/prompts`, verdictOf("Round one verdict"));
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Round one verdict",
+    "the round one verdict",
+  );
+  const view = async () => check(OPS.card.result, await main.call("card", { card: card.id }));
+  const hold = (await view()).hold;
+  assert.ok(hold);
+  assert.equal(
+    await cardd.act(card.id, {
+      kind: "answer",
+      hold: hold.entry,
+      choice: "Continue",
+      written: true,
+    }),
+    200,
+  );
+  await post(origin, `/api/${key}/prompts`, verdictOf("Late for round one"));
+  await bind(worker, "review-two");
+  await worker.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true && entry.body === "review-two",
+    "review-two notice",
+  );
+  await post(origin, `/api/${key}/prompts`, verdictOf("Round two verdict"));
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Round two verdict",
+    "the round two verdict",
+  );
+  const receipts = (await view()).entries.filter((entry) => entry.kind === "review-feedback");
+  assert.deepEqual(
+    receipts.map((entry) => [entry.body, entry.fields["reviewKeys"]]),
+    [
+      ["Round one verdict", ["review-one"]],
+      ["Round two verdict", ["review-two"]],
+    ],
+  );
+});
+
+test("repeated End requests are not new ends and an end that cannot be tied to a verdict stays unknown", async (t) => {
+  const { origin, key, file } = await reviewSource(t);
+  const { cardd, main, card, token, bind } = await labFor(t, key, origin.origin, "Repeat end");
+  const worker = await cardd.connect(token);
+  await bind(worker, "review-repeat");
+  await worker.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the notice");
+  await post(origin, `/api/${key}/prompts`, verdictOf("Before the end"));
+  await post(origin, `/api/${key}/prompts`, { prompts: [], endSession: true });
+  await post(origin, `/api/${key}/end`, {});
+  await post(origin, `/api/${key}/end`, {});
+  await post(origin, "/api/sessions", { file, reopen: true });
+  await post(origin, `/api/${key}/prompts`, verdictOf("Open again"));
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Open again",
+    "the verdict after reopening",
+  );
+  const { entries } = check(OPS.card.result, await main.call("card", { card: card.id }));
+  const receipts = entries
+    .filter((entry) => entry.kind === "review-feedback")
+    .map((entry) => [entry.body, entry.fields["sessionEnded"]]);
+  assert.deepEqual(receipts, [
+    ["Before the end", false],
+    ["", true],
+    ["Open again", null],
+  ]);
+});
+
+test("a session taken over already ended and reopened is never reported as still open", async (t) => {
+  const { origin, key, file } = await reviewSource(t);
+  const { cardd, main, card, token, bind } = await labFor(t, key, origin.origin, "Reopened");
+  await post(origin, `/api/${key}/end`, {});
+  const worker = await cardd.connect(token);
+  await bind(worker, "review-reopened");
+  await worker.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the notice");
+  await post(origin, "/api/sessions", { file, reopen: true });
+  await post(origin, `/api/${key}/prompts`, {
+    prompts: [{ uid: "1", tag: "verdict", prompt: "Final after reopening", selector: "#v" }],
+    endSession: true,
+  });
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Final after reopening",
+    "the final verdict after reopening",
+  );
+  const { entries } = check(OPS.card.result, await main.call("card", { card: card.id }));
+  assert.deepEqual(
+    entries
+      .filter((entry) => entry.kind === "review-feedback")
+      .map((entry) => [entry.body, entry.fields["sessionEnded"]]),
+    [["Final after reopening", null]],
+  );
+});
+
+test("a deferred hold that never took over does not keep the source from another card", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const { edge, upstream } = await viaEdge(t, origin);
+  const probe = edge.hold("/layout-warnings");
+  const { cardd, main, card, token, review, bind } = await labFor(t, key, upstream, "Never took");
+  const first = await cardd.connect(token);
+  await bind(first, "review-never");
+  await probe.arrived;
+  const hold = check(OPS.card.result, await main.call("card", { card: card.id })).hold;
+  assert.ok(hold);
+  const later = { kind: "hold", hold: hold.entry, said: "in 3 hours", zone: "UTC" } as const;
+  assert.equal(await cardd.act(card.id, later), 200);
+  probe.release();
+  const other = await newCard(main, "Takes over", "scout");
+  const second = await cardd.connect(await begin(main, other));
+  await second.call("report", { status: "needs-decision", key: "review-other", text: review });
+  await main.call("hold", { card: other.id, to: "captain", question: "other", review });
+  await second.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true,
+    "the other card taking over while the first never had",
+  );
+  const { entries } = check(OPS.card.result, await main.call("card", { card: card.id }));
+  assert.deepEqual(
+    entries.filter((entry) => entry.fields["fleetReview"] === true),
+    [],
+  );
+});
+
+test("editing only a hold's question keeps its source baseline and listener", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const { cardd, main, card, token, bind } = await labFor(t, key, origin.origin, "Edit");
+  const worker = await cardd.connect(token);
+  await bind(worker, "review-edit");
+  await worker.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the notice");
+  await main.call("hold", { card: card.id, to: "captain", question: "Edited wording" });
+  await post(origin, `/api/${key}/prompts`, verdictOf("Sent right after the edit"));
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Sent right after the edit",
+    "the verdict sent after the edit",
+  );
+  const { entries } = check(OPS.card.result, await main.call("card", { card: card.id }));
+  assert.deepEqual(
+    entries
+      .filter((entry) => entry.kind === "review-feedback")
+      .map((entry) => [entry.body, entry.fields["reviewKeys"]]),
+    [["Sent right after the edit", ["review-edit"]]],
+  );
+  assert.equal(entries.filter((entry) => entry.fields["fleetReview"] === true).length, 1);
+});
+
+test("one stock session is owned by one card at a time and never leaks to the other", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const { cardd, main, card, token, review, bind } = await labFor(t, key, origin.origin, "First");
+  const first = await cardd.connect(token);
+  await bind(first, "review-first");
+  await first.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the first notice");
+  const other = await newCard(main, "Second", "scout");
+  const second = await cardd.connect(await begin(main, other));
+  await second.call("report", {
+    status: "needs-decision",
+    key: "review-second",
+    text: `Ready: ${review}`,
+  });
+  await main.call("hold", { card: other.id, to: "captain", question: "second", review });
+  await post(origin, `/api/${key}/prompts`, verdictOf("Meant for the first card"));
+  await first.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Meant for the first card",
+    "the verdict on the first card",
+  );
+  const view = async () => check(OPS.card.result, await main.call("card", { card: card.id }));
+  const hold = (await view()).hold;
+  assert.ok(hold);
+  assert.equal(
+    await cardd.act(card.id, { kind: "answer", hold: hold.entry, choice: "Done", written: true }),
+    200,
+  );
+  await second.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true,
+    "the second card taking over once the first released the session",
+  );
+  assert.deepEqual(
+    second.entries.filter(({ entry }) => entry.kind === "review-feedback"),
+    [],
+  );
+});
+
+test("a deferred card keeps its source and gets its own verdict when it returns", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const { cardd, main, card, token, review, bind } = await labFor(t, key, origin.origin, "Owner");
+  const first = await cardd.connect(token);
+  await bind(first, "review-owner");
+  await first.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the owner notice");
+  const view = async () => check(OPS.card.result, await main.call("card", { card: card.id }));
+  const hold = (await view()).hold;
+  assert.ok(hold);
+  const later = { kind: "hold", hold: hold.entry, said: "in 3 hours", zone: "UTC" } as const;
+  assert.equal(await cardd.act(card.id, later), 200);
+  const other = await newCard(main, "Competitor", "scout");
+  const second = await cardd.connect(await begin(main, other));
+  await second.call("report", {
+    status: "needs-decision",
+    key: "review-competitor",
+    text: `Ready: ${review}`,
+  });
+  await main.call("hold", { card: other.id, to: "captain", question: "competitor", review });
+  await post(origin, `/api/${key}/prompts`, verdictOf("Sent while the owner was deferred"));
+  ageDated(cardd, [card], 4 * 60 * 60 * 1000);
+  await view();
+  await first.waitForEntry(
+    (entry) =>
+      entry.kind === "review-feedback" && entry.body === "Sent while the owner was deferred",
+    "the verdict on the returning owner",
+  );
+  assert.deepEqual(
+    second.entries.filter(
+      ({ entry }) => entry.fields["fleetReview"] === true || entry.kind === "review-feedback",
+    ),
+    [],
+  );
+});
+
+test("a restart restores the card that already took over before a competing card is considered", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const lab = await labFor(t, key, origin.origin, "Older");
+  const { cardd, main, card, token, review, bind } = lab;
+  const older = await cardd.connect(token);
+  await bind(older, "review-older");
+  await older.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the older notice");
+  const olderHold = check(OPS.card.result, await main.call("card", { card: card.id })).hold;
+  assert.ok(olderHold);
+  assert.equal(
+    await cardd.act(card.id, {
+      kind: "answer",
+      hold: olderHold.entry,
+      choice: "Done",
+      written: true,
+    }),
+    200,
+  );
+  const current = await newCard(main, "Current owner", "scout");
+  const currentToken = await begin(main, current);
+  const owner = await cardd.connect(currentToken);
+  await owner.call("report", { status: "needs-decision", key: "review-owner", text: review });
+  await main.call("hold", { card: current.id, to: "captain", question: "owner", review });
+  await owner.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the owner notice");
+  await bind(older, "review-competing");
+  await owner.close();
+  await older.close();
+  await cardd.stop();
+  await cardd.restart();
+  const ownerAgain = await cardd.connect(currentToken);
+  const olderAgain = await cardd.connect(token);
+  await post(origin, `/api/${key}/prompts`, verdictOf("Meant for the current owner"));
+  await ownerAgain.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Meant for the current owner",
+    "the verdict on the restored owner",
+  );
+  assert.deepEqual(
+    olderAgain.entries.filter(
+      ({ entry }) => entry.body === "review-competing" || entry.kind === "review-feedback",
+    ),
+    [],
+  );
+});
+
+test("binding a card again after a board-only decision starts from a fresh baseline", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const { cardd, main, card, token, review, bind } = await labFor(t, key, origin.origin, "Again");
+  const first = await cardd.connect(token);
+  await bind(first, "review-again");
+  const firstNotice = await first.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true,
+    "the first notice",
+  );
+  assert.equal(await takeoverOf(main, card), firstNotice.id);
+  await main.call("hold", { card: card.id, to: "captain", question: "board only", review: false });
+  assert.equal(await takeoverOf(main, card), undefined);
+  const other = await newCard(main, "In between", "scout");
+  const between = await cardd.connect(await begin(main, other));
+  await between.call("report", { status: "needs-decision", key: "review-between", text: review });
+  await main.call("hold", { card: other.id, to: "captain", question: "between", review });
+  await between.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the other notice");
+  await post(origin, `/api/${key}/prompts`, verdictOf("Meant for the other card"));
+  await between.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Meant for the other card",
+    "the verdict on the other card",
+  );
+  const otherHold = check(OPS.card.result, await main.call("card", { card: other.id })).hold;
+  assert.ok(otherHold);
+  assert.equal(
+    await cardd.act(other.id, {
+      kind: "answer",
+      hold: otherHold.entry,
+      choice: "Done",
+      written: true,
+    }),
+    200,
+  );
+  await main.call("hold", { card: card.id, to: "captain", question: "rebound", review });
+  const reboundNotice = await first.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true && entry.body === "rebound",
+    "a new takeover after binding again",
+  );
+  assert.notEqual(reboundNotice.id, firstNotice.id);
+  assert.equal(await takeoverOf(main, card), reboundNotice.id);
+  assert.deepEqual(
+    first.entries.filter(({ entry }) => entry.kind === "review-feedback"),
+    [],
+  );
+});
+
+test("a replacement upstream behind the same link starts from its own baseline", async (t) => {
+  const { origin, key, file } = await reviewSource(t);
+  const { cardd, mainToken, card, token, reported, bind } = await labFor(
+    t,
+    key,
+    origin.origin,
+    "Remap",
+  );
+  const worker = await cardd.connect(token);
+  await bind(worker, "review-remap");
+  const firstNotice = await worker.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true,
+    "the notice",
+  );
+  const dir = tempDir("fleet-review-replacement-");
+  const lavish = await Lavish.start(dir);
+  t.after(() => lavish.stop());
+  const next = new URL(`http://127.0.0.1:${lavish.env["LAVISH_AXI_PORT"] ?? ""}`);
+  const opened = await post(next, "/api/sessions", { file });
+  assert.ok(typeof opened === "object" && opened !== null && "key" in opened);
+  assert.equal(opened.key, key);
+  await post(next, `/api/${key}/prompts`, verdictOf("History of the replacement"));
+  const { edge, upstream } = await viaEdge(t, next);
+  const probe = edge.hold("/layout-warnings");
+  await worker.close();
+  await cardd.stop();
+  cardd.env["CARDD_REVIEW_ORIGINS"] = `${reported}=${upstream}`;
+  await cardd.restart();
+  const again = await cardd.connect(token);
+  const mate = await cardd.connect(mainToken);
+  await probe.arrived;
+  assert.equal(await takeoverOf(mate, card), undefined);
+  probe.release();
+  const replacementNotice = await again.waitForEntry(
+    (entry) => entry.fields["upstream"] === `${upstream}/session/${key}`,
+    "the notice for the replacement upstream",
+  );
+  assert.notEqual(replacementNotice.id, firstNotice.id);
+  assert.equal(await takeoverOf(mate, card), replacementNotice.id);
+  await post(next, `/api/${key}/prompts`, verdictOf("Live on the replacement"));
+  await again.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Live on the replacement",
+    "the live verdict on the replacement",
+  );
+  assert.deepEqual(
+    again.entries
+      .filter(({ entry }) => entry.kind === "review-feedback")
+      .map(({ entry }) => entry.body),
+    ["Live on the replacement"],
+  );
+  await post(origin, `/api/${key}/prompts`, verdictOf("Sent to the first upstream meanwhile"));
+  await again.close();
+  await cardd.stop();
+  cardd.env["CARDD_REVIEW_ORIGINS"] = `${reported}=${origin.origin}`;
+  await cardd.restart();
+  const back = await cardd.connect(token);
+  await back.waitForEntry(
+    (entry) =>
+      entry.fields["upstream"] === `${origin.origin}/session/${key}` &&
+      entry.id > replacementNotice.id,
+    "a new takeover notice when the first upstream returns",
+  );
+  await post(origin, `/api/${key}/prompts`, verdictOf("Live on the first upstream again"));
+  await back.waitForEntry(
+    (entry) =>
+      entry.kind === "review-feedback" && entry.body === "Live on the first upstream again",
+    "the live verdict after returning",
+  );
+  assert.deepEqual(
+    back.entries
+      .filter(({ entry }) => entry.kind === "review-feedback")
+      .map(({ entry }) => entry.body)
+      .filter((body) => body !== "Live on the replacement"),
+    ["Live on the first upstream again"],
+  );
+});

@@ -113,15 +113,30 @@ export function format(entry: Entry, name: string, again = false): string {
 }
 
 function formatReview(entry: Entry, card: string): string | undefined {
-  if (entry.kind === "hold" && entry.fields["fleetReview"] === true)
-    return `[fleet] ${card} now has a Fleet-owned review. If you are the worker, stop any poll of the source session and wait for the Fleet inbox answer instead.\n${entry.body}`;
-  if (entry.kind !== "review-feedback" || field(entry, "source") !== "lavish") return undefined;
+  if (entry.kind === "note" && entry.fields["fleetReview"] === true)
+    return `[fleet] ${card} now has a Fleet-owned review inbox (takeover notice ${String(entry.id)}). If you are the worker, stop any poll of the source session and wait for feedback in the Fleet inbox instead. Only feedback the captain sends after this notice is relayed; anything sent to the source page before it is not forwarded. Feedback from the source page is informational and never clears the hold: after the captain's final verdict, including one that asks for another round, ask your mate to resolve the review key before you open the next round, even if the source session is still open.\n${entry.body}`;
+  if (entry.kind !== "review-feedback") return undefined;
+  const source = field(entry, "source");
+  if (source === "lavish-source") return formatSourceReview(entry, card);
+  if (source !== "lavish") return undefined;
   const notes = entry.fields["annotations"];
   const context =
     Array.isArray(notes) && notes.length > 0
       ? `\nInline annotations (with targets): ${JSON.stringify(notes)}`
       : "";
   return `[fleet] captain completed the Fleet review on ${card}: ${entry.body || "No notes."}${context}`;
+}
+
+function formatSourceReview(entry: Entry, card: string): string {
+  const reviewKeys: unknown = entry.fields["reviewKeys"];
+  const keys = Array.isArray(reviewKeys)
+    ? reviewKeys.filter((key) => typeof key === "string").join(", ")
+    : "";
+  const noted = "this does not approve or resolve the Fleet hold";
+  const ended = entry.fields["sessionEnded"];
+  if (ended === true) return `[fleet] Lavish session ended on ${card} [${keys}] (${noted}).`;
+  const state = ended === false ? "Lavish session still open" : "Lavish session state unknown";
+  return `[fleet] Lavish feedback on ${card} [${keys}] (${state}; ${noted}):\n${entry.body}`;
 }
 
 function formatOnce(entry: Entry, name: string): string {

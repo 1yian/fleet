@@ -36,6 +36,7 @@ export interface Hold {
   readonly entry: number;
   readonly review: string | undefined;
   readonly reviewRequests: readonly number[] | undefined;
+  readonly reviewUpstream: string | undefined;
 }
 
 export interface Basis {
@@ -68,13 +69,22 @@ interface Tally {
   pausedUntil: number | null;
 }
 
-function reviewOf(entry: Entry, open: Hold | undefined): Pick<Hold, "review" | "reviewRequests"> {
+function reviewOf(
+  entry: Entry,
+  open: Hold | undefined,
+): Pick<Hold, "review" | "reviewRequests" | "reviewUpstream"> {
   const review = entry.fields["review"];
   const requests = entry.fields["reviewRequests"];
   const carried = typeof review === "string" ? review : open?.review;
   return {
     review: review === false ? undefined : carried,
     reviewRequests: Array.isArray(requests) ? parseCards(requests) : open?.reviewRequests,
+    reviewUpstream:
+      review === false
+        ? undefined
+        : typeof review === "string"
+          ? text(entry, "reviewUpstream")
+          : open?.reviewUpstream,
   };
 }
 
@@ -133,6 +143,7 @@ function decide(tally: Tally, entry: Entry, key: string): void {
       entry: entry.id,
       review: undefined,
       reviewRequests: undefined,
+      reviewUpstream: undefined,
     };
   } else if (!open.keys.includes(key)) tally.hold = { ...open, keys: [...open.keys, key] };
 }

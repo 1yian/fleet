@@ -269,7 +269,7 @@ const remainingOf = (steps: Remaining): string[] | string =>
 const mergeOf = (hold: NonNullable<CardView["hold"]>): Record<string, unknown> =>
   hold.merge === true ? { merge: true, approves: hold.approves ?? [] } : {};
 
-function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
+function about({ card, hold, takeover }: CardView, clip: Cut): Record<string, unknown> {
   const record: Record<string, unknown> = {
     card: {
       id: card.id,
@@ -300,6 +300,7 @@ function about({ card, hold }: CardView, clip: Cut): Record<string, unknown> {
     question: clip(hold.question, 600),
     options: hold.options,
     ...mergeOf(hold),
+    ...(takeover === undefined ? {} : { takeover }),
     ...(hold.until === null ? {} : { until: ago(hold.until) }),
     ...(card.datedWait === null ? {} : { dated: waitLine(card.datedWait, Date.now()) }),
     ...(hold.until === null ? {} : { remaining: remainingOf(hold.remaining) }),

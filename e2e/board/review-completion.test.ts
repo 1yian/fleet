@@ -31,6 +31,7 @@ async function lavishSite(t: TestContext) {
   });
   const origin = `http://127.0.0.1:${lavish.env["LAVISH_AXI_PORT"] ?? ""}`;
   const upstream = await Edge.start(new URL(origin));
+  upstream.forwardOrigin = true;
   t.after(() => upstream.stop());
   const env = { ...process.env, ...lavish.env };
   const stock = (args: string[]) =>
@@ -88,7 +89,7 @@ async function fixture(t: TestContext) {
     const { file, session } = open(title);
     const card = await newCard(mate, title, "scout");
     const token = await begin(mate, card);
-    const worker = await cardd.connect(token);
+    const worker = await cardd.connect(token, [], false);
     const link = (source: string) => new URL(new URL(source).pathname, linkOrigin).href;
     const review = link(session);
     const ask = (url = review, key = "draft") =>
@@ -116,7 +117,10 @@ async function fixture(t: TestContext) {
     const path = (id: number) => `/review/${String(card.id)}/${String(id)}`;
     const view = async () => check(OPS.card.result, await mate.call("card", { card: card.id }));
     const answers = async () =>
-      (await view()).entries.filter(({ kind }) => kind === "review-feedback" || kind === "answer");
+      (await view()).entries.filter(
+        ({ kind, author }) =>
+          author === "captain" && (kind === "review-feedback" || kind === "answer"),
+      );
     const round = first.hold;
     return {
       card,
@@ -211,8 +215,21 @@ async function refusals(lab: Lab, target: Round, deferred: Round): Promise<void>
 async function startWorker(lab: Lab, target: Round, direct: Round): Promise<void> {
   const { mate, cardd, h } = lab;
   await target.worker.call("report", { status: "resolved", key: "draft", text: WORDS });
+  for (const round of [target, direct])
+    await round.worker.waitForEntry(
+      (entry) => entry.fields["fleetReview"] === true,
+      "the takeover before submitting to the source",
+    );
   await submitStock(target.session, false);
+  await target.worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.fields["sessionEnded"] === false,
+    "informational feedback from the open source",
+  );
   await submitStock(direct.session, true);
+  await direct.worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.fields["sessionEnded"] === true,
+    "informational feedback from the ended source",
+  );
   assert.equal(await status(mate, target.card), "needs-you");
   assert.equal(await status(mate, direct.card), "needs-you");
   await target.worker.close();
@@ -324,7 +341,7 @@ async function completeTarget(
   await page.waitForURL(HOME);
   const feedback = `${ANNOTATION}\n\n${WORDS}`;
   const receipt = await mate.waitForEntry(
-    (entry) => entry.kind === "review-feedback",
+    (entry) => entry.kind === "review-feedback" && entry.author === "captain",
     "the receipt",
   );
   assert.equal(receipt.body, feedback);
@@ -340,6 +357,10 @@ async function completeTarget(
     .map((turn) => turn.text)
     .join("\n");
   assert.match(seen, /stop any poll of the source session/);
+  assert.match(
+    seen,
+    /Lavish feedback on c-\d+ plan \[draft\] \(Lavish session still open; this does not approve or resolve the Fleet hold\):\nOrdinary Lavish feedback/,
+  );
   assert.match(seen, /captain completed the Fleet review on c-\d+ plan/);
   assert.ok(seen.includes(feedback));
   assert.match(seen, /Inline annotations \(with targets\): .*"tag":"h1".*"text":"Plan"/);

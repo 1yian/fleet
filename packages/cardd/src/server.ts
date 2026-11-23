@@ -6,6 +6,7 @@ import {
   CLOSE,
   HttpCallSchema,
   isOpName,
+  OPS,
   type HttpOutcome,
   parseClientMessage,
   type ClientMessage,
@@ -22,6 +23,7 @@ import { adoptProcess } from "./incidents.ts";
 import { sanitize } from "./incident-kinds.ts";
 import { expireJobStarts } from "./jobs.ts";
 import { performOp } from "./ops.ts";
+import { setReviewOrigins } from "./review-completion.ts";
 import { fillRepo, projectsWithoutRepo, type Hosts } from "./pulls.ts";
 import { findSession, setSessionState, transaction, type Session } from "./store.ts";
 import { Access, type AccessConfig } from "./access.ts";
@@ -114,6 +116,7 @@ class Hub {
     this.db = db;
     this.timing = timing;
     this.hosts = hosts;
+    setReviewOrigins(reviewOrigins);
     this.web = new Web(
       db,
       timing,
@@ -176,6 +179,7 @@ class Hub {
     const checked = performance.now();
     for (const recipient of notify) this.flush(recipient, false);
     if (notify.size > 0) this.web.changed();
+    else this.web.refreshReviews();
     const ended = performance.now();
     const parts: [string, number][] = [
       ["fillRepos", filled - started],
@@ -186,13 +190,19 @@ class Hub {
     this.health.tick(ended - started, slowest[0]);
   }
 
+  private withTakeover(value: unknown): unknown {
+    const view = check(OPS.card.result, value);
+    const takeover = this.web.takeover(view.card.id);
+    return takeover === undefined ? view : { ...view, takeover };
+  }
+
   async perform(session: Session, op: string, args: unknown): Promise<HttpOutcome> {
     try {
       if (!isOpName(op)) throw new Error(`unknown operation ${op}`);
       const done = await performOp(this.db, session, op, args, this.timing, this.hosts);
       for (const recipient of done.notify) this.flush(recipient, false);
       this.web.changed();
-      return { ok: true, value: done.value };
+      return { ok: true, value: op === "card" ? this.withTakeover(done.value) : done.value };
     } catch (error) {
       if (
         (op === "job.prepare" || op === "job.register") &&
