@@ -219,7 +219,7 @@ jobs:
         timeout-minutes: 7
       - name: Install Lavish for the extension review tests
         uses: ./.github/actions/install-lavish
-        timeout-minutes: 5
+        timeout-minutes: 7
         with:
           version: 0.1.90
       - run: bun run build
@@ -242,7 +242,7 @@ jobs:
         timeout-minutes: 23
       - name: Install Lavish for the authenticated browser review
         uses: ./.github/actions/install-lavish
-        timeout-minutes: 5
+        timeout-minutes: 7
         with:
           version: 0.1.97
       - run: node --test --test-timeout=300000 --test-concurrency=1 "e2e/board/**/*.test.ts"

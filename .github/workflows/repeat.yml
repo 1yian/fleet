@@ -50,7 +50,7 @@ jobs:
         timeout-minutes: 7
       - name: Install Lavish for the review tests
         uses: ./.github/actions/install-lavish
-        timeout-minutes: 5
+        timeout-minutes: 7
         with:
           version: ${{ env.LAVISH }}
       - name: Run the tests ${{ env.ROUNDS }} times
