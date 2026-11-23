@@ -60,6 +60,12 @@ afterEach(async (t) => {
 
 const squeezed = (text: string): string => text.replace(/\s+/g, "");
 
+const screenRows = async (pane: string): Promise<string[]> =>
+  (await lab.screen(pane)).split("\n").map((row) => row.trim());
+
+const inventoryRow = (missing: string[]): string =>
+  `Missing tiers (${String(missing.length)}): ${missing.join(", ")}`;
+
 async function waitForSurfaces(
   pane: string,
   status: string,
@@ -67,33 +73,47 @@ async function waitForSurfaces(
   missing: string[],
   label: string,
 ): Promise<void> {
-  const footer = squeezed(status);
   const widgetStatus = squeezed(`${status}: ${path}`);
   const heading = `Missing tiers (${String(missing.length)}): `;
-  const inventory = squeezed(`${heading}${missing.join(", ")}`);
+  const inventory = squeezed(inventoryRow(missing));
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
-    const lines = (await lab.screen(pane)).split("\n").map((line) => line.trim());
-    const screen = squeezed(lines.join("\n"));
-    const inventoryShown = lines.some(
-      (line, index) =>
-        line.startsWith(heading) && squeezed(lines.slice(index).join("\n")).startsWith(inventory),
-    );
-    if (screen.split(footer).length - 1 === 2 && screen.includes(widgetStatus) && inventoryShown)
+    const rows = await screenRows(pane);
+    const statusRows = rows.flatMap((row, index) => (row.includes(status) ? [index] : []));
+    const widgetAt = statusRows[0] ?? -1;
+    const footerAt = statusRows.length > 1 ? (statusRows[statusRows.length - 1] ?? -1) : -1;
+    const widgetRows = widgetAt < 0 || footerAt < 0 ? [] : rows.slice(widgetAt, footerAt);
+    const inventoryAt = widgetRows.findIndex((row) => row.startsWith(heading));
+    if (
+      footerAt > widgetAt &&
+      squeezed(widgetRows.join("\n")).startsWith(widgetStatus) &&
+      inventoryAt > 0 &&
+      squeezed(widgetRows.slice(inventoryAt).join("\n")).startsWith(inventory)
+    )
       return;
     assert.ok(
       Date.now() < deadline,
-      `timed out waiting for both the footer and the widget to show ${label}`,
+      `timed out waiting for the footer below the widget to show ${label}`,
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
 
-async function waitForScreenWithout(pane: string, unwanted: string, label: string): Promise<void> {
+async function waitForSurfacesCleared(
+  pane: string,
+  status: string,
+  missing: string[],
+  label: string,
+): Promise<void> {
+  const inventory = inventoryRow(missing);
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
-    if (!squeezed(await lab.screen(pane)).includes(squeezed(unwanted))) return;
-    assert.ok(Date.now() < deadline, `timed out waiting for the screen to drop ${label}`);
+    const rows = await screenRows(pane);
+    if (!rows.some((row) => row.includes(status) || row === inventory)) return;
+    assert.ok(
+      Date.now() < deadline,
+      `timed out waiting for the footer and widget to drop ${label}`,
+    );
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
@@ -135,7 +155,12 @@ test("main started directly with pi names every missing tier, does not join the 
   copyFileSync(template(), file);
   await lab.submit(pane, "/probe-reload");
   await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
-  await waitForScreenWithout(pane, "not joined - tiers", "the not-joined status");
+  await waitForSurfacesCleared(
+    pane,
+    "not joined - tiers",
+    ["nm-fixer", "reviewer"],
+    "the not-joined status",
+  );
 });
 
 test("main tells a missing tiers file from an invalid one in its status line", async () => {
