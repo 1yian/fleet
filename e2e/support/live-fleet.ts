@@ -60,10 +60,29 @@ interface Parts {
   readonly farHome: string;
   readonly site: string;
   readonly gates: string;
+  readonly app: Scratch | undefined;
 }
 
 export interface LiveOptions {
   readonly olderCode?: Skew;
+  readonly restartableCardd?: boolean;
+}
+
+async function startCardd(
+  here: Scratch,
+  remote: string,
+  options: LiveOptions,
+): Promise<{ cardd: Cardd; app: Scratch | undefined }> {
+  if (options.restartableCardd !== true) {
+    const cardd =
+      options.olderCode === undefined ? await Cardd.start() : await Cardd.underKeepAlive(here.root);
+    return { cardd, app: undefined };
+  }
+  const app = new Scratch("app");
+  git(app.root, "remote", "add", "origin", remote);
+  git(app.root, "fetch", "-q", "origin");
+  git(app.root, "reset", "-q", "--hard", "origin/main");
+  return { cardd: await Cardd.underKeepAlive(app.root), app };
 }
 
 export class LiveFleet {
@@ -80,6 +99,7 @@ export class LiveFleet {
   readonly farHome: string;
   readonly site: string;
   readonly gates: string;
+  private readonly app: Scratch | undefined;
   private readonly olderCode: Skew | undefined;
   mainPane = "";
 
@@ -98,6 +118,7 @@ export class LiveFleet {
     this.farHome = parts.farHome;
     this.site = parts.site;
     this.gates = parts.gates;
+    this.app = parts.app;
   }
 
   static async start(
@@ -110,10 +131,9 @@ export class LiveFleet {
       ownWorkspacePackages(here.root);
       olderCode.demand(here.root);
     }
-    const cardd =
-      olderCode === undefined ? await Cardd.start() : await Cardd.underKeepAlive(here.root);
-    const h = await Harness.start();
     const remote = addRemote(here.root);
+    const { cardd, app } = await startCardd(here, remote, options);
+    const h = await Harness.start();
     const p620 = new Scratch("fleet");
     git(p620.root, "remote", "add", "origin", remote);
     git(p620.root, "fetch", "-q", "origin");
@@ -122,6 +142,9 @@ export class LiveFleet {
     configureMain(here, cardd.url, mainToken, {
       hosts: { p620: ["node", TRANSPORT, join(here.parent, "p620-down")] },
       roots: { p620: p620.root },
+      ...(app === undefined
+        ? {}
+        : { cardd: { root: app.root, db: cardd.db, restart: cardd.restartCommand } }),
     });
     const args = [
       ...mateArgs(h).filter((arg) => !["--no-context-files", "--no-builtin-tools"].includes(arg)),
@@ -164,6 +187,7 @@ export class LiveFleet {
         farHome,
         site,
         gates,
+        app,
       },
       olderCode,
     );
@@ -201,6 +225,7 @@ export class LiveFleet {
     ]);
     this.here.dispose();
     this.p620.dispose();
+    this.app?.dispose();
     const failed = stopped.find((result) => result.status === "rejected");
     if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
   }
