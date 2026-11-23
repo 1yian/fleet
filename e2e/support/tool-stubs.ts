@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, symlinkSync } from "node:fs";
+import { existsSync, symlinkSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tempDir } from "./run-root.ts";
@@ -58,6 +58,14 @@ function found(tool: string): string {
   const path = execFileSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();
   if (!existsSync(path)) throw new Error(`${tool} is not on the PATH of this test run`);
   return path;
+}
+
+export function writeSteadyPi(dir: string): void {
+  writeFileSync(
+    join(dir, "pi"),
+    '#!/usr/bin/env node\nprocess.title = "pi";\nprocess.stdin.resume();\n',
+    { mode: 0o755 },
+  );
 }
 
 export function pathWithout(...missing: readonly string[]): string {
