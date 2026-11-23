@@ -6,6 +6,7 @@ import {
   CLOSE,
   HttpCallSchema,
   isOpName,
+  OPS,
   type HttpOutcome,
   parseClientMessage,
   type ClientMessage,
@@ -187,13 +188,19 @@ class Hub {
     this.health.tick(ended - started, slowest[0]);
   }
 
+  private withTakeover(value: unknown): unknown {
+    const view = check(OPS.card.result, value);
+    const takeover = this.web.takeover(view.card.id);
+    return takeover === undefined ? view : { ...view, takeover };
+  }
+
   async perform(session: Session, op: string, args: unknown): Promise<HttpOutcome> {
     try {
       if (!isOpName(op)) throw new Error(`unknown operation ${op}`);
       const done = await performOp(this.db, session, op, args, this.timing, this.hosts);
       for (const recipient of done.notify) this.flush(recipient, false);
       this.web.changed();
-      return { ok: true, value: done.value };
+      return { ok: true, value: op === "card" ? this.withTakeover(done.value) : done.value };
     } catch (error) {
       if (
         (op === "job.prepare" || op === "job.register") &&

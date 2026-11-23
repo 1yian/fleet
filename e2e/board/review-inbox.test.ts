@@ -9,6 +9,7 @@ import {
   labFor,
   post,
   reviewSource,
+  takeoverOf,
   verdictOf,
   viaEdge,
 } from "../support/review-source-lab.ts";
@@ -227,18 +228,20 @@ test("feedback sent before the takeover notice is not forwarded and later feedba
   const { origin, key } = await reviewSource(t);
   const { edge, upstream } = await viaEdge(t, origin);
   const probe = edge.hold("/layout-warnings");
-  const { cardd, token, bind } = await labFor(t, key, upstream, "Fence");
+  const { cardd, main, card, token, bind } = await labFor(t, key, upstream, "Fence");
   const worker = await cardd.connect(token);
   await bind(worker, "review-fence");
   await probe.arrived;
+  assert.equal(await takeoverOf(main, card), undefined);
   const delivered = edge.frameSeen("/events/", "Sent before the notice");
   await post(origin, `/api/${key}/prompts`, verdictOf("Sent before the notice"));
   await delivered;
   probe.release();
-  await worker.waitForEntry(
+  const notice = await worker.waitForEntry(
     (entry) => entry.fields["fleetReview"] === true && entry.body === "review-fence",
     "the takeover notice",
   );
+  assert.equal(await takeoverOf(main, card), notice.id);
   await post(origin, `/api/${key}/prompts`, verdictOf("Sent after the notice"));
   await worker.waitForEntry(
     (entry) => entry.kind === "review-feedback" && entry.body === "Sent after the notice",

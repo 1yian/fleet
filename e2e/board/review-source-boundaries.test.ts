@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { check, OPS } from "@fleet/protocol";
-import { ageDated, begin, newCard } from "../support/fleet.ts";
+import { ageDated, begin, newCard, startFleet } from "../support/fleet.ts";
 import { Lavish } from "../support/lavish.ts";
-import { labFor, post, reviewSource, verdictOf, viaEdge } from "../support/review-source-lab.ts";
+import { Site } from "../support/public-host.ts";
+import {
+  labFor,
+  post,
+  reviewSource,
+  takeoverOf,
+  verdictOf,
+  viaEdge,
+} from "../support/review-source-lab.ts";
 import { tempDir } from "../support/run-root.ts";
 
 test("a verdict queued before a bind or between rounds never crosses to a new review key", async (t) => {
@@ -273,8 +281,13 @@ test("binding a card again after a board-only decision starts from a fresh basel
   const { cardd, main, card, token, review, bind } = await labFor(t, key, origin.origin, "Again");
   const first = await cardd.connect(token);
   await bind(first, "review-again");
-  await first.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the first notice");
+  const firstNotice = await first.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true,
+    "the first notice",
+  );
+  assert.equal(await takeoverOf(main, card), firstNotice.id);
   await main.call("hold", { card: card.id, to: "captain", question: "board only", review: false });
+  assert.equal(await takeoverOf(main, card), undefined);
   const other = await newCard(main, "In between", "scout");
   const between = await cardd.connect(await begin(main, other));
   await between.call("report", { status: "needs-decision", key: "review-between", text: review });
@@ -297,10 +310,12 @@ test("binding a card again after a board-only decision starts from a fresh basel
     200,
   );
   await main.call("hold", { card: card.id, to: "captain", question: "rebound", review });
-  await first.waitForEntry(
+  const reboundNotice = await first.waitForEntry(
     (entry) => entry.fields["fleetReview"] === true && entry.body === "rebound",
     "a new takeover after binding again",
   );
+  assert.notEqual(reboundNotice.id, firstNotice.id);
+  assert.equal(await takeoverOf(main, card), reboundNotice.id);
   assert.deepEqual(
     first.entries.filter(({ entry }) => entry.kind === "review-feedback"),
     [],
@@ -309,10 +324,18 @@ test("binding a card again after a board-only decision starts from a fresh basel
 
 test("a replacement upstream behind the same link starts from its own baseline", async (t) => {
   const { origin, key, file } = await reviewSource(t);
-  const { cardd, token, reported, bind } = await labFor(t, key, origin.origin, "Remap");
+  const { cardd, mainToken, card, token, reported, bind } = await labFor(
+    t,
+    key,
+    origin.origin,
+    "Remap",
+  );
   const worker = await cardd.connect(token);
   await bind(worker, "review-remap");
-  await worker.waitForEntry((entry) => entry.fields["fleetReview"] === true, "the notice");
+  const firstNotice = await worker.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true,
+    "the notice",
+  );
   const dir = tempDir("fleet-review-replacement-");
   const lavish = await Lavish.start(dir);
   t.after(() => lavish.stop());
@@ -326,10 +349,13 @@ test("a replacement upstream behind the same link starts from its own baseline",
   cardd.env["CARDD_REVIEW_ORIGINS"] = `${reported}=${next.origin}`;
   await cardd.restart();
   const again = await cardd.connect(token);
+  const mate = await cardd.connect(mainToken);
+  assert.notEqual(await takeoverOf(mate, card), firstNotice.id);
   const replacementNotice = await again.waitForEntry(
     (entry) => entry.fields["upstream"] === `${next.origin}/session/${key}`,
     "the notice for the replacement upstream",
   );
+  assert.equal(await takeoverOf(mate, card), replacementNotice.id);
   await post(next, `/api/${key}/prompts`, verdictOf("Live on the replacement"));
   await again.waitForEntry(
     (entry) => entry.kind === "review-feedback" && entry.body === "Live on the replacement",
@@ -366,4 +392,52 @@ test("a replacement upstream behind the same link starts from its own baseline",
       .filter((body) => body !== "Live on the replacement"),
     ["Live on the first upstream again"],
   );
+});
+
+test("a link that resolves to the same upstream keeps the current takeover", async (t) => {
+  const { origin, key } = await reviewSource(t);
+  const site = await Site.start();
+  t.after(() => site.issuer.stop());
+  const first = "http://reviews.example.test:7331";
+  const second = "http://reviews-alias.example.test:7331";
+  const { cardd, main, mainToken } = await startFleet(
+    {
+      ...site.env,
+      CARDD_REVIEW_ORIGINS: `${first}=${origin.origin} ${second}=${origin.origin}`,
+    },
+    site.flags,
+  );
+  t.after(() => cardd.stop());
+  const card = await newCard(main, "Alias", "scout");
+  const worker = await cardd.connect(await begin(main, card));
+  const links = [`${first}/session/${key}`, `${second}/session/${key}`];
+  await worker.call("report", {
+    status: "needs-decision",
+    key: "review-alias",
+    text: `Ready: ${links.join(" ")}`,
+  });
+  await main.call("hold", {
+    card: card.id,
+    to: "captain",
+    question: "review-alias",
+    review: links[0],
+  });
+  const notice = await worker.waitForEntry(
+    (entry) => entry.fields["fleetReview"] === true,
+    "the takeover notice",
+  );
+  assert.equal(await takeoverOf(main, card), notice.id);
+  await main.call("hold", {
+    card: card.id,
+    to: "captain",
+    question: "review-alias again",
+    review: links[1],
+  });
+  assert.equal(await takeoverOf(main, card), notice.id);
+  await post(origin, `/api/${key}/prompts`, verdictOf("Sent through the alias"));
+  await worker.waitForEntry(
+    (entry) => entry.kind === "review-feedback" && entry.body === "Sent through the alias",
+    "the verdict after the alias edit",
+  );
+  assert.equal(await takeoverOf(await cardd.connect(mainToken), card), notice.id);
 });

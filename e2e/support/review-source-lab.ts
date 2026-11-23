@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
-import type { Card } from "@fleet/protocol";
+import { check, OPS, type Card } from "@fleet/protocol";
 import type { Cardd, Session } from "./cardd.ts";
 import { begin, newCard, startFleet } from "./fleet.ts";
 import { Lavish } from "./lavish.ts";
@@ -68,6 +68,10 @@ export async function viaEdge(
   edge.forwardOrigin = true;
   t.after(() => edge.stop());
   return { edge, upstream: `https://127.0.0.1:${String(edge.port)}` };
+}
+
+export async function takeoverOf(mate: Session, card: Card): Promise<number | undefined> {
+  return check(OPS.card.result, await mate.call("card", { card: card.id })).takeover;
 }
 
 export const verdictOf = (prompt: string) => ({

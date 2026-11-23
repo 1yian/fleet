@@ -433,6 +433,14 @@ export class SourceReviews {
     this.watching.set(card, { binding, socket });
   }
 
+  takeover(card: number): number | undefined {
+    const binding = this.binding(card);
+    if (binding === undefined || !same(this.watching.get(card)?.binding, binding)) return undefined;
+    return epochNotices(cardEntries(this.db, card), binding, this.origins).findLast(
+      ({ fields }) => fields["worker"] === binding.worker,
+    )?.id;
+  }
+
   private record(listening: Binding, moment: Moment): void {
     if (this.watching.get(listening.card)?.binding !== listening) return;
     const changed = transaction(this.db, () => {

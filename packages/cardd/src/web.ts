@@ -187,6 +187,10 @@ export class Web {
     socket.on("close", () => this.live.delete(socket));
   }
 
+  takeover(card: number): number | undefined {
+    return this.sourceReviews.takeover(card);
+  }
+
   refreshReviews(): void {
     this.sourceReviews.refresh();
   }
