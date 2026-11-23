@@ -2,8 +2,6 @@ import { execFile } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { type OpArgs } from "@fleet/protocol";
-import { withholdSerializedEmail } from "./complaint-email.ts";
-import { redact } from "./incident-kinds.ts";
 import { mainLane, type Session } from "./store.ts";
 
 const REPO = "github.com/1yian/fleet";
@@ -37,7 +35,7 @@ interface Issue {
 }
 
 function literalCode(text: string): string {
-  const line = withholdSerializedEmail(text).replace(/\r\n?|\n/g, " ");
+  const line = text.replace(/\r\n?|\n/g, " ");
   if (!/\S/.test(line)) return line;
   let width = 1;
   for (const [run] of line.matchAll(/`+/g)) width = Math.max(width, run.length + 1);
@@ -47,8 +45,8 @@ function literalCode(text: string): string {
 }
 
 function issueFor(session: Session, text: string, about: About, now: number): Issue {
-  const scrubbed = redact(withholdSerializedEmail(text), "public");
-  const characters = Array.from(scrubbed);
+  const title = text.replace(/\s+/g, " ").trim();
+  const characters = Array.from(title);
   const details = [
     `Time: ${new Date(now).toISOString()}`,
     `Role: ${session.role}`,
@@ -60,8 +58,8 @@ function issueFor(session: Session, text: string, about: About, now: number): Is
     title:
       characters.length > TITLE_LIMIT
         ? `${characters.slice(0, TITLE_LIMIT - 3).join("")}...`
-        : scrubbed,
-    body: `    ${scrubbed}\n\n${details.map((line) => `- ${line}`).join("\n")}\n`,
+        : title,
+    body: `    ${text.replace(/\r\n?|\n/g, "\n    ")}\n\n${details.map((line) => `- ${line}`).join("\n")}\n`,
   };
 }
 

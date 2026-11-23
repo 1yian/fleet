@@ -1,4 +1,3 @@
-import { EMAIL_ADDRESS } from "./complaint-email.ts";
 import { CURL_DATA_SECRET, CURL_SHELL_EXPANSION } from "./curl-shell.ts";
 import { LEADING_ENVELOPE, milliseconds, retryAfterMs, type Envelope } from "./http-envelope.ts";
 import {
@@ -12,6 +11,12 @@ import {
   SECRET_NAME,
 } from "./redact-guards.ts";
 import type { Timings } from "./timing.ts";
+
+const EMAIL_LOCAL_PART =
+  /(?:"(?:\\[^\r\n]|[^"\\\r\n])*"|(?<![\p{L}\p{M}\p{N}.!#$%&'*+/=?^_`{|}~-])[\p{L}\p{M}\p{N}.!#$%&'*+/=?^_`{|}~-]+)/u
+    .source;
+const EMAIL_DOMAIN = /(?:[\p{L}\p{M}\p{N}-]+[.。．｡])+[\p{L}][\p{L}\p{M}\p{N}-]*/u.source;
+const EMAIL_ADDRESS = new RegExp(`${EMAIL_LOCAL_PART}@${EMAIL_DOMAIN}`, "gu");
 
 const MAX_RETRIES = 2;
 const MAX_REPLACEMENTS = 1;
@@ -279,9 +284,8 @@ function hasUnprovenValue(text: string): boolean {
   return false;
 }
 
-export function redact(text: string, scope: "public" | "diagnostic"): string {
-  return redactNormalized(normalizeInput(text), scope);
-}
+const redact = (text: string, scope: "public" | "diagnostic"): string =>
+  redactNormalized(normalizeInput(text), scope);
 
 function hasCredentialCollection(source: string): boolean {
   return (
@@ -293,9 +297,8 @@ function hasCredentialCollection(source: string): boolean {
   );
 }
 
-function hasUnboundedSecret(yaml: string): boolean {
-  return yaml.search(YAML_UNBOUNDED_SECRET) !== -1 || yaml.search(YAML_FLOW_UNBOUNDED_PLAIN) !== -1;
-}
+const hasUnboundedSecret = (yaml: string): boolean =>
+  yaml.search(YAML_UNBOUNDED_SECRET) !== -1 || yaml.search(YAML_FLOW_UNBOUNDED_PLAIN) !== -1;
 
 function redactYamlScalars(text: string): string {
   return redactYamlBlocks(text)
@@ -362,13 +365,10 @@ function redactNormalized(source: string, scope: "public" | "diagnostic"): strin
     .trim();
 }
 
-function clipDiagnostic(redacted: string): string {
-  return redacted.length > ERROR_LIMIT ? `${redacted.slice(0, ERROR_LIMIT)}...` : redacted;
-}
+const clipDiagnostic = (redacted: string): string =>
+  redacted.length > ERROR_LIMIT ? `${redacted.slice(0, ERROR_LIMIT)}...` : redacted;
 
-export function sanitize(text: string): string {
-  return clipDiagnostic(redact(text, "diagnostic"));
-}
+export const sanitize = (text: string): string => clipDiagnostic(redact(text, "diagnostic"));
 
 const KINDS: readonly (readonly [Kind, RegExp])[] = [
   [
