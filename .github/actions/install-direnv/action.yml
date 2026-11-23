@@ -10,6 +10,7 @@ runs:
         sha256: 1f1b93dd6f38523fde26dfac96151ef9d31a374e3005cd3345fb93555ae0c9b5
         retries: "5"
         retry-delay: "5"
+        retry-max-time: "255"
     - shell: bash
       env:
         ASSET: ${{ steps.download.outputs.path }}
