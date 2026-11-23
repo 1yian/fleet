@@ -10,9 +10,9 @@ import {
   startDispatchLab,
   stopDispatchLab,
   toolResults,
+  WORKER_WAIT_MS,
   worktreesOf,
 } from "../support/dispatch-lab.ts";
-import { TestClock } from "../support/clock.ts";
 import { until } from "../support/live-fleet.ts";
 import { tempDir } from "../support/run-root.ts";
 
@@ -66,7 +66,7 @@ const slowPs = () => stallingTool("ps", () => "exec sleep 3600");
 const slowZstd = () => stallingTool("zstd", (slow) => `while [ -e '${slow}' ]; do sleep 0.1; done`);
 
 const SCAN_CAP_MS = 90_000;
-const STALL_WAIT_MS = 150_000;
+const STALL_WAIT_MS = SCAN_CAP_MS + WORKER_WAIT_MS;
 
 async function closeOnLoadedHost(
   limits: Record<string, string>,
@@ -163,13 +163,12 @@ const inArchive = (archive: string, member: string): string =>
 
 test("close whose deadline passes during the archive lets it finish, then refuses to start the removal", async () => {
   const zstd = slowZstd();
-  const clock = new TestClock();
   const parts = await startDispatchLab({
     workerArgs: ["-e", SHELL],
-    mate: clock.env({
+    mate: {
       PATH: `${zstd.bin}:${process.env["PATH"] ?? ""}`,
       FLEET_CLOSE_DEADLINE_MS: String(ARCHIVE_DEADLINE_MS),
-    }),
+    },
   });
   const { h, clone, mate } = parts;
   try {
@@ -223,7 +222,11 @@ test("close whose deadline passes during the archive lets it finish, then refuse
     );
     assert.equal(alive(archiving), true);
     assert.equal(existsSync(archive), false);
-    await clock.advance(ARCHIVE_DEADLINE_MS + 1_000);
+    const archivingSince = Date.now();
+    await until(
+      () => (Date.now() > archivingSince + ARCHIVE_DEADLINE_MS ? true : undefined),
+      "the close deadline to pass during the archive",
+    );
     assert.equal(alive(archiving), true);
     rmSync(zstd.slow);
 
