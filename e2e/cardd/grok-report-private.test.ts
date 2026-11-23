@@ -89,6 +89,47 @@ test("the connector refuses a standalone stream, batches, bad JSON and oversized
   assert.equal(pushed.body, "only");
 });
 
+test("a Grok assignment's correlation values reach only the owning mate", async () => {
+  const started = await startFleet({ CARDD_GROK_REPORT_TOKEN: TOKEN });
+  fleet = started;
+  const cleo = await started.cardd.connect(started.cardd.addLane("cleo", "main"));
+  const card = await newCard(cleo, "Keep the handoff with its owner");
+  const assignment = check(
+    OPS["grok.assign"].result,
+    await cleo.call("grok.assign", { card: card.id }),
+  );
+  const handoffs = (entries: readonly { fields: Record<string, unknown> }[]) =>
+    entries.filter((entry) => entry.fields["grok"] === "assignment");
+  const own = handoffs(check(OPS.card.result, await cleo.call("card", { card: card.id })).entries);
+  assert.equal(own.length, 1);
+  assert.deepEqual(
+    { assignment: own[0]?.fields["assignment"], attempt: own[0]?.fields["attempt"] },
+    { assignment: assignment.assignment, attempt: assignment.attempt },
+  );
+  const shared = [
+    ...handoffs((await view(started, card)).entries),
+    ...handoffs((await started.cardd.thread(card.id)).entries),
+  ];
+  assert.equal(shared.length, 2);
+  for (const entry of shared) {
+    assert.equal(entry.fields["grok"], "assignment");
+    assert.ok(!("assignment" in entry.fields) && !("attempt" in entry.fields));
+  }
+  assert.ok(
+    !JSON.stringify([
+      await view(started, card),
+      await started.cardd.thread(card.id),
+      await started.cardd.board(),
+    ]).includes(assignment.assignment),
+  );
+  const accepted = await tool(started, {
+    ...assignment,
+    text: "owner-handed report",
+    sources: ["https://example.test/owner"],
+  });
+  assert.partialDeepStrictEqual(accepted, { receipt: { receipt: "recorded" }, isError: false });
+});
+
 test("a second mate's Grok result stays out of the board, summaries and other lanes", async () => {
   const started = await startFleet({ CARDD_GROK_REPORT_TOKEN: TOKEN });
   fleet = started;

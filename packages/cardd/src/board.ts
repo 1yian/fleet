@@ -85,6 +85,15 @@ const takeoverNote = (entry: Entry): boolean =>
   entry.author === "fleet" && entry.kind === "note" && entry.fields["fleetReview"] === true;
 const grokResult = (entry: Entry): boolean =>
   entry.author === "grok-bot" && entry.fields["grok"] === "result";
+const withoutHandoff = (entry: Entry): Entry =>
+  entry.author.startsWith("mate:") && entry.fields["grok"] === "assignment"
+    ? {
+        ...entry,
+        fields: Object.fromEntries(
+          Object.entries(entry.fields).filter(([key]) => key !== "assignment" && key !== "attempt"),
+        ),
+      }
+    : entry;
 const inThread = (entry: Entry): boolean =>
   !MATES_ONLY.has(entry.kind) &&
   entry.fields["maintenance"] !== "batch" &&
@@ -258,6 +267,7 @@ export function cardView(db: DatabaseSync, id: number, lane: string, timing: Tim
     entries: each.entries
       .filter((entry) => !grokResult(entry) || lane === each.card.lane)
       .flatMap((entry) => entryFor(db, lane, entry) ?? [])
+      .map((entry) => (lane === each.card.lane ? entry : withoutHandoff(entry)))
       .map((entry) => ({ ...entry, body: withoutPaths(entry.body, evidencePaths(each.entries)) })),
   };
 }
@@ -267,7 +277,7 @@ export function thread(db: DatabaseSync, id: number): Thread {
   const paths = evidencePaths(entries);
   return {
     card: getCard(db, id),
-    entries: entries.filter(inThread).map((entry) => ({
+    entries: entries.filter(inThread).map(withoutHandoff).map((entry) => ({
       ...entry,
       body: withoutPaths(entry.body, paths),
       fields: Object.fromEntries(
