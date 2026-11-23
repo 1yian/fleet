@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import {
   mateConnected as connected,
@@ -15,19 +14,20 @@ import { poll, type Move, type Turn } from "../support/harness.ts";
 import { tempDir } from "../support/run-root.ts";
 import { DISPATCH } from "../support/scratch-files.ts";
 
-const SHELL = fileURLToPath(new URL("../support/shell-tool.ts", import.meta.url));
-
 let parts: DispatchLab;
 let out: string;
 beforeEach(async () => {
   out = tempDir("fleet-attempt-names-");
-  parts = await startDispatchLab({ workerArgs: ["-e", SHELL] });
+  parts = await startDispatchLab({ workerShell: true });
   parts.cardd.yolo("site");
 });
 afterEach(async (t) => {
   await parts.lab.printIfFailed(t);
   await stopDispatchLab(parts);
 });
+
+const publish = (kind: "shell" | "job"): string =>
+  `printf '%s' "$FLEET_ATTEMPT" > "${out}/.$$" && mv "${out}/.$$" "${out}/${kind}-$(basename "$PWD")"`;
 
 const woken = (turns: Turn[]): boolean =>
   turns.some((turn) => turn.role === "user" && turn.text.includes("exited 0"));
@@ -38,14 +38,14 @@ const nameOf = (turns: Turn[]): Move => {
   if (ran === 0)
     return {
       tool: "bash",
-      args: { command: `printf '%s' "$FLEET_ATTEMPT" > "${out}/shell-$(basename "$PWD")"` },
+      args: { command: publish("shell") },
     };
   if (ran === 1)
     return {
       tool: "run_long",
       args: {
         label: "name",
-        command: `printf '%s' "$FLEET_ATTEMPT" > "${out}/job-$(basename "$PWD")"`,
+        command: publish("job"),
       },
     };
   return { text: "waiting for the job" };
