@@ -43,7 +43,6 @@ const WHY = "The cancelled run changed nothing and the apply moved to the supers
 
 test("a retired obsolete hold leaves Needs you at once and its audit trail shows on the card", async () => {
   const stale = await scout(cleo, "Review the apply of PR 417");
-  const superseding = await scout(cleo, "Apply with PR 420");
   await cleo.call("hold", {
     card: stale.id,
     question: "Approve the risky apply?",
@@ -59,6 +58,7 @@ test("a retired obsolete hold leaves Needs you at once and its audit trail shows
     (await cardd.board()).holds.map((hold) => hold.card),
     [stale.id],
   );
+  const superseding = await scout(cleo, "Apply with PR 420");
 
   await main.call("release", {
     card: stale.id,

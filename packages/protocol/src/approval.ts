@@ -15,13 +15,13 @@ export const ApprovesArg = Type.Optional(
 export const RetireReason = Type.String({
   pattern: "\\S",
   description:
-    "With supersededBy, on clear: why the hold no longer matters. It is not a decision and never approves anything",
+    "With supersededBy, on clear: why the hold no longer matters. The mate attests it and it shows on the card thread. It is not a decision and never approves anything",
 });
 export const SupersededBy = Type.Union(
   [Type.Integer({ minimum: 1 }), Type.String({ pattern: PR_PATTERN })],
   {
     description:
-      "The card number or the full PR URL that replaced the gated action. A card must exist, differ from this one, and not be dropped. A PR must be recorded on another card",
+      "The card number or the full PR URL that replaced the gated action, attested by the mate. It must be another card, or a PR recorded on another card, that you can see, in the same project, not dropped, and created after the hold opened",
   },
 );
 export const RetireArg = Type.Object({ reason: RetireReason, supersededBy: SupersededBy });

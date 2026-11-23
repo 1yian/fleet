@@ -6,6 +6,7 @@ import { withEcho } from "./echo.ts";
 import { answerHold, askAgain, hearers, holdOf, requireMainsHold } from "./holds.ts";
 import type { Hold } from "./status.ts";
 import { addEntry, getCard, parentOf, reachable, workerOf, type Session } from "./store.ts";
+import { canSee } from "./waits.ts";
 
 interface Done {
   readonly value: unknown;
@@ -52,19 +53,41 @@ function noteRelease(
   return { value: getCard(db, card.id), notify: [...to, ...askAgain(db, card)] };
 }
 
-function supersederLabel(db: DatabaseSync, card: Card, by: number | string): string {
+function refusalOf(card: Card, open: Hold, other: Card): string | undefined {
   const name = `c-${String(card.id)}`;
-  if (typeof by === "string") {
-    const row = db.prepare("SELECT id FROM cards WHERE lower(pr) = lower(?)").get(by);
-    if (row === undefined) throw new Error(`no card has recorded ${by}, so it supersedes nothing`);
-    if (row["id"] === card.id)
-      throw new Error(`${by} is ${name}'s own PR: a hold is superseded by other work`);
-    return by;
-  }
-  if (by === card.id) throw new Error(`${name} cannot supersede its own hold`);
-  if (getCard(db, by).status === "dropped")
-    throw new Error(`c-${String(by)} was dropped, so it supersedes nothing`);
-  return `c-${String(by)}`;
+  if (other.id === card.id) return `${name} cannot supersede its own hold`;
+  if (other.status === "dropped")
+    return `c-${String(other.id)} was dropped, so it supersedes nothing`;
+  if (other.project !== card.project)
+    return `c-${String(other.id)} is in another project, so it does not supersede ${name}'s hold`;
+  if (other.createdAt < open.openedAt)
+    return `c-${String(other.id)} is older than ${name}'s hold, so it cannot have replaced it`;
+  return undefined;
+}
+
+function supersederLabel(
+  db: DatabaseSync,
+  session: Session,
+  card: Card,
+  open: Hold,
+  by: number | string,
+): string {
+  const ids =
+    typeof by === "string"
+      ? db.prepare("SELECT id FROM cards WHERE lower(pr) = lower(?) ORDER BY id").all(by)
+      : db.prepare("SELECT id FROM cards WHERE id = ?").all(by);
+  const seen = ids
+    .map((row) => getCard(db, Number(row["id"])))
+    .filter((other) => canSee(db, session.lane, other.lane));
+  if (seen.length === 0)
+    throw new Error(
+      typeof by === "string"
+        ? `no card has recorded ${by}, so it supersedes nothing`
+        : `no card c-${String(by)}`,
+    );
+  const refusals = seen.map((other) => refusalOf(card, open, other));
+  if (refusals.includes(undefined)) return typeof by === "string" ? by : `c-${String(by)}`;
+  throw new Error(refusals[0] ?? "");
 }
 
 function requireMayRetire(
@@ -86,6 +109,10 @@ function requireMayRetire(
   requireMainsHold(card, own, open);
   if (open.holder === "captain" && parentOf(db, session.lane) !== null)
     throw new Error(`${name} waits on the captain, so only main retires it: ask main`);
+  if (open.fromWorker && open.keys.length > 0 && workerOf(db, card.id) !== undefined)
+    throw new Error(
+      `${name}'s worker is still live and waiting on this decision, so it is not obsolete: answer it, hold it again, or stop the worker first`,
+    );
 }
 
 function retire(
@@ -97,7 +124,7 @@ function retire(
   retiring: { reason: string; supersededBy: number | string },
 ): Done {
   requireMayRetire(db, session, card, open, own);
-  const supersededBy = supersederLabel(db, card, retiring.supersededBy);
+  const supersededBy = supersederLabel(db, session, card, open, retiring.supersededBy);
   const fields = { hold: open.entry, occurrence: open.occurrence, retired: true, supersededBy };
   const body = `Retired as obsolete, not approved or decided. ${retiring.reason.trim()} Superseded by ${supersededBy}.`;
   return noteRelease(db, session, card, open, body, fields);
