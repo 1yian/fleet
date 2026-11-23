@@ -98,6 +98,13 @@ async function exerciseTabSwitch(page: Page, endpoint: BrowserEndpoint): Promise
   assert.ok(press >= 0 && release > press && tab > release);
 }
 
+async function verifyRestoredInput(page: Page, endpoint: BrowserEndpoint): Promise<void> {
+  const keyUp = { t: "key", type: "keyUp", key: "x" };
+  const before = delivered(endpoint, keyUp).length;
+  await screenClick(page);
+  await until(() => delivered(endpoint, keyUp).length === before + 1);
+}
+
 async function exerciseAmbiguousTab(
   page: Page,
   endpoint: BrowserEndpoint,
@@ -122,8 +129,7 @@ async function exerciseAmbiguousTab(
       `data:image/jpeg;base64,${next ?? ""}`,
     jpeg[0],
   );
-  await screenClick(page);
-  await until(() => endpoint.events.length > batches);
+  await verifyRestoredInput(page, endpoint);
 }
 
 async function exerciseOutage(page: Page, endpoint: BrowserEndpoint): Promise<void> {
@@ -151,8 +157,7 @@ async function exerciseOutage(page: Page, endpoint: BrowserEndpoint): Promise<vo
   await page.getByText("You’re in control").waitFor();
   assert.equal(endpoint.commands.length, commands);
   assert.equal(endpoint.events.length, batches);
-  await screenClick(page);
-  await until(() => endpoint.events.length > batches);
+  await verifyRestoredInput(page, endpoint);
 }
 
 async function exerciseReconnectDuringTab(
@@ -160,8 +165,6 @@ async function exerciseReconnectDuringTab(
   endpoint: BrowserEndpoint,
   jpeg: readonly string[],
 ): Promise<void> {
-  await until(() => endpoint.activeInputs === 0);
-  await nextFrames(page);
   endpoint.order.length = 0;
   const batches = endpoint.events.length;
   const arrived = endpoint.arrivals;
