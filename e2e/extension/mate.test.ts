@@ -63,7 +63,7 @@ test("hold sets a hold, and clear=true clears it only with words the captain sai
   const results = toolResults(await h.waitForCall(5));
   assert.deepEqual(results.slice(1), [
     "Held. c-2 is now with-mate.",
-    "clear=true takes words or note, not question",
+    "clear=true takes words, note, or retire, not question",
     "these words are not in the captain's messages or board entries; quote the captain exactly",
     "Cleared. c-2 is now with-mate.",
   ]);

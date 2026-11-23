@@ -27,14 +27,8 @@ import { markStopping } from "./incident-lanes.ts";
 import { clearFailure, noteControl, reportFailure } from "./incidents.ts";
 import { processOf } from "./incident-store.ts";
 import { restartCard, restartFailed, restartNotice } from "./restarts.ts";
-import {
-  hold,
-  holdOf,
-  mergeQuestion,
-  release,
-  withdrawMerge,
-  writeMergeQuestion,
-} from "./holds.ts";
+import { hold, holdOf, mergeQuestion, withdrawMerge, writeMergeQuestion } from "./holds.ts";
+import { release } from "./release.ts";
 import { ensurePersonalProject } from "./personal.ts";
 import { loadPlan } from "./plans.ts";
 import { doneStands } from "./status.ts";

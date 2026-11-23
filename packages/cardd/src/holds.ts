@@ -1,21 +1,13 @@
 import type { DatabaseSync } from "node:sqlite";
 import { APPROVE_MERGE, MERGE_OPTIONS, check, OPS, type Card, type Holder } from "@fleet/protocol";
 import { localLanding } from "./attempts.ts";
-import { requireCaptainWords, yoloFor } from "./authority.ts";
+import { yoloFor } from "./authority.ts";
 import { requireOpen, type Draft } from "./change.ts";
 import { withEcho } from "./echo.ts";
 import { askersOf, isCaptainsReply, requireOwedBy } from "./replies.ts";
 import { boundReview } from "./review-completion.ts";
 import { factsFrom, finishFrom, type Facts, type Hold } from "./status.ts";
-import {
-  addEntry,
-  cardEntries,
-  getCard,
-  parentOf,
-  reachable,
-  workerOf,
-  type Session,
-} from "./store.ts";
+import { addEntry, cardEntries, getCard, parentOf, reachable, type Session } from "./store.ts";
 import { dating, type Dating } from "./waits.ts";
 
 interface Done {
@@ -75,7 +67,7 @@ function requireClimb(
     throw new Error("only main marks a hold as the captain's: escalate it to main");
 }
 
-function requireMainsHold(card: Card, own: boolean, open: Hold | undefined): void {
+export function requireMainsHold(card: Card, own: boolean, open: Hold | undefined): void {
   if (!own && (open === undefined || open.holder === "owner"))
     throw new Error(
       `c-${String(card.id)} has no hold with main; its mate resolves it or escalates it first`,
@@ -349,60 +341,10 @@ export function answerHold(
   return { value: getCard(db, card.id), notify: [...to, ...askAgain(db, card)] };
 }
 
-function toWorkerOf(db: DatabaseSync, card: Card, open: Hold): string[] {
-  const worker = open.fromWorker ? workerOf(db, card.id) : undefined;
-  return worker === undefined ? [] : [worker];
-}
-
-function requireNoteMayClear(card: Card, open: Hold, own: boolean): void {
-  const name = `c-${String(card.id)}`;
-  if (open.holder === "captain" || open.merge)
-    throw new Error(`${name} waits on the captain: clear it with his exact words`);
-  if (own) return;
-  if (open.holder !== "main")
-    throw new Error(`${name} waits on ${card.lane}'s mate, who resolves it or escalates it`);
-  if (open.unlanded)
-    throw new Error(
-      `${name} holds finished work that has not landed, so whether to keep, land, or discard it is the captain's call: escalate it with hold(card, to="captain", question, options), or clear it with his exact words`,
-    );
-}
-
 function holdsUnlandedWork(db: DatabaseSync, card: Card): boolean {
   if (card.kind !== "ship" || mergeSubject(db, card) === undefined) return false;
   const { workerDone, merged, emptyBranch } = finishFrom(cardEntries(db, card.id));
   return workerDone && !merged && !emptyBranch;
-}
-
-export function release(db: DatabaseSync, session: Session, raw: unknown): Done {
-  const args = check(OPS.release.args, raw);
-  const { card, own } = reachable(db, session, args.card);
-  const name = `c-${String(card.id)}`;
-  const open = holdOf(db, card);
-  if (open === undefined) throw new Error(`${name} has no open hold`);
-  if ((args.words === undefined) === (args.note === undefined))
-    throw new Error(
-      "clearing a hold needs the captain's exact words, or your own note, and not both",
-    );
-  if (args.words !== undefined) {
-    const source = args.source ?? "record";
-    requireCaptainWords(db, args.words, source);
-    return answerHold(db, session.lane, card, open, { ...args, words: args.words, source });
-  }
-  requireNoteMayClear(card, open, own);
-  const fields = { hold: open.entry, occurrence: open.occurrence };
-  const body = args.note ?? "";
-  const draft: Draft = {
-    card: card.id,
-    author: `mate:${session.lane}`,
-    kind: "release",
-    body,
-    fields,
-  };
-  requireOpen(db, card);
-  const heard = [...hearers(db, card, session.lane, [open.holder]), ...toWorkerOf(db, card, open)];
-  const to = withEcho(db, session, card, heard);
-  addEntry(db, draft, to);
-  return { value: getCard(db, card.id), notify: [...to, ...askAgain(db, card)] };
 }
 
 export function withdrawMerge(
@@ -464,7 +406,7 @@ function mergeSubject(
   return { ask: `Land branch ${branch} on local ${base}`, fields: { branch, base } };
 }
 
-function askAgain(db: DatabaseSync, card: Card): string[] {
+export function askAgain(db: DatabaseSync, card: Card): string[] {
   const question = mergeQuestion(db, card, []);
   return question === undefined ? [] : writeMergeQuestion(db, getCard(db, card.id), question);
 }

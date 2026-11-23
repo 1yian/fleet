@@ -1,6 +1,6 @@
 import Type, { type Static, type TSchema } from "typebox";
 import Value from "typebox/value";
-import { ApprovesArg } from "./approval.ts";
+import { ApprovesArg, RetireArg } from "./approval.ts";
 import { COMPLAINT_OPS } from "./complaints.ts";
 import { INCIDENT_OPS } from "./incidents.ts";
 import { JOB_OPS } from "./jobs.ts";
@@ -69,7 +69,6 @@ const ReplyTo = Type.Optional(
 );
 export const Words = Type.String({ pattern: "\\S" });
 const Nullable = <T extends TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
-
 export type CardKind = Static<typeof CardKind>;
 export const CardName = Type.String({
   pattern: "^[a-z0-9]+(-[a-z0-9]+)*$",
@@ -290,6 +289,7 @@ export const OPS = {
       source: Type.Optional(Type.Enum(["chat", "board", "record"])),
       choice: Type.Optional(Type.String({ minLength: 1 })),
       note: Type.Optional(Type.String({ minLength: 1 })),
+      retire: Type.Optional(RetireArg),
     }),
     result: CardSchema,
   },

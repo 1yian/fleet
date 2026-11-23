@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { OPS, type Card } from "@fleet/protocol";
+import { OPS, RetireReason, SupersededBy, type Card } from "@fleet/protocol";
 import Type, { type Static } from "typebox";
 import { captainSaid, parseUtc } from "./inbox.ts";
 import type { Link } from "./link.ts";
@@ -51,6 +51,8 @@ const HoldParams = Type.Object({
         "With clear: your own decision, when it was yours or main's to decide. Main's note never clears a second mate's hold marked unlanded",
     }),
   ),
+  retire: Type.Optional(RetireReason),
+  supersededBy: Type.Optional(SupersededBy),
   choice: Type.Optional(
     Type.String({
       description:
@@ -76,7 +78,7 @@ const SETTING = [
   "said",
   "remaining",
 ] as const;
-const CLEARING = ["words", "note", "choice"] as const;
+const CLEARING = ["words", "note", "choice", "retire", "supersededBy"] as const;
 
 type HoldArgs = Static<typeof HoldParams>;
 
@@ -90,10 +92,15 @@ export function registerQuestions(
   const clearHold = async (params: HoldArgs): Promise<string> => {
     const extra = SETTING.filter((key) => params[key] !== undefined);
     if (extra.length > 0)
-      throw new Error(`clear=true takes words or note, not ${extra.join(", ")}`);
-    const { card: id, words, note, choice } = params;
+      throw new Error(`clear=true takes words, note, or retire, not ${extra.join(", ")}`);
+    const { card: id, words, note, choice, retire, supersededBy } = params;
+    if ((retire === undefined) !== (supersededBy === undefined))
+      throw new Error("retiring a hold needs both retire (why) and supersededBy (the card or PR)");
     const args = {
       card: id,
+      ...(retire === undefined || supersededBy === undefined
+        ? {}
+        : { retire: { reason: retire, supersededBy } }),
       ...(words === undefined ? {} : { words, source: sourceOf(words) }),
       ...(note === undefined ? {} : { note }),
       ...(choice === undefined ? {} : { choice }),
@@ -120,7 +127,7 @@ export function registerQuestions(
     name: "hold",
     label: "Hold",
     description:
-      "Holds a card at a gate, with every question of the gate bundled in one hold: the evidence, the consequence, the options, and your recommendation. A card has one hold, so holding it again rewrites the same hold. A second mate's hold waits on main. Main's hold waits on the captain, and main escalates a second mate's hold with to=captain. until holds it until a date, only when a process or an outside event is truly the blocker or the captain said later, never to quiet a card. A date must say what watches it, with exactly one of job (a running job id), schedule (a schedule id), worker (a card number whose worker is live), watcher (who else checks it and how), outside (an outside date or event), or said (the captain's exact words for later), and must state remaining: [] when no other work is left, otherwise each step that does not depend on the event on an open card of its own. The date covers only what depends on the event. clear=true clears the hold: with words, the captain's exact words, when he decided it, or with note, your own decision when it was yours or main's. Set unlanded=true when the hold asks whether to keep, land, or discard finished work that has not landed, including preserved work with no PR; rewrite a hold with this mark when it becomes such a question. The fleet also marks holds written on finished ship cards with a PR or local landing. A note never clears a merge question, nor main's clearing of a second mate's hold marked unlanded: those are the captain's. Words are checked against what the captain wrote. replyTo answers a reply you owe with this hold.",
+      "Holds a card at a gate, with every question of the gate bundled in one hold: the evidence, the consequence, the options, and your recommendation. A card has one hold, so holding it again rewrites the same hold. A second mate's hold waits on main. Main's hold waits on the captain, and main escalates a second mate's hold with to=captain. until holds it until a date, only when a process or an outside event is truly the blocker or the captain said later, never to quiet a card. A date must say what watches it, with exactly one of job (a running job id), schedule (a schedule id), worker (a card number whose worker is live), watcher (who else checks it and how), outside (an outside date or event), or said (the captain's exact words for later), and must state remaining: [] when no other work is left, otherwise each step that does not depend on the event on an open card of its own. The date covers only what depends on the event. clear=true clears the hold: with words, the captain's exact words, when he decided it, or with note, your own decision when it was yours or main's. A hold whose gated action is truly obsolete, because another card or PR replaced it, is retired with clear=true, retire=<why>, and supersededBy=<that card number or full PR URL>: the fleet records your reason and the superseder on the card thread, asks no one, and never counts it as approval. The reason and the superseder are your attestation, not proof: the fleet refuses only a merge question, a hold marked unlanded, a hold whose worker is still live and waiting on it, and a superseder that is not a visible other card or PR of the same project, created after the hold opened and not dropped. Set unlanded=true when the hold asks whether to keep, land, or discard finished work that has not landed, including preserved work with no PR; rewrite a hold with this mark when it becomes such a question. The fleet also marks holds written on finished ship cards with a PR or local landing. A note never clears a merge question, nor main's clearing of a second mate's hold marked unlanded: those are the captain's. Words are checked against what the captain wrote. replyTo answers a reply you owe with this hold.",
     parameters: HoldParams,
     execute: async (_id, params) =>
       reply(params.clear === true ? await clearHold(params) : await setHold(params)),

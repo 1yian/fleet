@@ -310,6 +310,11 @@ function commentVerb(entry: Entry): string {
 const holdVerb = (entry: Entry): string =>
   entry.fields["escalated"] === true ? "escalated it" : "asked";
 
+const otherVerb = (entry: Entry): string =>
+  entry.kind === "release" && entry.fields["retired"] === true
+    ? "retired it as obsolete"
+    : (VERBS[entry.kind] ?? "");
+
 export function verb(entry: Entry): string {
   const status = entry.fields["status"];
   if (entry.kind === "comment") return commentVerb(entry);
@@ -317,7 +322,7 @@ export function verb(entry: Entry): string {
   if (entry.fields["routed"] === true) return "sent it here";
   if (entry.kind === "cleanup")
     return entry.fields["outcome"] === "dropped" ? "dropped it" : "closed it";
-  return entry.kind === "hold" ? holdVerb(entry) : (VERBS[entry.kind] ?? "");
+  return entry.kind === "hold" ? holdVerb(entry) : otherVerb(entry);
 }
 
 const MESSAGES: ReadonlySet<string> = new Set([
