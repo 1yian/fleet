@@ -50,14 +50,16 @@ runs:
         file="$dir/${URL##*/}"
         if [[ "$CACHE_HIT" != true ]]; then
           mkdir -p "$dir"
-          fetch() {
-            curl -fsSL --retry "$RETRIES" --retry-all-errors --retry-delay "$RETRY_DELAY" --connect-timeout 10 --max-time "$MAX_TIME" --retry-max-time "$RETRY_MAX_TIME" -o "$file.part" "$1"
-          }
-          if ! fetch "$URL"; then
-            [[ -n "$FALLBACK_URL" ]] || exit 1
-            echo "::warning title=download::$URL failed, trying $FALLBACK_URL"
-            fetch "$FALLBACK_URL"
-          fi
+          fetched=false
+          for candidate in "$URL" ${FALLBACK_URL:+"$FALLBACK_URL"}; do
+            if curl -fsSL --retry "$RETRIES" --retry-all-errors --retry-delay "$RETRY_DELAY" --connect-timeout 10 --max-time "$MAX_TIME" --retry-max-time "$RETRY_MAX_TIME" -o "$file.part" "$candidate" \
+              && printf '%s  %s\n' "$SHA256" "$file.part" | sha256sum --check; then
+              fetched=true
+              break
+            fi
+            echo "::warning title=download::$candidate did not deliver the pinned asset"
+          done
+          [[ "$fetched" == true ]] || exit 1
           mv "$file.part" "$file"
         fi
         printf '%s  %s\n' "$SHA256" "$file" | sha256sum --check

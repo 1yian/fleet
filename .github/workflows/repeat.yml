@@ -40,6 +40,11 @@ jobs:
       - name: Install direnv
         uses: ./.github/actions/install-direnv
         timeout-minutes: 5
+      - name: Install Lavish for the extension review tests
+        uses: ./.github/actions/install-lavish
+        timeout-minutes: 5
+        with:
+          version: 0.1.90
       - name: Run the tests ${{ env.ROUNDS }} times
         run: |
           set -o pipefail
