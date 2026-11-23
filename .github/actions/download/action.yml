@@ -8,7 +8,7 @@ inputs:
     description: Expected SHA-256
     required: true
   fallback-url:
-    description: Optional second URL for the same asset, tried only when every attempt on the first URL fails
+    description: Optional second URL for the same asset, tried when the first URL fails to deliver bytes matching the SHA-256
     default: ""
   retries:
     description: Retries after a failed attempt
