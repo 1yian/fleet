@@ -141,7 +141,8 @@ function run(pi: ExtensionAPI, home: string, ctx: ExtensionContext, config: Brid
 }
 
 function settingsReport(settings: BridgeSettings, home: string): string {
-  if (settings.state === "off") return "discord bridge: off, the required BRIDGE_ settings are not set";
+  if (settings.state === "off")
+    return "discord bridge: off, the required BRIDGE_ settings are not set";
   if (settings.state === "refused") return `discord bridge: off, ${settings.why}`;
   return bridgeReport(readStatus(statusFile(home)), Date.now());
 }
