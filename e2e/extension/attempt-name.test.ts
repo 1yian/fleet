@@ -81,7 +81,7 @@ test("two cards of one lane each run their shell and their jobs under their own 
     "mate",
   );
   h.onModel(() => ({ text: "dispatched both" }), "mate");
-  for (let call = 0; call < 8; call += 1) h.onModel(nameOf, "worker");
+  for (let call = 0; call < 40; call += 1) h.onModel(nameOf, "worker");
   await connected(h);
   mate.prompt("run both checks");
   await waitUntilNamed("c-1-a1", "c-2-a1");
@@ -114,7 +114,7 @@ test("a worker started in a workspace that already exists still runs under its a
     return { tool: "dispatch", args: DISPATCH };
   }, "mate");
   h.onModel(() => ({ text: "dispatched" }), "mate");
-  for (let call = 0; call < 4; call += 1) h.onModel(nameOf, "worker");
+  for (let call = 0; call < 40; call += 1) h.onModel(nameOf, "worker");
   await connected(h);
   mate.prompt("run the checks");
   await waitUntilNamed("c-1-a1");
