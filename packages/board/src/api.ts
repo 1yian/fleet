@@ -79,6 +79,7 @@ export function useChanges(onLost: () => void): number {
     open();
     return () => {
       stopped = true;
+      onLost();
       socket?.close();
     };
   }, [onLost]);
