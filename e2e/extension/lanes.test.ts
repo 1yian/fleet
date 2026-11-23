@@ -236,8 +236,16 @@ for (const fault of ["malformed", "unreadable"]) {
       "main to hear where near's edited preferences were kept despite far's failure",
     );
     assert.match(sessionText(), /preserved as data\/[^\n]* \(on p620\)/);
-    await waitState(p620, "near", "running");
-    const rows = rowsOf(p620, ["status"]);
+    const rows = await until(
+      () => {
+        const read = rowsOf(p620, ["status"]);
+        return read.find((row) => row["lane"] === "near")?.["state"] === "running"
+          ? read
+          : undefined;
+      },
+      "near to read running in one complete status",
+      () => JSON.stringify(rowsOf(p620, ["status"])),
+    );
     assert.equal(rows.find((row) => row["lane"] === "near")?.["state"], "running");
     const unread = rows.find((row) => row["lane"] === "far");
     assert.equal(unread?.["state"], "unknown");

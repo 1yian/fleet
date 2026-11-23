@@ -428,14 +428,25 @@ async function workspace(lane: string): Promise<JsonRecord | undefined> {
   );
 }
 
-async function untilRunning(lane: string): Promise<void> {
+async function statusWhere(
+  lane: string,
+  accepts: (state: unknown) => boolean,
+  failure: string,
+): Promise<unknown> {
   for (let attempt = 0; attempt < 100; attempt++) {
     const rows: unknown = JSON.parse(fleet(["status", "--json"]));
-    if (records(rows).some((row) => row["lane"] === lane && row["state"] === "running")) return;
+    if (records(rows).some((row) => row["lane"] === lane && accepts(row["state"]))) return rows;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  assert.fail(`${lane} never became running`);
+  assert.fail(`${lane} ${failure}`);
 }
+
+async function untilRunning(lane: string): Promise<void> {
+  await statusWhere(lane, (state) => state === "running", "never became running");
+}
+
+const settledStatus = (lane: string): Promise<unknown> =>
+  statusWhere(lane, (state) => state !== "unknown", "stayed unknown");
 
 const action = (lane: string, value: string) => [{ lane, action: value }];
 
@@ -470,6 +481,7 @@ export {
   maintain,
   workspace,
   untilRunning,
+  settledStatus,
   action,
   idlePane,
 };

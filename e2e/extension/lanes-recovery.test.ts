@@ -68,6 +68,12 @@ test("unread transport and nested observations neither report failure nor clear 
   await until(
     () => (sessionText().includes("p620 can be reached again") ? true : undefined),
     "main to report the first complete observation after the outage",
+    () => `${readFileSync(`${control}.log`, "utf8")}\n---\n${sessionText()}`,
+    () =>
+      Math.min(
+        readFileSync(`${control}.log`, "utf8").split("\n").filter(Boolean).length,
+        faults.length + 1,
+      ),
   );
   assert.deepEqual(
     readFileSync(`${control}.log`, "utf8")

@@ -49,7 +49,19 @@ async function watching(kind: Kind): Promise<Watch> {
   }
   const dependency = await newCard(yang, `Dependency ${kind}`);
   const worker = await fleet.cardd.connect(await begin(yang, dependency));
-  if (kind === "worker") return { ref: { worker: dependency.id }, end: () => worker.close() };
+  if (kind === "worker") {
+    const beat = setInterval(() => {
+      worker.send({ t: "activity", state: "idle", progress: true });
+    }, 2_000);
+    beats.push(beat);
+    return {
+      ref: { worker: dependency.id },
+      end: async () => {
+        clearInterval(beat);
+        await worker.close();
+      },
+    };
+  }
   const { job } = check(
     OPS["job.start"].result,
     await worker.call("job.start", { label: "dependency check", command: "make check" }),
@@ -79,10 +91,14 @@ async function park(card: Card, ref: Record<string, number>, until = Date.now() 
   });
 }
 
-const asks = (session: Session, card: Card): Entry[] =>
-  session.entries
-    .map(({ entry }) => entry)
-    .filter((entry) => entry.card === card.id && entry.kind === "hold");
+const asks = (session: Session, card: Card): Entry[] => [
+  ...new Map(
+    session.entries
+      .map(({ entry }) => entry)
+      .filter((entry) => entry.card === card.id && entry.kind === "hold")
+      .map((entry) => [entry.id, entry]),
+  ).values(),
+];
 
 async function decision(card: Card, question = "Which way should this go?"): Promise<void> {
   await yang.call("hold", { card: card.id, question });

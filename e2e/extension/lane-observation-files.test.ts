@@ -14,6 +14,7 @@ import {
   fleetEnv,
   legacyMaintenance,
   maintain,
+  settledStatus,
   typedMaintenance,
   untilRunning,
   workspace,
@@ -98,7 +99,7 @@ test("homes claiming one lane are a single unread record under that lane, and a 
   const readable = copyHome("ops-readable", (config) => {
     config["lane"] = "ops-old";
   });
-  const rows: unknown = JSON.parse(fleet(["status", "--json"]));
+  const rows = await settledStatus("zz");
   assert.deepEqual(
     records(rows).map((row) => [row["lane"], row["state"]]),
     [

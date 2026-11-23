@@ -40,7 +40,7 @@ for (const skip of [false, true]) {
       const worker = await fleet.startWorker("helper-failure", "p620", true);
       const before = await until(async () => {
         const card = await fleet.cardOf(worker.card);
-        return card.activity?.state === "idle" ? card : undefined;
+        return card.status === "paused" && card.activity?.state === "idle" ? card : undefined;
       }, "the worker to pause and idle");
       assert.equal(before.status, "paused");
       const pid = await fleet.piIn(worker.pane);
@@ -113,7 +113,7 @@ async function idlePausedWorker(title: string) {
   const worker = await fleet.startWorker(title, "p620", true);
   await until(async () => {
     const card = await fleet.cardOf(worker.card);
-    return card.activity?.state === "idle" ? card : undefined;
+    return card.status === "paused" && card.activity?.state === "idle" ? card : undefined;
   }, "the worker to pause and idle");
   return { worker, pid: await fleet.piIn(worker.pane) };
 }

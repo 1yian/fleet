@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -121,6 +122,16 @@ export function jobHelpers(current: () => JobState) {
     assert.ok(wrapper !== undefined);
     return wrapper;
   };
+  const pastStartup = (): void => {
+    const db = new DatabaseSync(current().fleet.cardd.db, { timeout: 5000 });
+    try {
+      db.prepare(
+        "UPDATE attempts SET state = 'active', updated_at = ? WHERE card = ? AND state = 'starting'",
+      ).run(Date.now(), current().card.id);
+    } finally {
+      db.close();
+    }
+  };
   const shim = (script: (herdr: string) => string): void => {
     const { jobDir, env } = current();
     const bin = join(jobDir, "bin");
@@ -156,6 +167,7 @@ export function jobHelpers(current: () => JobState) {
     findings,
     commandAwaitingGo,
     wrapperOf,
+    pastStartup,
     shim,
   };
 }
