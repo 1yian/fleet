@@ -66,6 +66,26 @@ const screenRows = async (pane: string): Promise<string[]> =>
 const inventoryRow = (missing: string[]): string =>
   `Missing tiers (${String(missing.length)}): ${missing.join(", ")}`;
 
+function surfacesShown(
+  rows: string[],
+  status: string,
+  widgetStatus: string,
+  heading: string,
+  inventory: string,
+): boolean {
+  const statusRows = rows.flatMap((row, index) => (row.includes(status) ? [index] : []));
+  const widgetAt = statusRows[0] ?? -1;
+  const footerAt = statusRows.length > 1 ? (statusRows[statusRows.length - 1] ?? -1) : -1;
+  const widgetRows = widgetAt < 0 || footerAt < 0 ? [] : rows.slice(widgetAt, footerAt);
+  const inventoryAt = widgetRows.findIndex((row) => row.startsWith(heading));
+  return (
+    footerAt > widgetAt &&
+    squeezed(widgetRows.join("\n")).startsWith(widgetStatus) &&
+    inventoryAt > 0 &&
+    squeezed(widgetRows.slice(inventoryAt).join("\n")).startsWith(inventory)
+  );
+}
+
 async function waitForSurfaces(
   pane: string,
   status: string,
@@ -78,19 +98,7 @@ async function waitForSurfaces(
   const inventory = squeezed(inventoryRow(missing));
   const deadline = Date.now() + WAIT_MS;
   for (;;) {
-    const rows = await screenRows(pane);
-    const statusRows = rows.flatMap((row, index) => (row.includes(status) ? [index] : []));
-    const widgetAt = statusRows[0] ?? -1;
-    const footerAt = statusRows.length > 1 ? (statusRows[statusRows.length - 1] ?? -1) : -1;
-    const widgetRows = widgetAt < 0 || footerAt < 0 ? [] : rows.slice(widgetAt, footerAt);
-    const inventoryAt = widgetRows.findIndex((row) => row.startsWith(heading));
-    if (
-      footerAt > widgetAt &&
-      squeezed(widgetRows.join("\n")).startsWith(widgetStatus) &&
-      inventoryAt > 0 &&
-      squeezed(widgetRows.slice(inventoryAt).join("\n")).startsWith(inventory)
-    )
-      return;
+    if (surfacesShown(await screenRows(pane), status, widgetStatus, heading, inventory)) return;
     assert.ok(
       Date.now() < deadline,
       `timed out waiting for the footer below the widget to show ${label}`,
