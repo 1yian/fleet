@@ -12,6 +12,7 @@ import { records } from "../support/json.ts";
 import { addRemote, git, landOnRemote } from "../support/remote.ts";
 import { tempDir } from "../support/run-root.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
+import { writeSteadyPi } from "../support/tool-stubs.ts";
 
 const WAIT_MS = 120_000;
 const BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
@@ -36,6 +37,7 @@ let lab: HerdrLab;
 let far: HerdrLab;
 let here: Scratch;
 let p620: Scratch;
+let steady: string;
 let tokens: Record<string, string>;
 beforeEach(async () => {
   h = await Harness.start();
@@ -58,7 +60,12 @@ beforeEach(async () => {
   cardd = await Cardd.start();
   tokens = { main: cardd.addLane("main", undefined, here.root) };
   const env = { ...h.piEnv("mate"), PATH: `${BIN}:${process.env["PATH"] ?? ""}` };
-  lab = await HerdrLab.start({ ...env, FLEET_SUPERVISE_MS: "1000" });
+  steady = tempDir("steady-pi-");
+  lab = await HerdrLab.start({
+    ...env,
+    PATH: `${steady}:${env.PATH}`,
+    FLEET_SUPERVISE_MS: "1000",
+  });
   far = await HerdrLab.start(env);
   configureMain(here, cardd.url, tokens["main"], {
     host: "local",
@@ -251,6 +258,7 @@ test("a busy non-mate shell cannot replace stored placement when neither home ha
 });
 
 test("arrange preserves hints without an identity and refreshes them with the lane home's name", async () => {
+  writeSteadyPi(steady);
   const heldEnv = { HERDR_SESSION: lab.name };
   assert.throws(() => p620.fleet(["status", "--placement"], heldEnv), { status: 2 });
   assert.throws(() => p620.fleet(["up", "ops", "--placement", "--json"], heldEnv), { status: 2 });

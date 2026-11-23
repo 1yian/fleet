@@ -9,6 +9,7 @@ import { Harness } from "./harness.ts";
 import { HerdrLab } from "./herdr.ts";
 import { isRecord, records, type JsonRecord } from "./json.ts";
 import { configureMain, mateArgs, Scratch, type ObservationTiming } from "./scratch.ts";
+import { writeSteadyPi } from "./tool-stubs.ts";
 
 const NODE_BIN = fileURLToPath(new URL("../../node_modules/.bin", import.meta.url));
 
@@ -370,13 +371,7 @@ function addLane(lane: string): string {
 }
 
 export function useSteadyPi(): void {
-  writeFileSync(
-    join(bin, "pi"),
-    '#!/usr/bin/env node\nprocess.title = "pi";\nprocess.stdin.resume();\n',
-    {
-      mode: 0o755,
-    },
-  );
+  writeSteadyPi(bin);
 }
 
 const faultLog = () => join(bin, "observations");
