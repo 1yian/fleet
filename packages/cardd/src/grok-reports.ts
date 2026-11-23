@@ -6,15 +6,15 @@ import { addEntry, cardEntries, loadCard, transaction } from "./store.ts";
 
 const AUTHOR = "grok-bot";
 
-function currentAttempt(db: DatabaseSync, card: number, assignment: string): number | undefined {
-  const attempt = db
+function attemptsOf(db: DatabaseSync, card: number, assignment: string): string[] {
+  return db
     .prepare(
       `SELECT json_extract(fields, '$.attempt') AS attempt FROM entries WHERE card = ? AND kind = 'note'
        AND json_extract(fields, '$.grok') = 'assignment' AND json_extract(fields, '$.assignment') = ?
-       ORDER BY id DESC LIMIT 1`,
+       ORDER BY id DESC`,
     )
-    .get(card, assignment)?.["attempt"];
-  return typeof attempt === "number" ? attempt : undefined;
+    .all(card, assignment)
+    .flatMap((row) => (typeof row["attempt"] === "string" ? [row["attempt"]] : []));
 }
 
 function recordedResult(entries: readonly Entry[], assignment: string): Entry | undefined {
@@ -23,12 +23,11 @@ function recordedResult(entries: readonly Entry[], assignment: string): Entry | 
   );
 }
 
-function retryAttempt(db: DatabaseSync, card: Card, assignment: string): number {
-  const attempt = currentAttempt(db, card.id, assignment);
-  if (attempt === undefined) throw new Error("no such Grok Bot assignment on this card");
+function requireRetryable(db: DatabaseSync, card: Card, assignment: string): void {
+  if (attemptsOf(db, card.id, assignment).length === 0)
+    throw new Error("no such Grok Bot assignment on this card");
   if (recordedResult(cardEntries(db, card.id), assignment) !== undefined)
     throw new Error("this Grok Bot assignment already has a result; create a new assignment");
-  return attempt + 1;
 }
 
 export function assignGrokReport(
@@ -40,7 +39,8 @@ export function assignGrokReport(
     throw new Error("the Grok Bot reporting connector is not enabled");
   requireOpen(db, card);
   const assignment = previous ?? randomUUID();
-  const attempt = previous === undefined ? 1 : retryAttempt(db, card, previous);
+  if (previous !== undefined) requireRetryable(db, card, previous);
+  const attempt = randomUUID();
   addEntry(
     db,
     {
@@ -63,10 +63,10 @@ export function recordGrokReport(
   { card: id, assignment, attempt, text, sources }: GrokReportArgs,
 ) {
   return transaction(db, () => {
-    const current = currentAttempt(db, id, assignment);
-    if (current === undefined || attempt > current) return { receipt: "uncorrelated" } as const;
+    const attempts = attemptsOf(db, id, assignment);
+    if (!attempts.includes(attempt)) return { receipt: "uncorrelated" } as const;
     const { card, entries } = loadCard(db, id);
-    if (attempt < current || card.status === "done" || card.status === "dropped")
+    if (attempt !== attempts[0] || card.status === "done" || card.status === "dropped")
       return { receipt: "stale" } as const;
     const prior = recordedResult(entries, assignment);
     if (prior !== undefined) {

@@ -131,7 +131,8 @@ test("the connector rejects a superseded attempt and a closed card", async () =>
   const card = await newCard(started.main, "Check unavailable sources");
   const first = await assign(started, card);
   const second = await assign(started, card, first.assignment);
-  assert.deepEqual(second, { ...first, attempt: 2 });
+  assert.deepEqual({ ...second, attempt: first.attempt }, first);
+  assert.notEqual(second.attempt, first.attempt);
   assert.deepEqual((await view(started, card)).attempts, []);
   const result = {
     text: "The source could not be reached.",
@@ -139,7 +140,7 @@ test("the connector rejects a superseded attempt and a closed card", async () =>
   };
   assert.deepEqual(await tool(started, { ...first, ...result }), receipt("stale"));
   assert.deepEqual(
-    await tool(started, { ...first, attempt: 3, ...result }),
+    await tool(started, { ...first, attempt: randomUUID(), ...result }),
     receipt("uncorrelated"),
   );
   const closing = await assign(started, card);
@@ -216,7 +217,7 @@ test("Pi issues the assignment and observes the external report before its own t
         JSON.stringify({
           ...report,
           assignment: assigned.assignment,
-          attempt: 1,
+          attempt: assigned.attempt,
         }),
       ),
     );

@@ -1,9 +1,11 @@
 import Type, { type Static } from "typebox";
 
+const OPAQUE_ID = "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$";
+
 const Correlation = {
   card: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
-  assignment: Type.String({ pattern: "^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$" }),
-  attempt: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+  assignment: Type.String({ pattern: OPAQUE_ID }),
+  attempt: Type.String({ pattern: OPAQUE_ID }),
 };
 
 export const GrokReportArgs = Type.Object(

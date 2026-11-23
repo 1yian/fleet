@@ -115,15 +115,26 @@ test("a Grok assignment's correlation values reach only the owning mate", async 
     assert.equal(entry.fields["grok"], "assignment");
     assert.ok(!("assignment" in entry.fields) && !("attempt" in entry.fields));
   }
-  assert.ok(
-    !JSON.stringify([
-      await view(started, card),
-      await started.cardd.thread(card.id),
-      await started.cardd.board(),
-    ]).includes(assignment.assignment),
+  const successor = check(
+    OPS["grok.assign"].result,
+    await cleo.call("grok.assign", { card: card.id, assignment: assignment.assignment }),
   );
-  const accepted = await tool(started, {
+  assert.equal(successor.assignment, assignment.assignment);
+  const shown = JSON.stringify([
+    await view(started, card),
+    await started.cardd.thread(card.id),
+    await started.cardd.board(),
+  ]);
+  for (const hidden of [assignment.assignment, assignment.attempt, successor.attempt])
+    assert.ok(!shown.includes(hidden));
+  const revoked = await tool(started, {
     ...assignment,
+    text: "from the superseded recipient",
+    sources: "unavailable",
+  });
+  assert.deepEqual(revoked, receipt("stale"));
+  const accepted = await tool(started, {
+    ...successor,
     text: "owner-handed report",
     sources: ["https://example.test/owner"],
   });
