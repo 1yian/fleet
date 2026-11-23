@@ -60,6 +60,7 @@ type ModelHandler = (turns: Turn[]) => Move | Failure | Promise<Move | Failure>;
 const PI_BIN = fileURLToPath(new URL("../../node_modules/.bin/pi", import.meta.url));
 const SUPPORT = fileURLToPath(new URL(".", import.meta.url));
 const WAIT_MS = 15_000;
+export const COLD_START_WAIT_MS = 60_000;
 
 function readBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -338,8 +339,9 @@ export class Harness {
     match: (event: JsonRecord) => boolean,
     n: number,
     what: string,
+    waitMs = WAIT_MS,
   ): Promise<JsonRecord> {
-    return poll(() => this.events.filter(match)[n - 1], what);
+    return poll(() => this.events.filter(match)[n - 1], what, waitMs);
   }
 
   async waitForWire(match: (call: WireCall) => boolean, what: string): Promise<WireCall> {

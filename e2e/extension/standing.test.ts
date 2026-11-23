@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
 import { Cardd } from "../support/cardd.ts";
-import { Harness, type Turn } from "../support/harness.ts";
+import { COLD_START_WAIT_MS, Harness, type Turn } from "../support/harness.ts";
 import { HerdrLab } from "../support/herdr.ts";
 import { optionalString, records } from "../support/json.ts";
 import { configureMain, mateArgs, Scratch, startMain } from "../support/scratch.ts";
@@ -143,7 +143,12 @@ async function asked(word: string): Promise<Turn[]> {
 }
 
 async function connected(mates: number): Promise<void> {
-  await h.waitForNth((event) => event["type"] === "fleet_connected", mates, "the mates to join");
+  await h.waitForNth(
+    (event) => event["type"] === "fleet_connected",
+    mates,
+    "the mates to join",
+    COLD_START_WAIT_MS,
+  );
 }
 
 async function reloaded(home: string): Promise<void> {
