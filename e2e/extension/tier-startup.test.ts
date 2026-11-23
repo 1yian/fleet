@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, test } from "node:test";
@@ -58,6 +58,74 @@ afterEach(async (t) => {
   if (failed !== undefined) throw new Error(`cleanup failed: ${String(failed.reason)}`);
 });
 
+const squeezed = (text: string): string => text.replace(/\s+/g, "");
+
+const screenRows = async (pane: string): Promise<string[]> =>
+  (await lab.screen(pane)).split("\n").map((row) => row.trim());
+
+const inventoryRow = (missing: string[]): string =>
+  `Missing tiers (${String(missing.length)}): ${missing.join(", ")}`;
+
+function surfacesShown(
+  rows: string[],
+  status: string,
+  widgetStatus: string,
+  heading: string,
+  inventory: string,
+): boolean {
+  const statusRows = rows.flatMap((row, index) => (row.includes(status) ? [index] : []));
+  const widgetAt = statusRows[0] ?? -1;
+  const footerAt = statusRows.length > 1 ? (statusRows[statusRows.length - 1] ?? -1) : -1;
+  const widgetRows = widgetAt < 0 || footerAt < 0 ? [] : rows.slice(widgetAt, footerAt);
+  const inventoryAt = widgetRows.findIndex((row) => row.startsWith(heading));
+  return (
+    footerAt > widgetAt &&
+    squeezed(widgetRows.join("\n")).startsWith(widgetStatus) &&
+    inventoryAt > 0 &&
+    squeezed(widgetRows.slice(inventoryAt).join("\n")).startsWith(inventory)
+  );
+}
+
+async function waitForSurfaces(
+  pane: string,
+  status: string,
+  path: string,
+  missing: string[],
+  label: string,
+): Promise<void> {
+  const widgetStatus = squeezed(`${status}: ${path}`);
+  const heading = `Missing tiers (${String(missing.length)}): `;
+  const inventory = squeezed(inventoryRow(missing));
+  const deadline = Date.now() + WAIT_MS;
+  for (;;) {
+    if (surfacesShown(await screenRows(pane), status, widgetStatus, heading, inventory)) return;
+    assert.ok(
+      Date.now() < deadline,
+      `timed out waiting for the footer below the widget to show ${label}`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+async function waitForSurfacesCleared(
+  pane: string,
+  status: string,
+  missing: string[],
+  label: string,
+): Promise<void> {
+  const inventory = inventoryRow(missing);
+  const deadline = Date.now() + WAIT_MS;
+  for (;;) {
+    const rows = await screenRows(pane);
+    if (!rows.some((row) => row.includes(status) || row === inventory)) return;
+    assert.ok(
+      Date.now() < deadline,
+      `timed out waiting for the footer and widget to drop ${label}`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 const template = (): string =>
   join(realpathSync(scratch.root), "packages/extension/templates/tiers.json");
 
@@ -89,10 +157,46 @@ test("main started directly with pi names every missing tier, does not join the 
     h.events.some((event) => event["type"] === "fleet_connected"),
     false,
   );
+  const status = "fleet: not joined - tiers file invalid (2 tiers not declared)";
+  await waitForSurfaces(pane, status, file, ["nm-fixer", "reviewer"], "the not-joined status");
 
   copyFileSync(template(), file);
   await lab.submit(pane, "/probe-reload");
   await h.waitFor((event) => event["type"] === "fleet_connected", "main to join the fleet");
+  await waitForSurfacesCleared(
+    pane,
+    "not joined - tiers",
+    ["nm-fixer", "reviewer"],
+    "the not-joined status",
+  );
+});
+
+test("main tells a missing tiers file from an invalid one in its status line", async () => {
+  configureMain(scratch, cardd.url, mainToken);
+  const file = join(h.dir, "agent", "tiers.json");
+  rmSync(file);
+  const pane = await startMain(lab, scratch, h);
+  await waitForSurfaces(
+    pane,
+    `fleet: not joined - tiers file missing (${String(TIERS.length)} tiers)`,
+    file,
+    TIERS,
+    "the missing-file status",
+  );
+
+  writeFileSync(file, "{ not json");
+  await lab.submit(pane, "/probe-reload");
+  await waitForSurfaces(
+    pane,
+    `fleet: not joined - tiers file invalid (not valid JSON)`,
+    file,
+    TIERS,
+    "the invalid-file status",
+  );
+  assert.equal(
+    h.events.some((event) => event["type"] === "fleet_connected"),
+    false,
+  );
 });
 
 test("main names every missing tier even when its lane token cannot be read", async () => {
