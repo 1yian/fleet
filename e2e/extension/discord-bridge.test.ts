@@ -347,7 +347,7 @@ test("without any settings the bridge stays off and says nothing", async () => {
 
   assert.equal(discord.requests, 0, "the bridge called Discord with no settings");
   assert.deepEqual(pi.uiRequests.filter(isDiscordNotice), []);
-  assert.equal(await askBridge(pi), "discord bridge: off, no BRIDGE_ settings are set");
+  assert.equal(await askBridge(pi), "discord bridge: off, the required BRIDGE_ settings are not set");
   assert.equal(statusText(home()), undefined);
 });
 
