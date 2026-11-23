@@ -277,15 +277,18 @@ export function thread(db: DatabaseSync, id: number): Thread {
   const paths = evidencePaths(entries);
   return {
     card: getCard(db, id),
-    entries: entries.filter(inThread).map(withoutHandoff).map((entry) => ({
-      ...entry,
-      body: withoutPaths(entry.body, paths),
-      fields: Object.fromEntries(
-        Object.entries(entry.fields).filter(
-          ([key]) => key !== "evidence" && key !== "reviewUpstream",
+    entries: entries
+      .filter(inThread)
+      .map(withoutHandoff)
+      .map((entry) => ({
+        ...entry,
+        body: withoutPaths(entry.body, paths),
+        fields: Object.fromEntries(
+          Object.entries(entry.fields).filter(
+            ([key]) => key !== "evidence" && key !== "reviewUpstream",
+          ),
         ),
-      ),
-    })),
+      })),
   };
 }
 
