@@ -22,7 +22,6 @@ runs:
           --ignore-scripts --no-audit --no-fund --prefer-offline \
           --fetch-retries=2 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=3000 --fetch-timeout=30000
         echo "$RUNNER_TEMP/lavish/node_modules/.bin" >> "$GITHUB_PATH"
-        "$RUNNER_TEMP/lavish/node_modules/.bin/lavish-axi" --version
     - if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:

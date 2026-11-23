@@ -7,6 +7,12 @@ inputs:
   sha256:
     description: Expected SHA-256
     required: true
+  max-time:
+    description: Seconds allowed for one transfer attempt
+    default: "45"
+  retry-max-time:
+    description: Seconds after which no further attempt starts
+    default: "60"
 outputs:
   path:
     description: Path to the verified asset
@@ -24,13 +30,15 @@ runs:
       env:
         URL: ${{ inputs.url }}
         SHA256: ${{ inputs.sha256 }}
+        MAX_TIME: ${{ inputs.max-time }}
+        RETRY_MAX_TIME: ${{ inputs.retry-max-time }}
         CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
       run: |
         dir="$RUNNER_TEMP/fleet-downloads/$SHA256"
         file="$dir/${URL##*/}"
         if [[ "$CACHE_HIT" != true ]]; then
           mkdir -p "$dir"
-          curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 45 --retry-max-time 60 -o "$file.part" "$URL"
+          curl -fsSL --retry 3 --retry-all-errors --connect-timeout 10 --max-time "$MAX_TIME" --retry-max-time "$RETRY_MAX_TIME" -o "$file.part" "$URL"
           mv "$file.part" "$file"
         fi
         printf '%s  %s\n' "$SHA256" "$file" | sha256sum --check

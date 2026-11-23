@@ -15,4 +15,3 @@ runs:
         mkdir -p "$RUNNER_TEMP/node"
         tar -xJf "$ASSET" -C "$RUNNER_TEMP/node" --strip-components=1
         echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
-        "$RUNNER_TEMP/node/bin/node" --version

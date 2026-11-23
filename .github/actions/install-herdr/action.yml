@@ -15,4 +15,3 @@ runs:
         mkdir -p "$RUNNER_TEMP/bin"
         install -m 755 "$ASSET" "$RUNNER_TEMP/bin/herdr"
         echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-        "$RUNNER_TEMP/bin/herdr" --version

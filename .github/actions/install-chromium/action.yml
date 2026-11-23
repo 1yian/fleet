@@ -17,11 +17,15 @@ runs:
       with:
         url: https://cdn.playwright.dev/builds/cft/156.0.8078.4/linux64/chrome-linux64.zip
         sha256: 43fd31766c7533a02dda2ded5ad50c2f861cd5400be7509c0abad71129f79d79
+        max-time: "150"
+        retry-max-time: "240"
     - id: headless-shell
       uses: ./.github/actions/download
       with:
         url: https://cdn.playwright.dev/builds/cft/156.0.8078.4/linux64/chrome-headless-shell-linux64.zip
         sha256: c3e50596aef52c58f8fda3c6b3411c33d34c88b177b3ed1c2243359fd3b8ba20
+        max-time: "150"
+        retry-max-time: "240"
     - id: ffmpeg
       uses: ./.github/actions/download
       with:

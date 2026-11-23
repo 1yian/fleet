@@ -18,4 +18,3 @@ runs:
         echo "BUN_INSTALL=$RUNNER_TEMP/bun" >> "$GITHUB_ENV"
         echo "BUN_INSTALL_CACHE_DIR=$RUNNER_TEMP/bun/install/cache" >> "$GITHUB_ENV"
         echo "$RUNNER_TEMP/bun/bin" >> "$GITHUB_PATH"
-        "$RUNNER_TEMP/bun/bin/bun" --version
