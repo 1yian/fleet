@@ -10,6 +10,7 @@ import {
   WORKER_WAIT_MS,
   type DispatchLab,
 } from "../support/dispatch-lab.ts";
+import { records } from "../support/json.ts";
 import { poll, type Move, type Turn } from "../support/harness.ts";
 import { tempDir } from "../support/run-root.ts";
 import { DISPATCH } from "../support/scratch-files.ts";
@@ -95,11 +96,21 @@ test("a worker started in a workspace that already exists still runs under its a
   const { h, mate, lab, clone } = parts;
   const path = `${clone}.worktrees/c-1-a1`;
   h.onModel(() => ({ tool: "board", args: {} }), "mate");
+  let created: unknown;
   h.onModel(async () => {
     execFileSync("git", ["-C", clone, "worktree", "add", "-b", "c-1-a1", path, "main"], {
       stdio: "ignore",
     });
-    await lab.run(["workspace", "create", "--cwd", path, "--label", "run-the-tests", "--no-focus"]);
+    const made = await lab.run([
+      "workspace",
+      "create",
+      "--cwd",
+      path,
+      "--label",
+      "run-the-tests",
+      "--no-focus",
+    ]);
+    created = records([made["workspace"]])[0]?.["workspace_id"];
     return { tool: "dispatch", args: DISPATCH };
   }, "mate");
   h.onModel(() => ({ text: "dispatched" }), "mate");
@@ -108,6 +119,15 @@ test("a worker started in a workspace that already exists still runs under its a
   mate.prompt("run the checks");
   await waitUntilNamed("c-1-a1");
 
+  assert.equal(typeof created, "string", "the fixture workspace id");
+  const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]).filter(
+    (each) => each["label"] === "run-the-tests",
+  );
+  assert.deepEqual(
+    workspaces.map((each) => each["workspace_id"]),
+    [created],
+    "the worker ran in the pre-created workspace, with no second one opened",
+  );
   assert.equal(seen("shell", "c-1-a1"), "c-1-a1", "the shell of the reused workspace");
   assert.equal(seen("job", "c-1-a1"), "c-1-a1", "a run_long job of the reused workspace");
 });
