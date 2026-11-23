@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
+import { join } from "node:path";
 import { bridgeSettings, EXTENSION } from "../support/bridge-env.ts";
+import { askBridge, isStamp, stampAt, waitForStatus } from "../support/bridge-status.ts";
 import { Cardd } from "../support/cardd.ts";
 import { FakeDiscord } from "../support/fake-discord.ts";
 import { Harness, poll, type Pi } from "../support/harness.ts";
@@ -23,6 +25,8 @@ afterEach(async () => {
   await discord.stop();
   await cardd.stop();
 });
+
+const home = (): string => join(h.dir, "work");
 
 const bridge = (more: Record<string, string> = {}): Record<string, string> =>
   bridgeSettings(discord, more);
@@ -70,10 +74,23 @@ test("the bot shows online while main runs the bridge and offline as soon as mai
   await discord.waitForBotStatus("online", "the bot to show online");
   assert.equal(discord.gateways.length, 1);
   assert.equal(discord.gateways[0]?.status, "online");
+  const read = await waitForStatus(home(), "a heartbeat acknowledgement", (status) =>
+    isStamp(status("presence.ackAt")),
+  );
+  assert.equal(read("presence.connected"), true);
+  assert.ok(isStamp(read("presence.readyAt")));
+  assert.equal(read("presence.lostAt"), "never");
+  assert.match(await askBridge(pi), /presence .*: ok\n {2}connected: yes\n {2}last READY: \S+/);
 
   await pi.end("SIGTERM");
   await discord.waitForBotStatus("offline", "the bot to show offline");
   assert.deepEqual(closeCodes(), [NORMAL_CLOSE]);
+  const stopped = await waitForStatus(
+    home(),
+    "the stopped status",
+    (status) => status("state") === "stopped",
+  );
+  assert.equal(stopped("presence.connected"), false);
 });
 
 test("a reload hands the bot to one new connection, however often main reloads", async () => {
@@ -93,12 +110,51 @@ test("a reload hands the bot to one new connection, however often main reloads",
   assert.equal(discord.botStatus, "online");
 });
 
-test("after the gateway drops the connection the bot identifies as online again", async () => {
-  startMain(bridge());
-  await waitForConnections(1);
+async function acknowledgedOnce(): Promise<void> {
+  await waitForStatus(home(), "a heartbeat acknowledgement", (status) =>
+    isStamp(status("presence.ackAt")),
+  );
+}
 
+async function assertRejoined(pi: Pi): Promise<void> {
+  const read = await waitForStatus(
+    home(),
+    "presence to report the loss and the new READY",
+    (status) =>
+      isStamp(status("presence.lostAt")) &&
+      status("presence.connected") === true &&
+      stampAt(status("presence.readyAt")) >= stampAt(status("presence.lostAt")),
+  );
+  assert.equal(read("state"), "running");
+  assert.ok(
+    stampAt(read("presence.ackAt")) < stampAt(read("presence.readyAt")),
+    "the earlier acknowledgement was lost at READY",
+  );
+  const held = await askBridge(pi);
+  assert.match(
+    held,
+    /presence .*: UNKNOWN, no heartbeat acknowledged on this connection yet\n {2}connected: yes\n/,
+  );
+  assert.ok(held.includes(`last heartbeat ack: ${String(read("presence.ackAt"))}\n`), held);
+
+  discord.releaseAcks();
+  await waitForStatus(
+    home(),
+    "an acknowledgement on the new connection",
+    (status) => stampAt(status("presence.ackAt")) > stampAt(status("presence.readyAt")),
+  );
+  assert.match(await askBridge(pi), /presence .*: ok\n {2}connected: yes\n/);
+}
+
+test("after the gateway drops the connection the bot identifies as online again", async () => {
+  const pi = startMain(bridge());
+  await waitForConnections(1);
+  await acknowledgedOnce();
+
+  discord.holdAcks();
   discord.dropGateways();
   await waitForConnections(2);
+  await assertRejoined(pi);
 
   assert.equal(discord.gateways[1]?.status, "online");
   assert.equal(discord.liveGateways, 1);
@@ -106,11 +162,14 @@ test("after the gateway drops the connection the bot identifies as online again"
 });
 
 test("a gateway that stops answering heartbeats is replaced by a fresh connection", async () => {
-  startMain(bridge());
+  const pi = startMain(bridge());
   await waitForConnections(1);
+  await acknowledgedOnce();
 
+  discord.holdAcks();
   discord.muteGateways();
   await waitForConnections(2);
+  await assertRejoined(pi);
 
   assert.equal(discord.gateways[0]?.closeCode, ABANDONED_CLOSE);
   assert.equal(discord.gateways[1]?.status, "online");

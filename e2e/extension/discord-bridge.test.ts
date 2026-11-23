@@ -11,6 +11,13 @@ import {
   ONLINE,
   userTexts,
 } from "../support/bridge-env.ts";
+import {
+  askBridge,
+  isStamp,
+  stampAt,
+  statusText,
+  waitForStatus,
+} from "../support/bridge-status.ts";
 import { FakeDiscord } from "../support/fake-discord.ts";
 import { Harness, poll, type Pi } from "../support/harness.ts";
 import { tempDir } from "../support/run-root.ts";
@@ -84,6 +91,79 @@ test("an allowed user's message reaches main, and main's answer is posted back w
   assert.ok(discord.typings >= 1, "no typing indicator was shown while main worked");
   assert.equal(discord.rejected, 0, "a request went out without the bot token");
   assert.deepEqual(posted(), ["The deploy is done."]);
+});
+
+test("the bridge status says when each layer last worked, and holds nothing private", async () => {
+  h.onModel(() => ({ text: "The deploy is done." }));
+  const pi = startMain(bridge({ BRIDGE_GUILD_ID: discord.guild }));
+  await online();
+  const started = await waitForStatus(home(), "the online notice in the status", (status) =>
+    isStamp(status("post.okAt")),
+  );
+  const noticeAt = stampAt(started("post.okAt"));
+
+  discord.say({ author: CAPTAIN, content: "Is the deploy done?" });
+  await discord.waitForPost((post) => post.content === "The deploy is done.", "main's answer");
+  const read = await waitForStatus(
+    home(),
+    "every layer to report a success",
+    (status) =>
+      ["poll.okAt", "injection.okAt", "presence.ackAt"].every((path) => isStamp(status(path))) &&
+      stampAt(status("post.okAt")) > noticeAt,
+  );
+
+  assert.equal(read("state"), "running");
+  assert.equal(read("poll.failedAt"), "never");
+  assert.equal(read("injection.failedAt"), "never");
+  assert.equal(read("post.failedAt"), "never");
+  assert.equal(read("presence.connected"), true);
+  assert.ok(isStamp(read("presence.readyAt")));
+  assert.equal(read("speech.engine"), "local");
+  assert.equal(read("speech.result"), "never");
+  const text = statusText(home()) ?? "";
+  for (const secret of [
+    discord.token,
+    discord.channel,
+    discord.guild,
+    discord.bot,
+    CAPTAIN,
+    "Is the deploy done?",
+    "The deploy is done.",
+  ])
+    assert.ok(!text.includes(secret), `the status file holds ${secret}`);
+
+  const report = await askBridge(pi);
+  assert.match(report, /^discord bridge: running since /);
+  assert.match(report, /polling Discord: ok\n {2}last success: \d{4}-\S+Z\n {2}last error: never/);
+  assert.match(report, /injection into this session: last attempt succeeded/);
+  assert.match(report, /posting to Discord: last attempt succeeded/);
+  assert.match(report, /presence .*: ok\n {2}connected: yes/);
+  assert.match(report, /speech \(local\): never used$/);
+});
+
+test("a failing channel read shows as failing, and the next good read shows recovery", async () => {
+  h.onModel(() => ({ text: "Caught up." }));
+  const pi = startMain(bridge());
+  await online();
+  await waitForStatus(home(), "the first good poll", (status) => isStamp(status("poll.okAt")));
+
+  discord.readsFail = true;
+  const failing = await waitForStatus(home(), "a poll failure", (status) =>
+    isStamp(status("poll.failedAt")),
+  );
+  const failure = stampAt(failing("poll.failedAt"));
+  assert.match(await askBridge(pi), /polling Discord: FAILING\n/);
+
+  discord.say({ author: CAPTAIN, content: "Sent while Discord reads failed" });
+  discord.readsFail = false;
+  assert.deepEqual(userTexts(await h.waitForCall(0)), ["Sent while Discord reads failed"]);
+  const recovered = await waitForStatus(
+    home(),
+    "a good poll after the failure",
+    (status) => stampAt(status("poll.okAt")) > failure && isStamp(status("injection.okAt")),
+  );
+  assert.ok(stampAt(recovered("poll.failedAt")) >= failure);
+  assert.match(await askBridge(pi), /polling Discord: ok\n/);
 });
 
 test("only users on the allowlist can speak to main: other users and other bots are ignored", async () => {
@@ -267,6 +347,11 @@ test("without any settings the bridge stays off and says nothing", async () => {
 
   assert.equal(discord.requests, 0, "the bridge called Discord with no settings");
   assert.deepEqual(pi.uiRequests.filter(isDiscordNotice), []);
+  assert.equal(
+    await askBridge(pi),
+    "discord bridge: off, the required BRIDGE_ settings are not set",
+  );
+  assert.equal(statusText(home()), undefined);
 });
 
 test("with a token and a channel but no allowlist the bridge stays off and says why", async () => {
@@ -277,6 +362,7 @@ test("with a token and a channel but no allowlist the bridge stays off and says 
     "discord bridge: BRIDGE_ALLOWED_USER_IDS must be set, so the bridge stays off",
   );
   await askOnce(pi);
+  assert.equal(await askBridge(pi), "discord bridge: off, BRIDGE_ALLOWED_USER_IDS must be set");
 
   assert.equal(discord.requests, 0, "the bridge called Discord with no allowlist");
 });
@@ -330,10 +416,19 @@ test("a channel in another guild than BRIDGE_GUILD_ID keeps the bridge off", asy
 
   assert.deepEqual(discord.posts, []);
   assert.equal(discord.typings, 0);
+  await waitForStatus(
+    home(),
+    "the status to name the guild mismatch",
+    (status) => status("state") === "wrong-guild",
+  );
+  const report = await askBridge(pi);
+  assert.match(report, /^discord bridge: off: BRIDGE_CHANNEL_ID is not in BRIDGE_GUILD_ID/);
+  assert.match(report, /polling Discord: UNKNOWN/);
+  assert.match(report, /posting to Discord: never happened/);
 });
 
 test("a bot token that Discord refuses is reported in the bridge log", async () => {
-  startMain(bridge({ BRIDGE_BOT_TOKEN: "a-token-discord-refuses" }));
+  const pi = startMain(bridge({ BRIDGE_BOT_TOKEN: "a-token-discord-refuses" }));
   const file = join(home(), "state", "discord-bridge", "bridge.log");
   const lines = await poll(() => {
     const text = existsSync(file) ? readFileSync(file, "utf8") : "";
@@ -356,6 +451,20 @@ test("a bot token that Discord refuses is reported in the bridge log", async () 
   );
   assert.ok(!lines.join("\n").includes("a-token-discord-refuses"), "the log holds the token");
   assert.deepEqual(discord.posts, []);
+
+  const read = await waitForStatus(home(), "the failed post in the status", (status) =>
+    isStamp(status("post.failedAt")),
+  );
+  assert.equal(read("post.okAt"), "never");
+  assert.equal(read("poll.okAt"), "never");
+  assert.equal(read("presence.connected"), false);
+  assert.equal(read("presence.readyAt"), "never");
+  assert.ok(!(statusText(home()) ?? "").includes("a-token-discord-refuses"));
+  const report = await askBridge(pi);
+  assert.match(report, /posting to Discord: FAILING/);
+  assert.match(report, /polling Discord: (FAILING|UNKNOWN)/);
+  assert.match(report, /presence .*: UNKNOWN, not connected yet/);
+  assert.doesNotMatch(report, /: ok\n/);
 });
 
 test("a second mate never starts the bridge, though main does with the same settings", async () => {

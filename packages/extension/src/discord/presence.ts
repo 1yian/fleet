@@ -1,5 +1,6 @@
 import { isRecord } from "../lane-config.ts";
 import type { Discord } from "./discord.ts";
+import type { Health } from "./health.ts";
 import { describeError, type Log } from "./log.ts";
 
 const FIRST_RETRY_MS = 5_000;
@@ -52,6 +53,7 @@ export class Presence {
   private readonly discord: Discord;
   private readonly token: string;
   private readonly log: Log;
+  private readonly health: Health;
   private socket: WebSocket | undefined;
   private heartbeat: ReturnType<typeof setTimeout> | undefined;
   private retry: ReturnType<typeof setTimeout> | undefined;
@@ -61,10 +63,11 @@ export class Presence {
   private acknowledged = true;
   private stopped = false;
 
-  constructor(discord: Discord, token: string, log: Log) {
+  constructor(discord: Discord, token: string, log: Log, health: Health) {
     this.discord = discord;
     this.token = token;
     this.log = log;
+    this.health = health;
   }
 
   start(): void {
@@ -117,6 +120,7 @@ export class Presence {
     this.socket = undefined;
     clearTimeout(this.heartbeat);
     this.log(why);
+    this.health.lost();
     if (this.readyAt !== undefined && Date.now() - this.readyAt >= STABLE_MS)
       this.retryMs = FIRST_RETRY_MS;
     this.readyAt = undefined;
@@ -151,10 +155,20 @@ export class Presence {
   private handle(socket: WebSocket, frame: Frame): void {
     if (frame.op === HELLO) this.hello(socket, frame.data);
     else if (frame.op === HEARTBEAT) this.send(socket, { op: HEARTBEAT, d: this.sequence });
-    else if (frame.op === HEARTBEAT_ACK) this.acknowledged = true;
+    else if (frame.op === HEARTBEAT_ACK) this.acknowledge();
     else if (frame.op === RECONNECT) this.abandon(socket, "the gateway asked to reconnect");
     else if (frame.op === INVALID_SESSION) this.abandon(socket, "the gateway ended the session");
-    else if (frame.op === DISPATCH && frame.event === "READY") this.readyAt = Date.now();
+    else if (frame.op === DISPATCH && frame.event === "READY") this.becameReady();
+  }
+
+  private acknowledge(): void {
+    this.acknowledged = true;
+    this.health.acknowledged();
+  }
+
+  private becameReady(): void {
+    this.readyAt = Date.now();
+    this.health.ready();
   }
 
   private hello(socket: WebSocket, data: unknown): void {
@@ -163,6 +177,7 @@ export class Presence {
       this.abandon(socket, "the gateway sent no heartbeat interval");
       return;
     }
+    this.health.heartbeatEvery(interval);
     this.beatAfter(socket, interval, interval * Math.random());
     this.send(socket, {
       op: IDENTIFY,

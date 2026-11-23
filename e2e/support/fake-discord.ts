@@ -27,6 +27,8 @@ export interface GatewaySession {
   identified: boolean;
   open: boolean;
   muted: boolean;
+  held: boolean;
+  release: () => void;
   status: string | undefined;
   heartbeats: number;
   closeCode: number | undefined;
@@ -39,6 +41,7 @@ interface Stored {
 
 const FIRST_ID = 1_100_000_000_000_000_000n;
 const HEARTBEAT_MS = 300;
+const HELD_HEARTBEAT_MS = 600_000;
 
 function readBytes(request: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -78,6 +81,8 @@ export class FakeDiscord {
   typings = 0;
   rejected = 0;
   transcript = "";
+  readsFail = false;
+  private holding = false;
   private nextId = FIRST_ID;
   private readonly stored: Stored[] = [];
   private readonly served = new Map<string, Buffer>();
@@ -171,6 +176,15 @@ export class FakeDiscord {
     for (const session of this.gateways) session.muted = true;
   }
 
+  holdAcks(): void {
+    this.holding = true;
+  }
+
+  releaseAcks(): void {
+    this.holding = false;
+    for (const session of this.gateways) session.release();
+  }
+
   dropGateways(): void {
     for (const socket of this.connections) socket.terminate();
   }
@@ -261,7 +275,7 @@ export class FakeDiscord {
       send(200, { url: `${this.origin.replace(/^http/, "ws")}/gateway`, shards: 1 });
     else if (url.pathname === channel) send(200, { id: this.channel, guild_id: this.guild });
     else if (url.pathname === `${channel}/messages` && request.method === "GET")
-      send(200, this.listed(url));
+      this.readMessages(url, send);
     else if (url.pathname === `${channel}/typing`) {
       this.typings++;
       send(204);
@@ -270,11 +284,22 @@ export class FakeDiscord {
     else send(404, { message: "Unknown Channel" });
   }
 
+  private readMessages(url: URL, send: (status: number, body?: unknown) => void): void {
+    if (this.readsFail) send(500, { message: "Internal Server Error" });
+    else send(200, this.listed(url));
+  }
+
   private serveGateway(socket: WebSocket): void {
     const session: GatewaySession = {
       identified: false,
       open: true,
       muted: false,
+      held: this.holding,
+      release: () => {
+        if (!session.held) return;
+        session.held = false;
+        if (session.open && !session.muted) tell({ op: 1, d: null });
+      },
       status: undefined,
       heartbeats: 0,
       closeCode: undefined,
@@ -288,7 +313,7 @@ export class FakeDiscord {
       const frame = parseRecord(rawText(raw));
       if (frame["op"] === 1) {
         session.heartbeats++;
-        if (!session.muted) tell({ op: 11 });
+        if (!session.held && !session.muted) tell({ op: 11 });
       } else if (frame["op"] === 2) this.identify(socket, session, frame["d"], tell);
     });
     socket.on("close", (code: number) => {
@@ -296,7 +321,7 @@ export class FakeDiscord {
       session.closeCode = code;
       this.connections.delete(socket);
     });
-    tell({ op: 10, d: { heartbeat_interval: HEARTBEAT_MS } });
+    tell({ op: 10, d: { heartbeat_interval: session.held ? HELD_HEARTBEAT_MS : HEARTBEAT_MS } });
   }
 
   private identify(

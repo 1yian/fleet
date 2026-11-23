@@ -51,9 +51,12 @@ export class Inbox {
   private async fetchNew(): Promise<void> {
     if (this.state.cursor === undefined) {
       this.state.cursor = await this.discord.newestId();
+      if (this.state.cursor === undefined) throw new Error("the newest message could not be read");
       return;
     }
-    const messages = (await this.discord.messagesAfter(this.state.cursor))
+    const page = await this.discord.messagesAfter(this.state.cursor);
+    if (page === undefined) throw new Error("the new messages could not be read");
+    const messages = page
       .map(parseMessage)
       .filter((message) => message !== undefined)
       .sort(byId);
