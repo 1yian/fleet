@@ -121,7 +121,7 @@ test("a worker started in a workspace that already exists still runs under its a
 
   assert.equal(typeof created, "string", "the fixture workspace id");
   const workspaces = records((await lab.run(["workspace", "list"]))["workspaces"]).filter(
-    (each) => String(each["label"]).endsWith("run-the-tests"),
+    (each) => String(each["label"]).includes("run-the-tests"),
   );
   assert.deepEqual(
     workspaces.map((each) => each["workspace_id"]),
