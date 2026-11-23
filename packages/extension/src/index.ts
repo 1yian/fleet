@@ -420,9 +420,21 @@ function exportAvoid(): void {
   if (given !== undefined) process.env["PI_TIERS_AVOID"] = given.slice(AVOID_FLAG.length);
 }
 
+const ATTEMPT_FLAG = "--fleet-attempt=";
+
+function exportAttempt(): void {
+  const given = process.argv.find((arg) => arg.startsWith(ATTEMPT_FLAG));
+  if (given !== undefined) process.env["FLEET_ATTEMPT"] = given.slice(ATTEMPT_FLAG.length);
+}
+
 export default function fleet(pi: ExtensionAPI): void {
   shimKillCommands();
   exportAvoid();
+  exportAttempt();
+  pi.registerFlag("fleet-attempt", {
+    type: "string",
+    description: "The attempt's own name, c-<card>-a<attempt>, exported as FLEET_ATTEMPT",
+  });
   pi.registerFlag("fleet-avoid", {
     type: "string",
     description: "Comma-separated providers the model router must skip",

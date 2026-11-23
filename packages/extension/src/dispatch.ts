@@ -320,6 +320,7 @@ export async function dispatch(
         url: launch.url,
         token: plan.token,
         role: "worker",
+        attempt: plan.session,
         fleetProject: plan.fleetProject,
       }),
       [
@@ -429,6 +430,7 @@ export async function replaceWorker(
         url: launch.url,
         token: plan.token,
         role: "worker",
+        attempt: plan.session,
         fleetProject: plan.fleetProject,
         avoid,
         launch: launched,
