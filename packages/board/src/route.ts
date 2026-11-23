@@ -18,6 +18,7 @@ export function useBrowserRoute(
   return !enabled || match === null ? undefined : { lane: match[1] };
 }
 
+const LIST = /^(?:|#\/?|#\/workers)$/;
 const positions = new Map<string, number>();
 let current = "";
 let where = "";
@@ -54,7 +55,7 @@ export function useCardRoute(): {
   const id = card === undefined ? undefined : Number(card);
 
   const open = useCallback((next: number) => {
-    if (!ADDRESS.test(where)) positions.set(current, window.scrollY);
+    if (LIST.test(where)) positions.set(current, window.scrollY);
     current = fresh();
     where = `#/c-${String(next)}`;
     history.pushState({ key: current, opened: true }, "", `#/c-${String(next)}`);
@@ -77,7 +78,7 @@ export function useCardRoute(): {
     where = location.hash;
     history.scrollRestoration = "manual";
     const depart = (): void => {
-      if (!ADDRESS.test(where)) positions.set(current, window.scrollY);
+      if (LIST.test(where)) positions.set(current, window.scrollY);
       current = adopt();
       where = location.hash;
     };
@@ -89,7 +90,7 @@ export function useCardRoute(): {
   }, []);
 
   useEffect(() => {
-    window.scrollTo(0, positions.get(current) ?? 0);
+    window.scrollTo(0, LIST.test(address) ? (positions.get(current) ?? 0) : 0);
   }, [address]);
 
   return { card: id, workers, open, close };

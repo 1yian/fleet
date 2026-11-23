@@ -50,7 +50,7 @@ export async function act(action: BoardAction): Promise<Acted> {
   }
 }
 
-export function useChanges(): number {
+export function useChanges(onLost: () => void): number {
   const [changes, setChanges] = useState(0);
   useEffect(() => {
     let socket: WebSocket | undefined;
@@ -69,7 +69,10 @@ export function useChanges(): number {
       });
       socket.addEventListener("close", () => {
         if (stopped) return;
-        if (established) setChanges((n) => n + 1);
+        if (established) {
+          onLost();
+          setChanges((n) => n + 1);
+        }
         setTimeout(open, 1000);
       });
     };
@@ -78,6 +81,6 @@ export function useChanges(): number {
       stopped = true;
       socket?.close();
     };
-  }, []);
+  }, [onLost]);
   return changes;
 }

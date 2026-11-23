@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { after, before, test } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
 import type { Card } from "@fleet/protocol";
-import { boundBoardFile, openBoardPage } from "../support/board.ts";
+import { boundBoardFile, openBoardPage, within } from "../support/board.ts";
 import { begin, newCard, startFleet } from "../support/fleet.ts";
 
 const BOARD = fileURLToPath(new URL("../../packages/board/dist", import.meta.url));
@@ -162,6 +162,57 @@ test("cached working rows are hidden promptly when cardd goes away", async (cont
   assert.equal(await page.getByRole("link", { name: task.title }).count(), 0);
 });
 
+test("a board read begun before cardd went away cannot bring its workers back", async (context) => {
+  const { cardd, main } = await startFleet({}, ["--board", BOARD]);
+  context.after(() => cardd.stop());
+  const page = await openBoardPage(context, browser);
+  let mode: "pass" | "hold" | "hang" = "pass";
+  let captured = (): void => undefined;
+  const heldRead = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  let release = (): void => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let finish = (): void => undefined;
+  const ended = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  context.after(finish);
+  await page.route("**/api/board", async (route) => {
+    if (mode === "pass") {
+      await route.continue();
+      return;
+    }
+    if (mode === "hang") {
+      await ended;
+      await route.abort().catch(() => undefined);
+      return;
+    }
+    mode = "hang";
+    const stale = await route.fetch();
+    captured();
+    await held;
+    await route.fulfill({ response: stale }).catch(() => undefined);
+  });
+  await page.goto(cardd.url.replace(/^ws/, "http").replace(/\/session$/, "/#/workers"));
+  const task = await newCard(main, "Archive the old campaign pages");
+  await cardd.connect(await begin(main, task), [], true, true);
+  await row(page, "Working", task).getByText("Running", { exact: true }).waitFor();
+
+  mode = "hold";
+  await newCard(main, "Plan the next quarter");
+  await within(heldRead, 5000, "a board read starting while cardd was still up");
+  await cardd.stop();
+  const unavailable = page.getByText("Worker status is unavailable until cardd reconnects.");
+  await unavailable.waitFor({ timeout: 10_000 });
+  release();
+  await delay(750);
+  assert.equal(await unavailable.count(), 1);
+  assert.equal(await page.getByRole("link", { name: task.title }).count(), 0);
+});
+
 test("Active Workers keeps the scroll position it was left at across links and browser history", async (context) => {
   const { cardd, main } = await startFleet({}, ["--board", BOARD]);
   context.after(() => cardd.stop());
@@ -299,20 +350,6 @@ async function stallingServer(): Promise<Stalling> {
       server.close();
     },
   };
-}
-
-async function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const expired = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(`${what} did not happen within ${String(ms)} ms`));
-    }, ms);
-  });
-  try {
-    return await Promise.race([promise, expired]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 test("a board response that stalls after a partial body is abandoned at the deadline and the next change is shown", async (context) => {

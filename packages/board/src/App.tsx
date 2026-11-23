@@ -12,12 +12,33 @@ import { ActiveWorkers } from "./ActiveWorkers.tsx";
 
 const TICK_MS = 30_000;
 
-function useBoard(changes: number, tick: number, setNotice: (notice: string | undefined) => void) {
+function useBoard(tick: number, setNotice: (notice: string | undefined) => void) {
   const [board, setBoard] = useState<Board | undefined>();
+  const epoch = useRef(0);
   const reading = useRef(false);
   const queued = useRef(false);
   const loadFailed = useRef(false);
   const [available, setAvailable] = useState(false);
+  const lose = useCallback(() => {
+    epoch.current += 1;
+    setAvailable(false);
+  }, []);
+  const changes = useChanges(lose);
+  const read = useCallback(async () => {
+    const started = epoch.current;
+    try {
+      const loaded = await loadBoard();
+      if (started !== epoch.current) return;
+      setBoard(loaded);
+      setAvailable(true);
+      if (loadFailed.current) setNotice(undefined);
+      loadFailed.current = false;
+    } catch (error) {
+      loadFailed.current = true;
+      setAvailable(false);
+      setNotice(unreachable(error));
+    }
+  }, [setNotice]);
   const refresh = useCallback(() => {
     if (reading.current) {
       queued.current = true;
@@ -28,26 +49,16 @@ function useBoard(changes: number, tick: number, setNotice: (notice: string | un
       let again = true;
       while (again) {
         queued.current = false;
-        try {
-          const loaded = await loadBoard();
-          setBoard(loaded);
-          setAvailable(true);
-          if (loadFailed.current) setNotice(undefined);
-          loadFailed.current = false;
-        } catch (error) {
-          loadFailed.current = true;
-          setAvailable(false);
-          setNotice(unreachable(error));
-        }
+        await read();
         again = queued.current;
       }
       reading.current = false;
     })();
-  }, [setNotice]);
+  }, [read]);
   useEffect(() => {
     refresh();
   }, [changes, tick, refresh]);
-  return { board, refresh, available };
+  return { board, refresh, available, changes };
 }
 
 function useNow(): number {
@@ -136,26 +147,29 @@ function useEscape(close: () => void): void {
   }, [close]);
 }
 
+function Notice({ text }: { readonly text: string | undefined }) {
+  return text === undefined ? null : (
+    <p className="notice" role="alert">
+      {text}
+    </p>
+  );
+}
+
 export function App() {
-  const changes = useChanges();
   const now = useNow();
   const [notice, setNotice] = useState<string | undefined>();
-  const { board, refresh, available } = useBoard(changes, now, setNotice);
+  const { board, refresh, available, changes } = useBoard(now, setNotice);
   const { card: open, workers, open: openCard, close } = useCardRoute();
-  const browserRoute = useBrowserRoute(board?.browsers);
-  const browsers = useBrowserLanes(board?.browsers === true);
+  const browsersOn = board?.browsers === true;
+  const browserRoute = useBrowserRoute(browsersOn);
+  const browsers = useBrowserLanes(browsersOn);
   const [drafts, setDrafts] = useState<ReadonlyMap<number, string>>(new Map());
   const facts = useFacts(board?.cards, now);
 
   const { notices, answer, later, dismiss, reply } = useDecisions(refresh, setNotice);
   useEscape(close);
 
-  const banner =
-    notice === undefined ? null : (
-      <p className="notice" role="alert">
-        {notice}
-      </p>
-    );
+  const banner = <Notice text={notice} />;
   if (board === undefined)
     return (
       <main className="board">
@@ -198,7 +212,7 @@ export function App() {
   }
   return (
     <main className="kanban">
-      <BrowserBoardLinks enabled={board.browsers} {...browsers} />
+      {workers ? null : <BrowserBoardLinks enabled={board.browsers} {...browsers} />}
       {banner}
       {workers ? (
         <ActiveWorkers board={board} available={available} onOpen={openCard} />
