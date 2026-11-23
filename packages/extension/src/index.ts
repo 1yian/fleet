@@ -26,6 +26,7 @@ import { registerIntake } from "./intake.ts";
 import { registerDropJob } from "./job-tools.ts";
 import { Jobs } from "./jobs.ts";
 import { enableCodemode } from "./codemode.ts";
+import { exportAttempt, exportAvoid } from "./fleet-args.ts";
 import type { Bws, BwsConfig } from "./bws.ts";
 import {
   bwsConfig,
@@ -411,20 +412,6 @@ function start(
   registerIntake(pi, link, inFileAtStart);
   reportActivity(pi, link, () => (jobs?.waiting === true ? "waiting" : "idle"));
   link.start();
-}
-
-const AVOID_FLAG = "--fleet-avoid=";
-
-function exportAvoid(): void {
-  const given = process.argv.find((arg) => arg.startsWith(AVOID_FLAG));
-  if (given !== undefined) process.env["PI_TIERS_AVOID"] = given.slice(AVOID_FLAG.length);
-}
-
-const ATTEMPT_FLAG = "--fleet-attempt=";
-
-function exportAttempt(): void {
-  const given = process.argv.find((arg) => arg.startsWith(ATTEMPT_FLAG));
-  if (given !== undefined) process.env["FLEET_ATTEMPT"] = given.slice(ATTEMPT_FLAG.length);
 }
 
 export default function fleet(pi: ExtensionAPI): void {
