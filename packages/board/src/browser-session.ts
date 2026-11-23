@@ -221,7 +221,7 @@ class Viewer {
     this.set({
       state,
       pending: completed ? undefined : pending,
-      notice: lost ? lostNotice(pending) : notice,
+      notice: lost ? lostNotice(pending, state) : notice,
     });
     this.resume();
     this.wantFrame();

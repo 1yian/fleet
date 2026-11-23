@@ -56,12 +56,20 @@ export function looseCommand(pending: Pending, fresh: boolean): boolean {
 export function settles(pending: Pending | undefined, state: BrowserState): boolean {
   const owns = state.viewer.controlling;
   if (pending === "take") return owns;
-  if (pending === "done") return !owns;
+  if (pending === "done") return returned(state);
   return pending !== undefined && pending.tab === state.activeTab;
 }
 
-export function lostNotice(pending: Pending | undefined): string {
-  return pending === "done" ? "Control returned to the agent." : LOST;
+function returned(state: BrowserState): boolean {
+  return (
+    !state.viewer.controlling &&
+    state.snapshot.control.kind === "agent" &&
+    state.snapshot.handoff?.status !== "open"
+  );
+}
+
+export function lostNotice(pending: Pending | undefined, state: BrowserState): string {
+  return pending === "done" && returned(state) ? "Control returned to the agent." : LOST;
 }
 
 export function lostControl(previous: BrowserState | undefined, state: BrowserState): boolean {

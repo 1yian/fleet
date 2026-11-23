@@ -323,6 +323,25 @@ test("a typing request that cannot be confirmed blocks a queued tab change", asy
   assert.equal(endpoint.order.includes("tab"), false);
 });
 
+test("a second viewer taking control before a queued Done goes out is not reported as control returned", async (t) => {
+  const { endpoint, page, base } = await launch(t);
+  await takeControl(page, endpoint, base);
+  endpoint.ask();
+  await page.getByText(REASON).waitFor();
+  endpoint.hold();
+  await screenClick(page);
+  await until(() => endpoint.activeInputs > 0);
+  await page.getByRole("button", { name: "Done" }).click();
+  endpoint.revoke();
+  await page.getByText("Control ended. You’re watching again.").waitFor();
+  endpoint.release();
+  await until(() => endpoint.activeInputs === 0);
+  await nextFrames(page);
+  assert.deepEqual(endpoint.commands, [{ t: "control", on: true }]);
+  assert.equal(await page.getByText("Control returned to the agent.").count(), 0);
+  await page.getByText(REASON).waitFor();
+});
+
 test("leaving after an input timeout sends nothing while the browser may still be applying it", async (t) => {
   const { endpoint, page, base } = await launch(t);
   await takeControl(page, endpoint, base);
