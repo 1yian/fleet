@@ -8,33 +8,70 @@ import { deviceZone, questionsByCard } from "./format.ts";
 import { useBrowserRoute, useCardRoute } from "./route.ts";
 import { useBrowserLanes } from "./browser-api.ts";
 import { BrowserBoardLinks, BrowserPage } from "./Browsers.tsx";
+import { ActiveWorkers } from "./ActiveWorkers.tsx";
 
 const TICK_MS = 30_000;
 
-function useBoard(changes: number, tick: number, setNotice: (notice: string | undefined) => void) {
+function useBoard(tick: number, setNotice: (notice: string | undefined) => void) {
   const [board, setBoard] = useState<Board | undefined>();
-  const loads = useRef(0);
+  const epoch = useRef(0);
+  const reading = useRef(false);
+  const queued = useRef(false);
   const loadFailed = useRef(false);
-  const refresh = useCallback(() => {
-    const load = ++loads.current;
-    loadBoard().then(
-      (loaded) => {
-        if (load !== loads.current) return;
-        setBoard(loaded);
-        if (loadFailed.current) setNotice(undefined);
-        loadFailed.current = false;
-      },
-      (error: unknown) => {
-        if (load !== loads.current) return;
-        loadFailed.current = true;
-        setNotice(unreachable(error));
-      },
-    );
+  const [available, setAvailable] = useState(false);
+  const observing = useRef(false);
+  const inflight = useRef<AbortController | undefined>(undefined);
+  const lose = useCallback(() => {
+    epoch.current += 1;
+    inflight.current?.abort();
+    setAvailable(false);
+  }, []);
+  const changes = useChanges(lose);
+  const read = useCallback(async () => {
+    if (!observing.current) return;
+    const started = epoch.current;
+    const cancel = new AbortController();
+    inflight.current = cancel;
+    try {
+      const loaded = await loadBoard(cancel.signal);
+      if (started !== epoch.current) return;
+      setBoard(loaded);
+      setAvailable(true);
+      if (loadFailed.current) setNotice(undefined);
+      loadFailed.current = false;
+    } catch (error) {
+      if (started !== epoch.current) return;
+      loadFailed.current = true;
+      setAvailable(false);
+      setNotice(unreachable(error));
+    }
   }, [setNotice]);
+  const refresh = useCallback(() => {
+    if (reading.current) {
+      queued.current = true;
+      return;
+    }
+    reading.current = true;
+    void (async () => {
+      let again = true;
+      while (again) {
+        queued.current = false;
+        await read();
+        again = queued.current;
+      }
+      reading.current = false;
+    })();
+  }, [read]);
+  useEffect(() => {
+    observing.current = true;
+    return () => {
+      observing.current = false;
+    };
+  }, []);
   useEffect(() => {
     refresh();
   }, [changes, tick, refresh]);
-  return { board, refresh };
+  return { board, refresh, available, changes };
 }
 
 function useNow(): number {
@@ -123,26 +160,29 @@ function useEscape(close: () => void): void {
   }, [close]);
 }
 
+function Notice({ text }: { readonly text: string | undefined }) {
+  return text === undefined ? null : (
+    <p className="notice" role="alert">
+      {text}
+    </p>
+  );
+}
+
 export function App() {
-  const changes = useChanges();
   const now = useNow();
   const [notice, setNotice] = useState<string | undefined>();
-  const { board, refresh } = useBoard(changes, now, setNotice);
-  const { card: open, open: openCard, close } = useCardRoute();
-  const browserRoute = useBrowserRoute(board?.browsers);
-  const browsers = useBrowserLanes(board?.browsers === true);
+  const { board, refresh, available, changes } = useBoard(now, setNotice);
+  const { card: open, workers, open: openCard, close } = useCardRoute();
+  const browsersOn = board?.browsers === true;
+  const browserRoute = useBrowserRoute(browsersOn);
+  const browsers = useBrowserLanes(browsersOn);
   const [drafts, setDrafts] = useState<ReadonlyMap<number, string>>(new Map());
   const facts = useFacts(board?.cards, now);
 
   const { notices, answer, later, dismiss, reply } = useDecisions(refresh, setNotice);
   useEscape(close);
 
-  const banner =
-    notice === undefined ? null : (
-      <p className="notice" role="alert">
-        {notice}
-      </p>
-    );
+  const banner = <Notice text={notice} />;
   if (board === undefined)
     return (
       <main className="board">
@@ -185,18 +225,22 @@ export function App() {
   }
   return (
     <main className="kanban">
-      <BrowserBoardLinks enabled={board.browsers} {...browsers} />
+      {workers ? null : <BrowserBoardLinks enabled={board.browsers} {...browsers} />}
       {banner}
-      <Kanban
-        board={board}
-        now={now}
-        facts={facts}
-        onOpen={openCard}
-        notices={notices}
-        onAnswer={answer}
-        onLater={later}
-        onDismiss={dismiss}
-      />
+      {workers ? (
+        <ActiveWorkers board={board} available={available} onOpen={openCard} />
+      ) : (
+        <Kanban
+          board={board}
+          now={now}
+          facts={facts}
+          onOpen={openCard}
+          notices={notices}
+          onAnswer={answer}
+          onLater={later}
+          onDismiss={dismiss}
+        />
+      )}
     </main>
   );
 }

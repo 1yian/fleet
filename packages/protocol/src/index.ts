@@ -53,7 +53,6 @@ export {
 export const HOLDERS = ["owner", "main", "captain"] as const;
 const Holder = Type.Enum(HOLDERS);
 export type Holder = Static<typeof Holder>;
-
 export const DELIVERIES = ["no-mistakes", "direct-PR", "local-only", "ops"] as const;
 const Delivery = Type.Enum(DELIVERIES);
 export type Delivery = Static<typeof Delivery>;
@@ -437,6 +436,7 @@ export type ClientMessage = Static<typeof ClientMessage>;
 
 export const BoardSchema = Type.Object({
   browsers: Type.Optional(Type.Boolean()),
+  workerStaleBefore: Type.Integer(),
   cards: Type.Array(BoardCardSchema),
   holds: Type.Array(
     Type.Object({

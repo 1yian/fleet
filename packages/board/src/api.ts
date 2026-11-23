@@ -13,8 +13,13 @@ import {
 export const unreachable = (error: unknown): string =>
   `The board could not reach cardd: ${error instanceof Error ? error.message : String(error)}`;
 
-export async function loadBoard(): Promise<Board> {
-  return check(BoardSchema, await (await fetch("/api/board")).json());
+const BOARD_DEADLINE_MS = 10_000;
+
+export async function loadBoard(cancel: AbortSignal): Promise<Board> {
+  const response = await fetch("/api/board", {
+    signal: AbortSignal.any([cancel, AbortSignal.timeout(BOARD_DEADLINE_MS)]),
+  });
+  return check(BoardSchema, await response.json());
 }
 
 export async function loadThread(card: number): Promise<Thread> {
@@ -47,30 +52,39 @@ export async function act(action: BoardAction): Promise<Acted> {
   }
 }
 
-export function useChanges(): number {
+export function useChanges(onLost: () => void): number {
   const [changes, setChanges] = useState(0);
   useEffect(() => {
     let socket: WebSocket | undefined;
     let stopped = false;
     const open = (): void => {
+      if (stopped) return;
       socket = new WebSocket(
         `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/live`,
       );
+      let established = false;
       socket.addEventListener("open", () => {
+        established = true;
         setChanges((n) => n + 1);
       });
       socket.addEventListener("message", () => {
         setChanges((n) => n + 1);
       });
       socket.addEventListener("close", () => {
-        if (!stopped) setTimeout(open, 1000);
+        if (stopped) return;
+        if (established) {
+          onLost();
+          setChanges((n) => n + 1);
+        }
+        setTimeout(open, 1000);
       });
     };
     open();
     return () => {
       stopped = true;
+      onLost();
       socket?.close();
     };
-  }, []);
+  }, [onLost]);
   return changes;
 }

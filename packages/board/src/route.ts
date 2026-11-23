@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 const ADDRESS = /^#\/c-(\d+)$/;
 
@@ -18,35 +18,80 @@ export function useBrowserRoute(
   return !enabled || match === null ? undefined : { lane: match[1] };
 }
 
+const LIST = /^(?:|#\/?|#\/workers)$/;
+const positions = new Map<string, number>();
+let current = "";
+let where = "";
+
+const fresh = (): string => `${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
+
+function entry(): { readonly key: string | undefined; readonly opened: boolean } {
+  const state: unknown = history.state;
+  if (typeof state !== "object" || state === null) return { key: undefined, opened: false };
+  const key: unknown = Reflect.get(state, "key");
+  return {
+    key: typeof key === "string" ? key : undefined,
+    opened: Reflect.get(state, "opened") === true,
+  };
+}
+
+function adopt(): string {
+  const { key, opened } = entry();
+  if (key !== undefined) return key;
+  const next = fresh();
+  history.replaceState({ key: next, opened }, "");
+  return next;
+}
+
 export function useCardRoute(): {
   readonly card: number | undefined;
+  readonly workers: boolean;
   readonly open: (card: number) => void;
   readonly close: () => void;
 } {
-  const card = ADDRESS.exec(useSyncExternalStore(subscribe, hash))?.[1];
+  const address = useSyncExternalStore(subscribe, hash);
+  const workers = address === "#/workers";
+  const card = ADDRESS.exec(address)?.[1];
   const id = card === undefined ? undefined : Number(card);
-  const scrolled = useRef(0);
-  const fromBoard = useRef(false);
 
   const open = useCallback((next: number) => {
-    scrolled.current = window.scrollY;
-    fromBoard.current = true;
-    location.hash = `/c-${String(next)}`;
+    if (LIST.test(where)) positions.set(current, window.scrollY);
+    current = fresh();
+    where = `#/c-${String(next)}`;
+    history.pushState({ key: current, opened: true }, "", `#/c-${String(next)}`);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
   }, []);
   const close = useCallback(() => {
     if (!ADDRESS.test(location.hash)) return;
-    if (fromBoard.current) {
-      fromBoard.current = false;
+    if (entry().opened) {
       history.back();
       return;
     }
-    history.replaceState(null, "", location.pathname + location.search);
+    current = fresh();
+    where = "";
+    history.replaceState({ key: current, opened: false }, "", location.pathname + location.search);
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   }, []);
 
   useEffect(() => {
-    window.scrollTo(0, id === undefined ? scrolled.current : 0);
-  }, [id]);
+    current = adopt();
+    where = location.hash;
+    history.scrollRestoration = "manual";
+    const depart = (): void => {
+      if (LIST.test(where)) positions.set(current, window.scrollY);
+      current = adopt();
+      where = location.hash;
+    };
+    window.addEventListener("popstate", depart);
+    return () => {
+      window.removeEventListener("popstate", depart);
+      history.scrollRestoration = "auto";
+    };
+  }, []);
 
-  return { card: id, open, close };
+  useEffect(() => {
+    window.scrollTo(0, LIST.test(address) ? (positions.get(current) ?? 0) : 0);
+  }, [address]);
+
+  return { card: id, workers, open, close };
 }
