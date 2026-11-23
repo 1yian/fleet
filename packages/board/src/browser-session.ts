@@ -139,6 +139,7 @@ class Viewer {
     if (was === now) return;
     this.set(this.current);
     if (now) this.resume();
+    else this.wantFrame();
   }
 
   private resume(): void {
