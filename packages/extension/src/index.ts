@@ -26,6 +26,7 @@ import { registerIntake } from "./intake.ts";
 import { registerDropJob } from "./job-tools.ts";
 import { Jobs } from "./jobs.ts";
 import { enableCodemode } from "./codemode.ts";
+import { exportAttempt, exportAvoid } from "./fleet-args.ts";
 import type { Bws, BwsConfig } from "./bws.ts";
 import {
   bwsConfig,
@@ -413,16 +414,14 @@ function start(
   link.start();
 }
 
-const AVOID_FLAG = "--fleet-avoid=";
-
-function exportAvoid(): void {
-  const given = process.argv.find((arg) => arg.startsWith(AVOID_FLAG));
-  if (given !== undefined) process.env["PI_TIERS_AVOID"] = given.slice(AVOID_FLAG.length);
-}
-
 export default function fleet(pi: ExtensionAPI): void {
   shimKillCommands();
   exportAvoid();
+  exportAttempt();
+  pi.registerFlag("fleet-attempt", {
+    type: "string",
+    description: "The attempt's own name, c-<card>-a<attempt>, exported as FLEET_ATTEMPT",
+  });
   pi.registerFlag("fleet-avoid", {
     type: "string",
     description: "Comma-separated providers the model router must skip",

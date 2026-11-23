@@ -101,13 +101,14 @@ export const workerEnvironment = ({ scratch, cache }: WorkerScratch): string[] =
 
 const FORWARDED = ["FLEET_SCRATCH", "TMPDIR", "NODE_COMPILE_CACHE"] as const;
 
+const present = (env: NodeJS.ProcessEnv, name: string): string[] => {
+  const value = env[name];
+  return value === undefined || value === "" ? [] : [`${name}=${value}`];
+};
+
 export function forwardedEnvironment(env: NodeJS.ProcessEnv): string[] {
-  const scratch = env["FLEET_SCRATCH"];
-  if (scratch === undefined || scratch === "") return [];
-  return FORWARDED.flatMap((name) => {
-    const value = env[name];
-    return value === undefined || value === "" ? [] : [`${name}=${value}`];
-  });
+  const scratch = present(env, "FLEET_SCRATCH").length === 0 ? [] : FORWARDED;
+  return [...scratch, "FLEET_ATTEMPT"].flatMap((name) => present(env, name));
 }
 
 export const withCompileCache = (command: readonly string[]): string[] => [
