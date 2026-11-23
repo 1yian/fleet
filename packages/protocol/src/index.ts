@@ -50,7 +50,6 @@ export {
   type JobLife,
   type JobState,
 } from "./jobs.ts";
-
 export const HOLDERS = ["owner", "main", "captain"] as const;
 const Holder = Type.Enum(HOLDERS);
 export type Holder = Static<typeof Holder>;
