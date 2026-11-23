@@ -30,6 +30,7 @@ runs:
       uses: ./.github/actions/download
       with:
         url: https://cdn.playwright.dev/builds/ffmpeg/1013/ffmpeg-linux.zip
+        fallback-url: https://playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/ffmpeg/1013/ffmpeg-linux.zip
         sha256: ee986434d158f74fb5d9c5ff1092026ceedb63f324fe90b5be89460926b7b679
     - shell: bash
       env:
