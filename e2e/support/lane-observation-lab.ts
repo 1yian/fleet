@@ -78,12 +78,8 @@ case "$1 $2:$HERDR_FAULT" in
     fi ;;
   'workspace list:partial') printf '%s' '{"result":{"workspaces":[{"label":"2ndmate-ops"}]}}'; exit 0 ;;
   'workspace list:timeout') printf '%s' '{"result":{"workspaces":[]}}'; exec sleep 60 ;;
-  'workspace list:omit-once')
-    if [ ! -e "$HERDR_FAULT_LOG" ]; then
-      : > "$HERDR_FAULT_LOG"
-      printf '%s' '{"result":{"workspaces":[]}}'
-      exit 0
-    fi ;;
+  'workspace list:omit-once') [ -e "$HERDR_FAULT_LOG" ] || { : > "$HERDR_FAULT_LOG"; printf '%s' '{"result":{"workspaces":[]}}'; exit 0; } ;;
+  'workspace list:hang-once') [ -e "$HERDR_FAULT_LOG" ] || { : > "$HERDR_FAULT_LOG"; exec sleep 60; } ;;
   'workspace list:omit-title-once'|'workspace list:omit-id-once')
     if [ ! -e "$HERDR_FAULT_LOG" ]; then
       : > "$HERDR_FAULT_LOG"
@@ -115,6 +111,12 @@ case "$1 $2:$HERDR_FAULT" in
   'pane process-info:vanished')
     if [ "\${4%:*}" = "$FAULT_PANE" ]; then
       "$REAL_HERDR" workspace close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
+    fi ;;
+  'pane process-info:incomplete-once')
+    if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.incomplete" ]; then
+      : > "$HERDR_FAULT_LOG.incomplete"
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]},{"pid":2,"name":"git"}]}}}'
+      exit 0
     fi ;;
   'pane process-info:pi-only')
     if [ "$4" = "$FAULT_PANE" ]; then

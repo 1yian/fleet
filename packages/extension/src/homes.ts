@@ -433,19 +433,37 @@ export async function stop(root: string, lane: string): Promise<void> {
   }
 }
 
+const RESTART_ATTEMPTS = 4;
+
+async function reobserve<T>(work: (deadline: number) => Promise<T>): Promise<T> {
+  const end = performance.now() + LANE_OBSERVATION_MS;
+  for (let tried = 1; ; tried++) {
+    try {
+      return await work(Math.min(end, performance.now() + LANE_OBSERVATION_MS / 2));
+    } catch (error) {
+      if (!(error instanceof HostUnread) || tried >= RESTART_ATTEMPTS || remainingMs(end) === 0)
+        throw error;
+    }
+  }
+}
+
 async function restartOne(root: string, info: LaneHome, all: boolean): Promise<Outcome> {
   const held = heldReason(info.home);
   recentStarts(info.home, Date.now());
   const keepHeld = all ? held : undefined;
-  const match = await workspaceOf(info, keepHeld === undefined ? "close" : "restart-held");
+  const purpose = keepHeld === undefined ? "close" : "restart-held";
+  const match = await reobserve((deadline) => workspaceOf(info, purpose, deadline));
   if (keepHeld !== undefined && match?.state !== "running")
     return { lane: info.lane, action: "stopped", detail: keepHeld };
   if (match !== undefined) await close(info, match.workspace);
-  const observed = await workspaceOf(info, "liveness");
-  if (observed?.state === "running")
-    throw new HostUnread(
-      `${info.lane} still has a running mate in workspace ${observed.workspace} after restart closed its own`,
-    );
+  const observed = await reobserve(async (deadline) => {
+    const found = await workspaceOf(info, "liveness", deadline);
+    if (found?.state === "running")
+      throw new HostUnread(
+        `${info.lane} still has a running mate in workspace ${found.workspace} after restart closed its own`,
+      );
+    return found;
+  });
   await start(root, info, idlePaneOf(observed), true, sampleLifecycle(info.home));
   return { lane: info.lane, action: "started" };
 }
@@ -453,12 +471,22 @@ async function restartOne(root: string, info: LaneHome, all: boolean): Promise<O
 export async function restart(root: string, lane: string | undefined): Promise<Outcome[]> {
   const { homes, unread } = named(root, lane);
   if (unread.length > 0) throw new Error(unreadFailure(unread));
-  const out: Outcome[] = [];
-  for (const info of homes)
-    out.push(
-      await withLifecycleLock(info.home, info.lane, () =>
-        restartOne(root, info, lane === undefined),
-      ),
-    );
-  return out;
+  const outcomes: Outcome[] = [];
+  for (const info of homes) {
+    try {
+      outcomes.push(
+        await withLifecycleLock(info.home, info.lane, () =>
+          restartOne(root, info, lane === undefined),
+        ),
+      );
+    } catch (error) {
+      if (lane !== undefined) throw error;
+      outcomes.push(
+        error instanceof AcceptedStartFailure
+          ? { lane: info.lane, action: "started", detail: error.message }
+          : { lane: info.lane, action: "unread", detail: messageOf(error) },
+      );
+    }
+  }
+  return outcomes;
 }
