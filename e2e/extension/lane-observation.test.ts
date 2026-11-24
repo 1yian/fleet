@@ -246,7 +246,11 @@ test("restart-all restarts a held current-title mate in a non-first pane", async
   assert.ok(typeof split === "string");
   const stopped = join(home, "state", "stopped");
   writeFileSync(stopped, "stopped by hand\n");
-  assert.throws(() => fleet(["restart", "--json"]), /no Pi observed in the lane home/);
+  const refused = records(JSON.parse(fleet(["restart", "--json"]))).find(
+    (row) => row["lane"] === "ops",
+  );
+  assert.equal(refused?.["action"], "unread");
+  assert.match(String(refused["detail"]), /no Pi observed in the lane home/);
   assert.equal((await workspace("ops"))?.["workspace_id"], before);
   assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
   assert.deepEqual(JSON.parse(fleet(["status", "--json"], "pi-in-split", split)), [
