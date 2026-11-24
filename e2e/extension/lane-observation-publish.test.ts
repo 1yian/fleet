@@ -188,6 +188,27 @@ test("restart-all still refuses a mate whose pane stays unreadable, and still re
   assert.notEqual(zzAfter["workspace_id"], zzBefore["workspace_id"]);
 });
 
+test("restart-all --json returns every lane's outcome even when one pane stays unreadable", async () => {
+  useSteadyPi();
+  const root = await idlePane("ops", ops());
+  addLane("zz");
+  assert.deepEqual(maintain(), [
+    { lane: "ops", action: "started" },
+    { lane: "zz", action: "started" },
+  ]);
+  await untilRunning("ops");
+  await untilRunning("zz");
+  holdMate("ops");
+  const rows = records(JSON.parse(fleet(["restart", "--json"], "shared-group-child", root)));
+  assert.equal(rows.find((row) => row["lane"] === "zz")?.["action"], "started");
+  const refused = rows.find((row) => row["lane"] === "ops");
+  assert.equal(refused?.["action"], "unread");
+  assert.match(
+    String(refused["detail"]),
+    /herdr listed a foreground process in the shell's own group/,
+  );
+});
+
 test("a readable Pi beside a Git child missing argv leaves the lane unknown", async () => {
   const root = await idlePane("ops", ops());
   assert.deepEqual(JSON.parse(fleet(["status", "--json"], "partial-git-child", root)), [

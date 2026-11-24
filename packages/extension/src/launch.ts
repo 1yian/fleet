@@ -330,9 +330,13 @@ switch (command ?? "") {
     break;
   case "restart": {
     checkLaunchPrerequisites(root);
-    const { outcomes, failed } = await restart(root, rest[0]);
+    const outcomes = await restart(root, rest[0]);
     show(outcomes);
-    if (failed.length > 0) throw new Error(failed.join("\n"));
+    const failed = outcomes.filter(({ action }) => action === "unread");
+    if (failed.length > 0 && values.json !== true)
+      throw new Error(
+        failed.map(({ lane, detail }) => `${lane}: ${detail ?? "unread"}`).join("\n"),
+      );
     break;
   }
   case "home": {

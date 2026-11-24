@@ -49,7 +49,7 @@ import {
   parseLaneConfig,
   type LaneConfig,
 } from "./lane-config.ts";
-import { remainingMs } from "./maintenance-budget.ts";
+import { MAINTENANCE_SWEEP_MS, remainingMs } from "./maintenance-budget.ts";
 import { withCompileCache } from "./scratch.ts";
 import { mateTitle } from "./titles.ts";
 
@@ -436,59 +436,62 @@ export async function stop(root: string, lane: string): Promise<void> {
 const RESTART_ATTEMPTS = 4;
 const RESTART_RETRY_MS = 500;
 
-async function restartOne(root: string, info: LaneHome, all: boolean): Promise<Outcome> {
+async function restartOne(
+  root: string,
+  info: LaneHome,
+  all: boolean,
+  deadline: number,
+): Promise<Outcome> {
   const held = heldReason(info.home);
   recentStarts(info.home, Date.now());
   const keepHeld = all ? held : undefined;
+  const purpose = keepHeld === undefined ? "close" : "restart-held";
+  startDeadline(deadline);
+  const window = Math.min(deadline, performance.now() + LANE_OBSERVATION_MS);
   let closed = false;
   const attempt = async (): Promise<Outcome> => {
     if (!closed) {
-      const match = await workspaceOf(info, keepHeld === undefined ? "close" : "restart-held");
+      const match = await workspaceOf(info, purpose, window);
       if (keepHeld !== undefined && match?.state !== "running")
         return { lane: info.lane, action: "stopped", detail: keepHeld };
       if (match !== undefined) await close(info, match.workspace);
       closed = true;
     }
-    const observed = await workspaceOf(info, "liveness");
+    const observed = await workspaceOf(info, "liveness", window);
     if (observed?.state === "running")
       throw new HostUnread(
         `${info.lane} still has a running mate in workspace ${observed.workspace} after restart closed its own`,
       );
-    await start(root, info, idlePaneOf(observed), true, sampleLifecycle(info.home));
+    await start(root, info, idlePaneOf(observed), true, sampleLifecycle(info.home), deadline);
     return { lane: info.lane, action: "started" };
   };
   for (let tried = 1; ; tried++) {
     try {
       return await attempt();
     } catch (error) {
-      if (!(error instanceof HostUnread) || tried >= RESTART_ATTEMPTS) throw error;
+      const spent = tried >= RESTART_ATTEMPTS || remainingMs(window) <= RESTART_RETRY_MS;
+      if (!(error instanceof HostUnread) || spent) throw error;
       await new Promise((resolve) => setTimeout(resolve, RESTART_RETRY_MS));
     }
   }
 }
 
-interface RestartResult {
-  readonly outcomes: Outcome[];
-  readonly failed: string[];
-}
-
-export async function restart(root: string, lane: string | undefined): Promise<RestartResult> {
+export async function restart(root: string, lane: string | undefined): Promise<Outcome[]> {
   const { homes, unread } = named(root, lane);
   if (unread.length > 0) throw new Error(unreadFailure(unread));
+  const deadline = performance.now() + MAINTENANCE_SWEEP_MS;
   const outcomes: Outcome[] = [];
-  const failed: string[] = [];
   for (const info of homes) {
     try {
       outcomes.push(
         await withLifecycleLock(info.home, info.lane, () =>
-          restartOne(root, info, lane === undefined),
+          restartOne(root, info, lane === undefined, deadline),
         ),
       );
     } catch (error) {
       if (!(error instanceof HostUnread)) throw error;
       outcomes.push({ lane: info.lane, action: "unread", detail: error.message });
-      failed.push(`${info.lane}: ${error.message}`);
     }
   }
-  return { outcomes, failed };
+  return outcomes;
 }
