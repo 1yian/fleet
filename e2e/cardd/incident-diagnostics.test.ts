@@ -283,7 +283,7 @@ for (const [name, diagnostic] of [
     await assert.rejects(
       cleo.call("card.restart", {
         card: card.id,
-        incident: 1,
+        incident: heard.fields["incident"],
         generation: 1,
         mode: "retry",
         key: "withheld-retry",
@@ -302,7 +302,7 @@ test("an Unauthorized report that only names a token field keeps its text, is cl
   await assert.rejects(
     cleo.call("card.restart", {
       card: card.id,
-      incident: 1,
+      incident: heard.fields["incident"],
       generation: 1,
       mode: "retry",
       key: "auth-retry",
@@ -424,7 +424,7 @@ test("an escaped-name URL credential is withheld and refused recovery through ca
   await assert.rejects(
     cleo.call("card.restart", {
       card: card.id,
-      incident: 1,
+      incident: heard.fields["incident"],
       generation: 1,
       mode: "retry",
       key: "escaped-retry",
@@ -448,7 +448,7 @@ test("an unrelated Unicode escape keeps the plain URL credential scrubbed, the a
   await assert.rejects(
     cleo.call("card.restart", {
       card: card.id,
-      incident: 1,
+      incident: heard.fields["incident"],
       generation: 1,
       mode: "retry",
       key: "unrelated-escape-retry",
