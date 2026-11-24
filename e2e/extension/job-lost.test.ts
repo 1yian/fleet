@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { afterEach, beforeEach, test } from "node:test";
-import { type Card } from "@fleet/protocol";
+import { check, OPS, type Card } from "@fleet/protocol";
 import { status, type Fleet } from "../support/fleet.ts";
 import { JobLab } from "../support/job-lab.ts";
 import { jobHelpers, lastUser, until } from "../support/job-env.ts";
@@ -67,6 +67,57 @@ test("a job whose wrapper died is lost once: the mate and the worker are told", 
   } finally {
     writeFileSync(first.go, "");
     writeFileSync(second.go, "");
+  }
+});
+
+test("cardd restarts with sleeping monitors, delivers the surviving tick once, and tells the owner about the lost tick", async () => {
+  const live = commandAwaitingGo(6);
+  const lost = commandAwaitingGo(7);
+  h.onModel(() => ({ tool: "run_long", args: { label: "live-tick", command: live.command } }));
+  h.onModel(() => ({ tool: "run_long", args: { label: "lost-tick", command: lost.command } }));
+  for (let i = 0; i < 10; i++) h.onModel(() => ({ text: "monitoring" }));
+  try {
+    worker();
+    const livePid = await wrapperOf(1, live.ready);
+    const lostPid = await wrapperOf(2, lost.ready);
+    await fleet.cardd.stop();
+    process.kill(lostPid, "SIGKILL");
+    await fleet.cardd.restart();
+    assert.equal(await wrapperOf(1, live.ready), livePid);
+    fleet = { ...fleet, main: await fleet.cardd.connect(fleet.mainToken) };
+    const notice = await fleet.main.waitForEntry(
+      (entry) => entry.fields["condition"] === "job-lost",
+      "the mate to hear about the lost tick",
+    );
+    assert.equal(
+      notice.body,
+      "job lost: job 2 (lost-tick) its wrapper process is gone. It is not run again.",
+    );
+    const lostMessage =
+      "[fleet] c-1 users-see-one-scrollbar job 2 (lost-tick) lost: its wrapper process is gone. It is not run again.";
+    await until(
+      () => h.calls.find((turns) => lastUser(turns) === lostMessage),
+      "the worker to hear about the lost tick",
+    );
+    writeFileSync(live.go, "");
+    const tickMessage = "[fleet] c-1 users-see-one-scrollbar job 1 (live-tick) exited 0: late";
+    await until(
+      () => h.calls.find((turns) => lastUser(turns) === tickMessage),
+      "the first tick after restart",
+    );
+    const { entries } = check(OPS.card.result, await fleet.main.call("card", { card: card.id }));
+    assert.deepEqual(
+      entries
+        .filter((entry) => entry.kind === "job-result")
+        .map((entry) => [entry.fields["job"], entry.body]),
+      [
+        [2, "its wrapper process is gone. It is not run again."],
+        [1, "late"],
+      ],
+    );
+  } finally {
+    writeFileSync(live.go, "");
+    writeFileSync(lost.go, "");
   }
 });
 
