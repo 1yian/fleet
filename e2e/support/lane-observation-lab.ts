@@ -116,6 +116,12 @@ case "$1 $2:$HERDR_FAULT" in
     if [ "\${4%:*}" = "$FAULT_PANE" ]; then
       "$REAL_HERDR" workspace close "$FAULT_PANE" --session "$HERDR_SESSION" >/dev/null || exit $?
     fi ;;
+  'pane process-info:incomplete-once')
+    if [ "$4" = "$FAULT_PANE" ] && [ ! -e "$HERDR_FAULT_LOG.incomplete" ]; then
+      : > "$HERDR_FAULT_LOG.incomplete"
+      printf '%s' '{"result":{"process_info":{"shell_pid":99,"foreground_process_group_id":1,"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]},{"pid":2,"name":"git"}]}}}'
+      exit 0
+    fi ;;
   'pane process-info:pi-only')
     if [ "$4" = "$FAULT_PANE" ]; then
       printf '%s' '{"result":{"process_info":{"foreground_processes":[{"pid":1,"name":"pi","argv":["pi"]}]}}}'

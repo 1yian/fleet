@@ -129,6 +129,65 @@ test("a same-group foreground child never clears a hold or lets restart-all repl
   assert.equal((await workspace("ops"))?.["workspace_id"], before["workspace_id"]);
 });
 
+function holdMate(lane: string): string {
+  const stopped = join(`${here.root}.worktrees/lane-${lane}`, "state", "stopped");
+  writeFileSync(stopped, "stopped by hand\n");
+  return stopped;
+}
+
+test("restart-all re-reads a held running mate after a transient incomplete process list and restarts it", async () => {
+  useSteadyPi();
+  const root = await idlePane("ops", ops());
+  assert.deepEqual(maintain(), action("ops", "started"));
+  await untilRunning("ops");
+  const stopped = holdMate("ops");
+  const before = await workspace("ops");
+  assert.ok(typeof before?.["workspace_id"] === "string");
+  const out = fleet(["restart"], "incomplete-once", root);
+  assert.match(out, /ops: started/);
+  assert.ok(existsSync(`${faultLog()}.incomplete`));
+  assert.equal(existsSync(stopped), false);
+  const after = await workspace("ops");
+  assert.ok(typeof after?.["workspace_id"] === "string");
+  assert.notEqual(after["workspace_id"], before["workspace_id"]);
+});
+
+test("restart-all still refuses a mate whose pane stays unreadable, and still restarts the lanes after it", async () => {
+  useSteadyPi();
+  const root = await idlePane("ops", ops());
+  addLane("zz");
+  assert.deepEqual(maintain(), [
+    { lane: "ops", action: "started" },
+    { lane: "zz", action: "started" },
+  ]);
+  await untilRunning("ops");
+  await untilRunning("zz");
+  const stopped = holdMate("ops");
+  const opsBefore = await workspace("ops");
+  const zzBefore = await workspace("zz");
+  assert.ok(typeof zzBefore?.["workspace_id"] === "string");
+  const failure = (() => {
+    try {
+      fleet(["restart"], "shared-group-child", root);
+    } catch (error) {
+      assert.ok(isRecord(error));
+      return error;
+    }
+    return assert.fail("restart-all should have exited nonzero");
+  })();
+  assert.match(String(failure["stdout"]), /zz: started/);
+  assert.match(String(failure["stdout"]), /ops: unknown/);
+  assert.match(
+    String(failure["stderr"]),
+    /ops: herdr listed a foreground process in the shell's own group/,
+  );
+  assert.equal(readFileSync(stopped, "utf8"), "stopped by hand\n");
+  assert.equal((await workspace("ops"))?.["workspace_id"], opsBefore?.["workspace_id"]);
+  const zzAfter = await workspace("zz");
+  assert.ok(typeof zzAfter?.["workspace_id"] === "string");
+  assert.notEqual(zzAfter["workspace_id"], zzBefore["workspace_id"]);
+});
+
 test("a readable Pi beside a Git child missing argv leaves the lane unknown", async () => {
   const root = await idlePane("ops", ops());
   assert.deepEqual(JSON.parse(fleet(["status", "--json"], "partial-git-child", root)), [

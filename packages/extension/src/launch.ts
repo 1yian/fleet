@@ -202,7 +202,7 @@ function show(outcomes: readonly Outcome[]): void {
       running: `already running in ${mateTitle(lane)}`,
       held: `held: ${detail ?? ""}`,
       stopped: `stopped: ${detail ?? ""}`,
-      unread: "unknown (could not read the lane)",
+      unread: `unknown (could not read the lane${detail === undefined ? "" : `: ${detail}`})`,
     }[action];
     console.log(`${lane}: ${text}`);
   }
@@ -328,10 +328,13 @@ switch (command ?? "") {
     await stop(root, lane());
     console.log(`${lane()}: stopped`);
     break;
-  case "restart":
+  case "restart": {
     checkLaunchPrerequisites(root);
-    show(await restart(root, rest[0]));
+    const { outcomes, failed } = await restart(root, rest[0]);
+    show(outcomes);
+    if (failed.length > 0) throw new Error(failed.join("\n"));
     break;
+  }
   case "home": {
     if (rest[0] === "transport") {
       for (const line of await homeTransport(root, rest.slice(1), values)) console.log(line);
