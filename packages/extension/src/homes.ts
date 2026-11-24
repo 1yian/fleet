@@ -456,14 +456,15 @@ async function restartOne(root: string, info: LaneHome, all: boolean): Promise<O
   if (keepHeld !== undefined && match?.state !== "running")
     return { lane: info.lane, action: "stopped", detail: keepHeld };
   if (match !== undefined) await close(info, match.workspace);
-  await reobserve(async (deadline) => {
-    const observed = await workspaceOf(info, "liveness", deadline);
-    if (observed?.state === "running")
+  const observed = await reobserve(async (deadline) => {
+    const found = await workspaceOf(info, "liveness", deadline);
+    if (found?.state === "running")
       throw new HostUnread(
-        `${info.lane} still has a running mate in workspace ${observed.workspace} after restart closed its own`,
+        `${info.lane} still has a running mate in workspace ${found.workspace} after restart closed its own`,
       );
-    await start(root, info, idlePaneOf(observed), true, sampleLifecycle(info.home));
+    return found;
   });
+  await start(root, info, idlePaneOf(observed), true, sampleLifecycle(info.home));
   return { lane: info.lane, action: "started" };
 }
 
