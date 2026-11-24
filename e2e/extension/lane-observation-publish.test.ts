@@ -209,6 +209,11 @@ test("restart-all --json returns every lane's outcome even when one pane stays u
   );
 });
 
+test("a named restart --json still exits nonzero when the lane cannot be read", async () => {
+  await idlePane("ops", ops());
+  assert.throws(() => fleet(["restart", "ops", "--json"], "failed"), /workspace list/);
+});
+
 test("a readable Pi beside a Git child missing argv leaves the lane unknown", async () => {
   const root = await idlePane("ops", ops());
   assert.deepEqual(JSON.parse(fleet(["status", "--json"], "partial-git-child", root)), [

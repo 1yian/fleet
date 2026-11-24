@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 export const MAINTENANCE_OUTCOMES_OPTION = "--maintenance-outcomes-v1";
 export const MAINTENANCE_OUTCOMES_CAPABILITY = "fleet: maintenance outcomes v1";
 export const MAINTENANCE_COMMAND_MS = 90_000;
@@ -12,3 +14,15 @@ export const MAINTENANCE_SWEEP_MS =
 export function remainingMs(deadline = Infinity): number {
   return Math.max(0, Math.floor(deadline - performance.now()));
 }
+
+export function within<T>(work: Promise<T>, deadline?: number): Promise<T | undefined> {
+  if (deadline === undefined) return work;
+  return Promise.race([work, sleep(remainingMs(deadline), undefined, { ref: false })]);
+}
+
+const DEFAULT_LANE_OBSERVATION_MS = 18_000;
+const laneObservation = Number(process.env["FLEET_LANE_OBSERVATION_MS"]);
+export const LANE_OBSERVATION_MS =
+  Number.isSafeInteger(laneObservation) && laneObservation > 0
+    ? Math.min(laneObservation, DEFAULT_LANE_OBSERVATION_MS)
+    : DEFAULT_LANE_OBSERVATION_MS;
