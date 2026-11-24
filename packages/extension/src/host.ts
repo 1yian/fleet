@@ -144,13 +144,14 @@ export async function herdr(
   host: string,
   args: readonly string[],
   probe = false,
+  deadline?: number,
 ): Promise<Record<string, unknown>> {
   try {
-    return await herdrOnce(host, args, probe);
+    return await herdrOnce(host, args, probe, deadline);
   } catch (error) {
     if (!serverMissing(error) || transport(host).length > 0) throw error;
-    await startServer(process.env["HERDR_SESSION"]);
-    return herdrOnce(host, args, probe);
+    await startServer(process.env["HERDR_SESSION"], deadline);
+    return herdrOnce(host, args, probe, deadline);
   }
 }
 
@@ -224,13 +225,12 @@ function laneRefusal(
   }
 }
 
-async function herdrOnce(
+const herdrOnce = async (
   host: string,
   args: readonly string[],
   probe: boolean,
-): Promise<Record<string, unknown>> {
-  return resultOf(await herdrText(host, args, probe), host, args[0] ?? "");
-}
+  deadline?: number,
+) => resultOf(await herdrText(host, args, probe, undefined, deadline), host, args[0] ?? "");
 
 export async function startReplacementOnce(host: string, args: readonly string[]): Promise<void> {
   const text = await herdrText(host, args, false, undefined, undefined, false);

@@ -76,14 +76,10 @@ case "$1 $2:$HERDR_FAULT" in
       : > "$HERDR_FAULT_LOG.stopped"
       sh -c "$FAULT_PANE" >/dev/null || exit $?
     fi ;;
+  'workspace close:hang-close-once') [ -e "$HERDR_FAULT_LOG" ] || { : > "$HERDR_FAULT_LOG"; exec sleep 60; } ;;
   'workspace list:partial') printf '%s' '{"result":{"workspaces":[{"label":"2ndmate-ops"}]}}'; exit 0 ;;
   'workspace list:timeout') printf '%s' '{"result":{"workspaces":[]}}'; exec sleep 60 ;;
-  'workspace list:omit-once')
-    if [ ! -e "$HERDR_FAULT_LOG" ]; then
-      : > "$HERDR_FAULT_LOG"
-      printf '%s' '{"result":{"workspaces":[]}}'
-      exit 0
-    fi ;;
+  'workspace list:omit-once') [ -e "$HERDR_FAULT_LOG" ] || { : > "$HERDR_FAULT_LOG"; printf '%s' '{"result":{"workspaces":[]}}'; exit 0; } ;;
   'workspace list:omit-title-once'|'workspace list:omit-id-once')
     if [ ! -e "$HERDR_FAULT_LOG" ]; then
       : > "$HERDR_FAULT_LOG"

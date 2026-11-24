@@ -49,12 +49,7 @@ import {
   parseLaneConfig,
   type LaneConfig,
 } from "./lane-config.ts";
-import {
-  LANE_OBSERVATION_MS,
-  MAINTENANCE_SWEEP_MS,
-  remainingMs,
-  within,
-} from "./maintenance-budget.ts";
+import { LANE_OBSERVATION_MS, MAINTENANCE_SWEEP_MS, remainingMs } from "./maintenance-budget.ts";
 import { withCompileCache } from "./scratch.ts";
 import { mateTitle } from "./titles.ts";
 
@@ -413,10 +408,7 @@ const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 async function close(info: LaneHome, workspace: string, deadline?: number): Promise<void> {
-  await within(
-    claimFollowers(info.lane, workspace).catch(() => undefined),
-    deadline,
-  );
+  await claimFollowers(info.lane, workspace, deadline).catch(() => undefined);
   await laneHerdr(["workspace", "close", workspace], "mutate", deadline);
 }
 
@@ -455,7 +447,12 @@ async function restartOne(
       const match = await workspaceOf(info, kept === undefined ? "close" : "restart-held", window);
       if (kept !== undefined && match?.state !== "running")
         return { lane: info.lane, action: "stopped", detail: kept };
-      if (match !== undefined) await close(info, match.workspace, window);
+      if (match !== undefined) {
+        const left = remainingMs(window);
+        if (left < LANE_OBSERVATION_MS / 2)
+          throw new HostUnread(`not enough time left to close ${info.lane} and read it again`);
+        await close(info, match.workspace, performance.now() + left / 2);
+      }
       closed = true;
     }
     const observed = await workspaceOf(info, "liveness", window);
@@ -492,8 +489,8 @@ export async function restart(root: string, lane: string | undefined): Promise<O
         ),
       );
     } catch (error) {
-      if (lane !== undefined || !(error instanceof HostUnread)) throw error;
-      outcomes.push({ lane: info.lane, action: "unread", detail: error.message });
+      if (lane !== undefined) throw error;
+      outcomes.push({ lane: info.lane, action: "unread", detail: messageOf(error) });
     }
   }
   return outcomes;
