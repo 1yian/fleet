@@ -209,28 +209,18 @@ test("restart-all --json returns every lane's outcome even when one pane stays u
   );
 });
 
-test("restart-all --json keeps restarting the other lanes when one lane's workspace close stalls", async () => {
+test("restart-all re-reads after one hung observation instead of refusing", async () => {
   useSteadyPi();
   const root = await idlePane("ops", ops());
-  addLane("zz");
-  assert.deepEqual(maintain(), [
-    { lane: "ops", action: "started" },
-    { lane: "zz", action: "started" },
-  ]);
+  assert.deepEqual(maintain(), action("ops", "started"));
   await untilRunning("ops");
-  await untilRunning("zz");
-  const opsBefore = await workspace("ops");
-  const zzBefore = await workspace("zz");
-  const timing = { FLEET_LANE_OBSERVATION_MS: "12000", FLEET_MAINTENANCE_SWEEP_MS: "60000" };
-  const rows = records(
-    JSON.parse(fleet(["restart", "--json"], "hang-close-once", root, undefined, timing)),
-  );
-  assert.equal(rows.find((row) => row["lane"] === "ops")?.["action"], "unread");
-  assert.equal(rows.find((row) => row["lane"] === "zz")?.["action"], "started");
-  assert.equal((await workspace("ops"))?.["workspace_id"], opsBefore?.["workspace_id"]);
-  const zzAfter = await workspace("zz");
-  assert.ok(typeof zzAfter?.["workspace_id"] === "string");
-  assert.notEqual(zzAfter["workspace_id"], zzBefore?.["workspace_id"]);
+  const before = await workspace("ops");
+  const timing = { FLEET_LANE_OBSERVATION_MS: "9000", FLEET_MAINTENANCE_SWEEP_MS: "60000" };
+  assert.match(fleet(["restart"], "hang-once", root, undefined, timing), /ops: started/);
+  assert.ok(existsSync(faultLog()));
+  const after = await workspace("ops");
+  assert.ok(typeof after?.["workspace_id"] === "string");
+  assert.notEqual(after["workspace_id"], before?.["workspace_id"]);
 });
 
 test("a named restart --json still exits nonzero when the lane cannot be read", async () => {

@@ -167,8 +167,8 @@ function spaceOf(row: Record<string, unknown>): Space | undefined {
   };
 }
 
-async function listed(host: string, deadline?: number): Promise<Space[]> {
-  const rows = records((await herdr(host, ["workspace", "list"], false, deadline))["workspaces"]);
+async function listed(host: string): Promise<Space[]> {
+  const rows = records((await herdr(host, ["workspace", "list"]))["workspaces"]);
   return rows.flatMap((row) => spaceOf(row) ?? []);
 }
 
@@ -238,7 +238,6 @@ export async function tagWorker(
   host: string,
   workspace: string,
   owner: { lane: string; card?: number; mate?: string | undefined },
-  deadline?: number,
 ): Promise<void> {
   const card = owner.card === undefined ? [] : ["--token", `card=${String(owner.card)}`];
   const mate =
@@ -247,37 +246,28 @@ export async function tagWorker(
       : isPlacementHost(owner.mate) && owner.mate.length <= HERDR_VALUE_LIMIT
         ? ["--token", `mate=${owner.mate}`]
         : ["--clear-token", "mate", "--clear-token", "away"];
-  await herdr(
-    host,
-    [
-      "workspace",
-      "report-metadata",
-      workspace,
-      "--source",
-      SOURCE,
-      "--token",
-      `lane=${owner.lane}`,
-      ...card,
-      ...mate,
-    ],
-    false,
-    deadline,
-  ).catch((error: unknown) => {
+  await herdr(host, [
+    "workspace",
+    "report-metadata",
+    workspace,
+    "--source",
+    SOURCE,
+    "--token",
+    `lane=${owner.lane}`,
+    ...card,
+    ...mate,
+  ]).catch((error: unknown) => {
     if (!(error instanceof WorkspaceNotFound)) throw error;
   });
 }
 
-export async function claimFollowers(
-  lane: string,
-  workspace: string,
-  deadline?: number,
-): Promise<void> {
-  const spaces = await listed("local", deadline);
+export async function claimFollowers(lane: string, workspace: string): Promise<void> {
+  const spaces = await listed("local");
   const start = spaces.findIndex((space) => space.id === workspace);
   if (start === -1) return;
   for (const space of spaces.slice(start + 1)) {
     if (!space.label.startsWith(WORKER_MARK)) break;
-    if (space.lane === undefined) await tagWorker("local", space.id, { lane }, deadline);
+    if (space.lane === undefined) await tagWorker("local", space.id, { lane });
   }
 }
 

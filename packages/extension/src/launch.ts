@@ -332,7 +332,9 @@ switch (command ?? "") {
     checkLaunchPrerequisites(root);
     const outcomes = await restart(root, rest[0]);
     show(outcomes);
-    const failed = outcomes.filter(({ action }) => action === "unread");
+    const failed = outcomes.filter(
+      ({ action, detail }) => action === "unread" || (action === "started" && detail !== undefined),
+    );
     if (failed.length > 0 && values.json !== true)
       throw new Error(
         failed.map(({ lane, detail }) => `${lane}: ${detail ?? "unread"}`).join("\n"),

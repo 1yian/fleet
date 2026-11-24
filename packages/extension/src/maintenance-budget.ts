@@ -12,10 +12,3 @@ export const MAINTENANCE_SWEEP_MS =
 export function remainingMs(deadline = Infinity): number {
   return Math.max(0, Math.floor(deadline - performance.now()));
 }
-
-const DEFAULT_LANE_OBSERVATION_MS = 18_000;
-const laneObservation = Number(process.env["FLEET_LANE_OBSERVATION_MS"]);
-export const LANE_OBSERVATION_MS =
-  Number.isSafeInteger(laneObservation) && laneObservation > 0
-    ? Math.min(laneObservation, DEFAULT_LANE_OBSERVATION_MS)
-    : DEFAULT_LANE_OBSERVATION_MS;

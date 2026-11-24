@@ -49,7 +49,7 @@ import {
   parseLaneConfig,
   type LaneConfig,
 } from "./lane-config.ts";
-import { LANE_OBSERVATION_MS, MAINTENANCE_SWEEP_MS, remainingMs } from "./maintenance-budget.ts";
+import { remainingMs } from "./maintenance-budget.ts";
 import { withCompileCache } from "./scratch.ts";
 import { mateTitle } from "./titles.ts";
 
@@ -167,6 +167,12 @@ function recentStarts(home: string, now: number): number[] {
   return recentStartsOf(readState(startsFile(home), "state/starts"), now);
 }
 
+const DEFAULT_LANE_OBSERVATION_MS = 18_000;
+const laneObservation = Number(process.env["FLEET_LANE_OBSERVATION_MS"]);
+const LANE_OBSERVATION_MS =
+  Number.isSafeInteger(laneObservation) && laneObservation > 0
+    ? Math.min(laneObservation, DEFAULT_LANE_OBSERVATION_MS)
+    : DEFAULT_LANE_OBSERVATION_MS;
 const SHELL_WAIT_MS = 20_000;
 const LAUNCH_WAIT_MS = 10_000;
 const START_RECORD_MS = 1_000;
@@ -407,9 +413,9 @@ export async function up(
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-async function close(info: LaneHome, workspace: string, deadline?: number): Promise<void> {
-  await claimFollowers(info.lane, workspace, deadline).catch(() => undefined);
-  await laneHerdr(["workspace", "close", workspace], "mutate", deadline);
+async function close(info: LaneHome, workspace: string): Promise<void> {
+  await claimFollowers(info.lane, workspace).catch(() => undefined);
+  await laneHerdr(["workspace", "close", workspace], "mutate");
 }
 
 export async function stop(root: string, lane: string): Promise<void> {
@@ -428,69 +434,57 @@ export async function stop(root: string, lane: string): Promise<void> {
 }
 
 const RESTART_ATTEMPTS = 4;
-const LAUNCH_RESERVE_MS = SHELL_WAIT_MS + START_RECORD_MS + LAUNCH_WAIT_MS;
 
-async function restartOne(
-  root: string,
-  info: LaneHome,
-  all: boolean,
-  sweep: number,
-): Promise<Outcome> {
+async function reobserve<T>(work: (deadline: number) => Promise<T>): Promise<T> {
+  const end = performance.now() + LANE_OBSERVATION_MS;
+  for (let tried = 1; ; tried++) {
+    try {
+      return await work(Math.min(end, performance.now() + LANE_OBSERVATION_MS / 2));
+    } catch (error) {
+      if (!(error instanceof HostUnread) || tried >= RESTART_ATTEMPTS || remainingMs(end) === 0)
+        throw error;
+    }
+  }
+}
+
+async function restartOne(root: string, info: LaneHome, all: boolean): Promise<Outcome> {
   const held = heldReason(info.home);
   recentStarts(info.home, Date.now());
-  const kept = all ? held : undefined;
-  const window = Math.min(sweep - LAUNCH_RESERVE_MS, performance.now() + LANE_OBSERVATION_MS);
-  const deadline = window + LAUNCH_RESERVE_MS;
-  let closed = false;
-  const attempt = async (): Promise<Outcome> => {
-    if (!closed) {
-      const match = await workspaceOf(info, kept === undefined ? "close" : "restart-held", window);
-      if (kept !== undefined && match?.state !== "running")
-        return { lane: info.lane, action: "stopped", detail: kept };
-      if (match !== undefined) {
-        const left = remainingMs(window);
-        if (left < LANE_OBSERVATION_MS / 2)
-          throw new HostUnread(`not enough time left to close ${info.lane} and read it again`);
-        await close(info, match.workspace, performance.now() + left / 2);
-      }
-      closed = true;
-    }
-    const observed = await workspaceOf(info, "liveness", window);
+  const keepHeld = all ? held : undefined;
+  const purpose = keepHeld === undefined ? "close" : "restart-held";
+  const match = await reobserve((deadline) => workspaceOf(info, purpose, deadline));
+  if (keepHeld !== undefined && match?.state !== "running")
+    return { lane: info.lane, action: "stopped", detail: keepHeld };
+  if (match !== undefined) await close(info, match.workspace);
+  await reobserve(async (deadline) => {
+    const observed = await workspaceOf(info, "liveness", deadline);
     if (observed?.state === "running")
       throw new HostUnread(
         `${info.lane} still has a running mate in workspace ${observed.workspace} after restart closed its own`,
       );
-    await start(root, info, idlePaneOf(observed), true, sampleLifecycle(info.home), deadline);
-    return { lane: info.lane, action: "started" };
-  };
-  for (let tried = 1; ; tried++) {
-    try {
-      return await attempt();
-    } catch (error) {
-      const spent = tried >= RESTART_ATTEMPTS || remainingMs(window) === 0;
-      if (!(error instanceof HostUnread) || spent) throw error;
-    }
-  }
+    await start(root, info, idlePaneOf(observed), true, sampleLifecycle(info.home));
+  });
+  return { lane: info.lane, action: "started" };
 }
 
 export async function restart(root: string, lane: string | undefined): Promise<Outcome[]> {
   const { homes, unread } = named(root, lane);
   if (unread.length > 0) throw new Error(unreadFailure(unread));
-  const sweep = performance.now() + MAINTENANCE_SWEEP_MS;
   const outcomes: Outcome[] = [];
   for (const info of homes) {
     try {
       outcomes.push(
-        await withLifecycleLock(
-          info.home,
-          info.lane,
-          () => restartOne(root, info, lane === undefined, sweep),
-          Math.min(sweep, performance.now() + LANE_OBSERVATION_MS),
+        await withLifecycleLock(info.home, info.lane, () =>
+          restartOne(root, info, lane === undefined),
         ),
       );
     } catch (error) {
       if (lane !== undefined) throw error;
-      outcomes.push({ lane: info.lane, action: "unread", detail: messageOf(error) });
+      outcomes.push(
+        error instanceof AcceptedStartFailure
+          ? { lane: info.lane, action: "started", detail: error.message }
+          : { lane: info.lane, action: "unread", detail: messageOf(error) },
+      );
     }
   }
   return outcomes;
